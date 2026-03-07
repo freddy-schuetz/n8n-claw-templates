@@ -1,0 +1,95 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Weather Alpine",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Get Weather",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst city = input.city || 'Essen';\n\nconst geo = await $helpers.httpRequest({\n  method: 'GET',\n  url: 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=de'\n});\n\nif (!geo.results || geo.results.length === 0) {\n  return [{ json: { error: 'Stadt nicht gefunden: ' + city } }];\n}\n\nconst lat = geo.results[0].latitude;\nconst lon = geo.results[0].longitude;\nconst name = geo.results[0].name;\n\nconst w = await $helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max&timezone=Europe/Berlin&forecast_days=3'\n});\n\nconst cw = w.current_weather;\nconst d = w.daily;\nlet r = name + ': ' + cw.temperature + 'C, Wind ' + cw.windspeed + ' km/h\\n';\nconst labels = ['heute', 'morgen', 'uebermorgen'];\nfor (let i = 0; i < 3; i++) {\n  r += labels[i] + ': ' + d.temperature_2m_min[i] + '-' + d.temperature_2m_max[i] + 'C, ' + d.precipitation_probability_max[i] + '% Regen, Wind ' + d.windspeed_10m_max[i] + ' km/h\\n';\n}\n\nreturn [{ json: { result: r } }];"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Get Weather", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Weather Alpine",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "weather-alpine"
+        }
+      },
+      {
+        "id": "tool-wf",
+        "name": "get_weather",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "get_weather",
+          "description": "Aktuelles Wetter und 3-Tage-Vorhersage fuer eine Stadt. Parameter: city (Stadtname)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "city": "={{ $fromAI('city', 'Stadt fuer Wetterabfrage', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "Stadt fuer Wetterabfrage",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "get_weather": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}

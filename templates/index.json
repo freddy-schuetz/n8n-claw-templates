@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "updated": "2026-03-07",
+  "templates": [
+    {
+      "id": "weather-alpine",
+      "name": "Alpenwetter (Open-Meteo)",
+      "type": "native",
+      "category": "weather",
+      "description": "Aktuelles Wetter und 3-Tage-Vorhersage fuer eine Stadt (Open-Meteo, kostenlos)",
+      "credentials_required": [],
+      "version": "1.0.0"
+    }
+  ]
+}
