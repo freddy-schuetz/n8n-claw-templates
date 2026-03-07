@@ -2,7 +2,7 @@
   "format": "n8n-claw-template",
   "format_version": 1,
   "sub": {
-    "name": "MCP Sub: Weather Alpine",
+    "name": "MCP Sub: Weather OpenMeteo",
     "settings": {
       "executionOrder": "v1",
       "callerPolicy": "workflowsFromSameOwner"
@@ -25,7 +25,7 @@
         "typeVersion": 2,
         "position": [256, 0],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst city = input.city || 'Essen';\n\nconst geo = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=de'\n});\n\nif (!geo.results || geo.results.length === 0) {\n  return [{ json: { error: 'Stadt nicht gefunden: ' + city } }];\n}\n\nconst lat = geo.results[0].latitude;\nconst lon = geo.results[0].longitude;\nconst name = geo.results[0].name;\n\nconst w = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max&timezone=Europe/Berlin&forecast_days=3'\n});\n\nconst cw = w.current_weather;\nconst d = w.daily;\nlet r = name + ': ' + cw.temperature + 'C, Wind ' + cw.windspeed + ' km/h\\n';\nconst labels = ['heute', 'morgen', 'uebermorgen'];\nfor (let i = 0; i < 3; i++) {\n  r += labels[i] + ': ' + d.temperature_2m_min[i] + '-' + d.temperature_2m_max[i] + 'C, ' + d.precipitation_probability_max[i] + '% Regen, Wind ' + d.windspeed_10m_max[i] + ' km/h\\n';\n}\n\nreturn [{ json: { result: r } }];"
+          "jsCode": "const input = $input.first().json;\nconst city = input.city || 'Berlin';\n\nconst geo = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=en'\n});\n\nif (!geo.results || geo.results.length === 0) {\n  return [{ json: { error: 'City not found: ' + city } }];\n}\n\nconst lat = geo.results[0].latitude;\nconst lon = geo.results[0].longitude;\nconst name = geo.results[0].name;\n\nconst w = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max&timezone=auto&forecast_days=3'\n});\n\nconst cw = w.current_weather;\nconst d = w.daily;\nlet r = name + ': ' + cw.temperature + 'C, Wind ' + cw.windspeed + ' km/h\\n';\nconst labels = ['today', 'tomorrow', 'day after tomorrow'];\nfor (let i = 0; i < 3; i++) {\n  r += labels[i] + ': ' + d.temperature_2m_min[i] + '-' + d.temperature_2m_max[i] + 'C, ' + d.precipitation_probability_max[i] + '% rain, Wind ' + d.windspeed_10m_max[i] + ' km/h\\n';\n}\n\nreturn [{ json: { result: r } }];"
         }
       }
     ],
@@ -36,7 +36,7 @@
     }
   },
   "server": {
-    "name": "MCP: Weather Alpine",
+    "name": "MCP: Weather OpenMeteo",
     "settings": {
       "executionOrder": "v1"
     },
@@ -48,7 +48,7 @@
         "typeVersion": 2,
         "position": [0, 0],
         "parameters": {
-          "path": "weather-alpine"
+          "path": "weather-openmeteo"
         }
       },
       {
@@ -59,7 +59,7 @@
         "position": [0, 300],
         "parameters": {
           "name": "get_weather",
-          "description": "Aktuelles Wetter und 3-Tage-Vorhersage fuer eine Stadt. Parameter: city (Stadtname)",
+          "description": "Current weather and 3-day forecast for a city. Parameter: city (city name)",
           "workflowId": {
             "__rl": true,
             "value": "REPLACE_SUB_WORKFLOW_ID",
@@ -68,7 +68,7 @@
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
-              "city": "={{ $fromAI('city', 'Stadt fuer Wetterabfrage', 'string') }}"
+              "city": "={{ $fromAI('city', 'City name for weather query', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -76,7 +76,7 @@
                 "id": "city",
                 "displayName": "city",
                 "type": "string",
-                "description": "Stadt fuer Wetterabfrage",
+                "description": "City name for weather query",
                 "required": true
               }
             ],

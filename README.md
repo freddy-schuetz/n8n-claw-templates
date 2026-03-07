@@ -7,9 +7,9 @@ Template catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP 
 Templates are installed via the n8n-claw Library Manager (chat command):
 
 ```
-"Zeig mir verfuegbare Templates"
-"Installiere weather-alpine"
-"Entferne weather-alpine"
+"Show me available templates"
+"Install weather-openmeteo"
+"Remove weather-openmeteo"
 ```
 
 ## Template Types
@@ -24,7 +24,7 @@ Templates are installed via the n8n-claw Library Manager (chat command):
 Templates are served via jsDelivr:
 
 ```
-https://cdn.jsdelivr.net/gh/freddy-schuetz/n8n-claw-templates@latest/templates/index.json
+https://cdn.jsdelivr.net/gh/freddy-schuetz/n8n-claw-templates@master/templates/index.json
 ```
 
 ## Contributing

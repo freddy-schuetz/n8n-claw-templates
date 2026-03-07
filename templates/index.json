@@ -3,11 +3,11 @@
   "updated": "2026-03-07",
   "templates": [
     {
-      "id": "weather-alpine",
-      "name": "Alpenwetter (Open-Meteo)",
+      "id": "weather-openmeteo",
+      "name": "Weather (Open-Meteo)",
       "type": "native",
       "category": "weather",
-      "description": "Aktuelles Wetter und 3-Tage-Vorhersage fuer eine Stadt (Open-Meteo, kostenlos)",
+      "description": "Current weather and 3-day forecast for any city (Open-Meteo, free)",
       "credentials_required": [],
       "version": "1.0.0"
     }
