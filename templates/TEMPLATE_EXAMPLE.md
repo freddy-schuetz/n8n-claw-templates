@@ -35,6 +35,7 @@ Add your template to the `templates` array in `index.json`:
   "id": "my-template",
   "name": "My Template",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "utilities",
   "description": "Short description of what this template does",
@@ -65,6 +66,7 @@ Add your template to the `templates` array in `index.json`:
 | `id` | yes | Unique template ID (lowercase, hyphens) |
 | `name` | yes | Display name |
 | `version` | yes | Semver version |
+| `updated` | yes | Last updated date (ISO format, e.g. `2026-03-08`) |
 | `type` | yes | `native` (n8n implements logic) or `bridge` (proxy to external MCP server) |
 | `category` | yes | Category for filtering (e.g. `weather`, `utilities`, `data`) |
 | `description` | yes | Short description |

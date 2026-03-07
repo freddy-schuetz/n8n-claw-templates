@@ -2,6 +2,7 @@
   "id": "ip-geolocation",
   "name": "IP Geolocation",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "network",
   "description": "Get location, ISP, and organization info for any IP address (ip-api.com, free)",

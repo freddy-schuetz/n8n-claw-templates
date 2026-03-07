@@ -2,6 +2,7 @@
   "id": "weather-openmeteo",
   "name": "Weather (Open-Meteo)",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "weather",
   "description": "Current weather and 3-day forecast for any city (Open-Meteo, free)",

@@ -2,6 +2,7 @@
   "id": "wikipedia",
   "name": "Wikipedia",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "knowledge",
   "description": "Search Wikipedia and get article summaries",

@@ -2,6 +2,7 @@
   "id": "dictionary",
   "name": "Dictionary",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "language",
   "description": "Look up English word definitions, phonetics, and examples (Free Dictionary API)",

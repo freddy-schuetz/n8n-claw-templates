@@ -2,6 +2,7 @@
   "id": "website-check",
   "name": "Website Check",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "network",
   "description": "Comprehensive website health check: load time benchmark, security headers, meta tags, structured data, and more",

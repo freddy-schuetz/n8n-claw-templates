@@ -79,6 +79,7 @@ Add an entry to the `templates` array in [`templates/index.json`](templates/inde
   "id": "my-template",
   "name": "My Template",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "utilities",
   "description": "Short description of what this template does",
@@ -109,6 +110,7 @@ Add an entry to the `templates` array in [`templates/index.json`](templates/inde
 | `id` | yes | Unique template ID (lowercase, hyphens only) |
 | `name` | yes | Display name |
 | `version` | yes | Semver version (e.g. `1.0.0`) |
+| `updated` | yes | Last updated date (ISO format, e.g. `2026-03-08`) |
 | `type` | yes | `native` or `bridge` |
 | `category` | yes | Category for filtering (e.g. `weather`, `utilities`, `data`) |
 | `description` | yes | Short description |

@@ -2,6 +2,7 @@
   "id": "hackernews",
   "name": "Hacker News",
   "version": "1.0.0",
+  "updated": "2026-03-08",
   "type": "native",
   "category": "news",
   "description": "Search Hacker News stories and get top stories",
