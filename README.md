@@ -15,6 +15,7 @@ Template catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP 
 | [dictionary](templates/dictionary/) | language | English word definitions, phonetics, and examples | None |
 | [ip-geolocation](templates/ip-geolocation/) | network | Get location, ISP, and org info for any IP address | None |
 | [website-check](templates/website-check/) | network | Website health check: load time, security headers, meta tags, structured data | None |
+| [news-newsapi](templates/news-newsapi/) | news | Search news articles from 80,000+ sources | NewsAPI Key |
 
 ---
 
@@ -29,6 +30,15 @@ Templates are managed via chat with your n8n-claw agent:
 ```
 
 > **Important:** After installing a template, open the n8n UI and **deactivate → reactivate** the new MCP server workflow. This is required due to a webhook registration bug in n8n.
+
+### Templates with API keys
+
+Some templates require API credentials. When you install one, the agent sends you a **secure one-time link** (valid 10 minutes) to enter your API key via HTTPS form. Your key is never visible in the chat.
+
+```
+"Install news-newsapi"                → installs + sends credential link
+"Add credential for news-newsapi"     → generates a new credential link
+```
 
 ---
 
@@ -228,6 +238,7 @@ This two-workflow pattern is required because n8n's API ignores `specifyInputSch
 |-------|---------|
 | **HTTP requests** | Use `helpers.httpRequest()` in Code nodes — **not** `$helpers.httpRequest()` (undefined in Code node v2) |
 | **Sub-workflow ID** | Use `REPLACE_SUB_WORKFLOW_ID` as placeholder — the Library Manager patches this automatically during install |
+| **DB access** | Templates that read credentials use `{{SUPABASE_URL}}` and `{{SUPABASE_SERVICE_KEY}}` placeholders — replaced automatically during install |
 | **MCP path** | The `path` in mcpTrigger should match your template ID |
 | **Parameters** | Tool parameters arrive in the sub-workflow via `$input.first().json.paramName` |
 | **`$fromAI()`** | Used in the server workflow to tell the AI agent which parameters to extract from the user's message |
