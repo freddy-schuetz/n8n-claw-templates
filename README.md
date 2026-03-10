@@ -16,6 +16,7 @@ Template catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP 
 | [ip-geolocation](templates/ip-geolocation/) | network | Get location, ISP, and org info for any IP address | None |
 | [website-check](templates/website-check/) | network | Website health check: load time, security headers, meta tags, structured data | None |
 | [news-newsapi](templates/news-newsapi/) | news | Search news articles from 80,000+ sources | NewsAPI Key |
+| [email-imap-smtp](templates/email-imap-smtp/) | communication | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host |
 
 ---
 
@@ -39,6 +40,14 @@ Some templates require API credentials. When you install one, the agent sends yo
 "Install news-newsapi"                → installs + sends credential link
 "Add credential for news-newsapi"     → generates a new credential link
 ```
+
+### Templates with infrastructure requirements
+
+Some templates need additional services running alongside n8n:
+
+| Template | Requires |
+|----------|----------|
+| `email-imap-smtp` | `email-bridge` service in docker-compose.yml (included in n8n-claw since v0.10) |
 
 ---
 
