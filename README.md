@@ -1,6 +1,6 @@
 # n8n-claw Skills
 
-Template catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP servers. Install pre-built API integrations with a single chat command — no coding required.
+Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP servers. Install pre-built API integrations with a single chat command — no coding required.
 
 ---
 
