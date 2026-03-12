@@ -120,9 +120,17 @@ Some skills require API credentials. When you install one, the agent sends you a
 
 > **⚠️ Security notice — Skill credentials are stored in plain text**
 >
-> API keys entered via the credential form are stored **unencrypted** in the `template_credentials` table in PostgreSQL. Neither the database nor PostgREST are reachable from the internet — PostgREST runs on a Docker-internal network only, and PostgreSQL (port 5432) is bound to `127.0.0.1`. To read credentials, an attacker would need SSH access to your VPS — there is no remote network path.
+> API keys entered via the credential form are currently stored **unencrypted** in the `template_credentials` table in PostgreSQL. This means:
 >
-> **Mitigation:** Secure SSH access (key-based auth, no root password, fail2ban), and use API keys with minimal permissions where possible. Encryption at rest is planned.
+> - Anyone with access to the database can read all stored API keys
+> - Supabase Studio (`localhost:3001`, accessible via SSH tunnel) shows credentials in plain text
+> - A compromised VPS exposes all stored API keys
+>
+> **What an attacker would need:** Neither the database nor the API are reachable from the internet. PostgREST runs on a Docker-internal network only, and PostgreSQL (port 5432) is bound to `127.0.0.1`. To read credentials, an attacker would need SSH access to your VPS — there is no remote network path.
+>
+> **Mitigation:** Secure SSH access (key-based auth, no root password, fail2ban), and use API keys with minimal permissions where possible.
+>
+> Encryption at rest for skill credentials is planned and in progress.
 
 ### Skills with infrastructure requirements
 
