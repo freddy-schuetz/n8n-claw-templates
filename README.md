@@ -99,30 +99,36 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ## Usage
 
-Templates are managed via chat with your n8n-claw agent:
+Skills are managed via chat with your n8n-claw agent:
 
 ```
-"What templates are available?"     → lists all templates
-"Install weather-openmeteo"         → installs the template
+"What skills are available?"        → lists all skills
+"Install weather-openmeteo"         → installs the skill
 "Remove weather-openmeteo"          → uninstalls and cleans up
 ```
 
-> **Important:** After installing a template, open the n8n UI and **deactivate → reactivate** the new MCP server workflow. This is required due to a webhook registration bug in n8n.
+> **Important:** After installing a skill, open the n8n UI and **deactivate → reactivate** the new MCP server workflow. This is required due to a webhook registration bug in n8n.
 
-### Templates with API keys
+### Skills with API keys
 
-Some templates require API credentials. When you install one, the agent sends you a **secure one-time link** (valid 10 minutes) to enter your API key via HTTPS form. Your key is never visible in the chat.
+Some skills require API credentials. When you install one, the agent sends you a **secure one-time link** (valid 10 minutes) to enter your API key via HTTPS form. Your key is never visible in the chat.
 
 ```
 "Install news-newsapi"                → installs + sends credential link
 "Add credential for news-newsapi"     → generates a new credential link
 ```
 
-### Templates with infrastructure requirements
+> **⚠️ Security notice — Skill credentials are stored in plain text**
+>
+> API keys entered via the credential form are stored **unencrypted** in the `template_credentials` table in PostgreSQL. Neither the database nor PostgREST are reachable from the internet — PostgREST runs on a Docker-internal network only, and PostgreSQL (port 5432) is bound to `127.0.0.1`. To read credentials, an attacker would need SSH access to your VPS — there is no remote network path.
+>
+> **Mitigation:** Secure SSH access (key-based auth, no root password, fail2ban), and use API keys with minimal permissions where possible. Encryption at rest is planned.
 
-Some templates need additional services running alongside n8n:
+### Skills with infrastructure requirements
 
-| Template | Requires |
+Some skills need additional services running alongside n8n:
+
+| Skill | Requires |
 |----------|----------|
 | `email-imap-smtp` | `email-bridge` service in docker-compose.yml (included in n8n-claw since v0.10) |
 
