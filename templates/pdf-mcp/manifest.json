@@ -1,0 +1,42 @@
+{
+  "id": "pdf-mcp",
+  "name": "PDF Tools (pdf-mcp.io)",
+  "version": "1.0.0",
+  "updated": "2026-03-12",
+  "type": "native",
+  "category": "utilities",
+  "description": "Generate PDFs from HTML, extract text from PDFs, merge PDFs, and manage PDF files (pdf-mcp.io, 100 free credits)",
+  "credentials_required": [
+    {
+      "key": "pdfmcp_api_key",
+      "label": "pdf-mcp.io API Key",
+      "hint": "Free at pdf-mcp.io — 100 credits included, no credit card needed"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "html_to_pdf",
+      "description": "Generate a PDF from HTML content with optional CSS styling"
+    },
+    {
+      "name": "extract_text",
+      "description": "Extract text content from a PDF by URL"
+    },
+    {
+      "name": "merge_pdfs",
+      "description": "Merge multiple PDFs into one by URLs"
+    },
+    {
+      "name": "list_files",
+      "description": "List stored PDF files"
+    },
+    {
+      "name": "get_file",
+      "description": "Get download link for a stored PDF"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

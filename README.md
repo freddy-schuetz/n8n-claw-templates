@@ -85,6 +85,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
+| [pdf-mcp](templates/pdf-mcp/) | Generate PDFs from HTML, extract text, merge PDFs | pdf-mcp.io API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [qr-code](templates/qr-code/) | Generate QR codes from text or URLs | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Weather

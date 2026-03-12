@@ -1,0 +1,194 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: PDF Tools",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "PDF Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'html_to_pdf';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.pdf-mcp&cred_key=eq.pdfmcp_api_key&select=cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'pdf-mcp.io API key not configured. Use add_credential to set it up.' } }];\n}\n\nconst apiKey = creds[0].cred_value;\nconst API_BASE = 'https://api.pdf-mcp.io';\nconst apiHeaders = {\n  'Authorization': 'Bearer ' + apiKey,\n  'Content-Type': 'application/json'\n};\n\n// === html_to_pdf ===\nif (action === 'html_to_pdf') {\n  const html = input.html;\n  if (!html) return [{ json: { error: 'Parameter \"html\" is required (HTML content to convert).' } }];\n\n  try {\n    const body = {\n      html: html,\n      storage: { mode: 'default' }\n    };\n    if (input.css) body.css = input.css;\n    if (input.filename) body.filename = input.filename;\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: API_BASE + '/htmlToPdf',\n      headers: apiHeaders,\n      body: JSON.stringify(body),\n      returnFullResponse: true,\n      json: false\n    });\n\n    let result;\n    try {\n      result = typeof resp.body === 'string' ? JSON.parse(resp.body) : resp.body;\n    } catch(e) {\n      result = resp.body;\n    }\n\n    if (result && result.url) {\n      let msg = 'PDF generated successfully!';\n      msg += '\\nDownload: ' + result.url;\n      if (result.document_id) msg += '\\nDocument ID: ' + result.document_id;\n      if (result.pages) msg += '\\nPages: ' + result.pages;\n      return [{ json: { result: msg, url: result.url, document_id: result.document_id } }];\n    } else if (result && result.document_id) {\n      const fileResp = await helpers.httpRequest({\n        method: 'GET',\n        url: API_BASE + '/files/' + result.document_id,\n        headers: apiHeaders\n      });\n      let msg = 'PDF generated successfully!';\n      if (fileResp.url) msg += '\\nDownload: ' + fileResp.url;\n      msg += '\\nDocument ID: ' + result.document_id;\n      return [{ json: { result: msg, url: fileResp.url || '', document_id: result.document_id } }];\n    } else {\n      return [{ json: { result: 'PDF generated (binary response). Use storage mode for a download link.', raw: String(result).substring(0, 200) } }];\n    }\n  } catch (err) {\n    return [{ json: { error: 'Failed to generate PDF: ' + err.message } }];\n  }\n\n// === extract_text ===\n} else if (action === 'extract_text') {\n  const pdfUrl = input.pdf_url;\n  if (!pdfUrl) return [{ json: { error: 'Parameter \"pdf_url\" is required (URL of the PDF to extract text from).' } }];\n\n  try {\n    const body = { pdf_url: pdfUrl };\n    if (input.pages) body.pages = input.pages;\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: API_BASE + '/extractText',\n      headers: apiHeaders,\n      body: JSON.stringify(body)\n    });\n\n    let result = 'Text extracted from PDF';\n    if (resp.total_pages) result += ' (' + resp.total_pages + ' pages)';\n    result += ':\\n\\n';\n    if (resp.text) {\n      result += resp.text.substring(0, 3000);\n      if (resp.text.length > 3000) result += '\\n\\n... (truncated, ' + resp.text.length + ' chars total)';\n    } else if (resp.pages && Array.isArray(resp.pages)) {\n      for (const p of resp.pages.slice(0, 10)) {\n        result += '--- Page ' + p.page + ' ---\\n' + (p.text || '').substring(0, 500) + '\\n\\n';\n      }\n    }\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to extract text: ' + err.message } }];\n  }\n\n// === merge_pdfs ===\n} else if (action === 'merge_pdfs') {\n  const urls = input.pdf_urls;\n  if (!urls) return [{ json: { error: 'Parameter \"pdf_urls\" is required (comma-separated PDF URLs).' } }];\n\n  try {\n    const urlList = urls.split(',').map(u => u.trim()).filter(u => u);\n    if (urlList.length < 2) return [{ json: { error: 'At least 2 PDF URLs are needed to merge.' } }];\n\n    const body = {\n      pdfs_url: urlList,\n      storage: { mode: 'default' }\n    };\n    if (input.filename) body.filename = input.filename;\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: API_BASE + '/mergePdfs',\n      headers: apiHeaders,\n      body: JSON.stringify(body),\n      returnFullResponse: true,\n      json: false\n    });\n\n    let result;\n    try {\n      result = typeof resp.body === 'string' ? JSON.parse(resp.body) : resp.body;\n    } catch(e) {\n      result = resp.body;\n    }\n\n    if (result && result.url) {\n      return [{ json: { result: 'PDFs merged successfully!\\nDownload: ' + result.url, url: result.url } }];\n    } else if (result && result.document_id) {\n      const fileResp = await helpers.httpRequest({\n        method: 'GET',\n        url: API_BASE + '/files/' + result.document_id,\n        headers: apiHeaders\n      });\n      return [{ json: { result: 'PDFs merged!\\nDownload: ' + (fileResp.url || result.document_id), url: fileResp.url || '' } }];\n    } else {\n      return [{ json: { result: 'PDFs merged (binary response).', raw: String(result).substring(0, 200) } }];\n    }\n  } catch (err) {\n    return [{ json: { error: 'Failed to merge PDFs: ' + err.message } }];\n  }\n\n// === list_files ===\n} else if (action === 'list_files') {\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'GET',\n      url: API_BASE + '/files?limit=20',\n      headers: apiHeaders\n    });\n\n    const docs = resp.documents || resp.data || [];\n    if (docs.length === 0) {\n      return [{ json: { result: 'No stored PDF files found.' } }];\n    }\n\n    let result = 'Stored PDFs (' + docs.length + '):\\n\\n';\n    for (const d of docs) {\n      result += '- ' + (d.filename || d.id) + ' (ID: ' + d.id + ')';\n      if (d.pages) result += ' — ' + d.pages + ' pages';\n      if (d.created_at) result += ' — ' + d.created_at.substring(0, 10);\n      result += '\\n';\n    }\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list files: ' + err.message } }];\n  }\n\n// === get_file ===\n} else if (action === 'get_file') {\n  const docId = input.document_id;\n  if (!docId) return [{ json: { error: 'Parameter \"document_id\" is required.' } }];\n\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'GET',\n      url: API_BASE + '/files/' + docId + '?expires_in=3600',\n      headers: apiHeaders\n    });\n\n    let result = 'File: ' + (resp.filename || docId);\n    if (resp.url) result += '\\nDownload: ' + resp.url;\n    if (resp.pages) result += '\\nPages: ' + resp.pages;\n    if (resp.created_at) result += '\\nCreated: ' + resp.created_at;\n    result += '\\nLink valid for 1 hour.';\n\n    return [{ json: { result, url: resp.url || '' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get file: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Use html_to_pdf, extract_text, merge_pdfs, list_files, or get_file.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "PDF Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: PDF Tools",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "pdf-mcp"
+        }
+      },
+      {
+        "id": "tool-html-to-pdf",
+        "name": "html_to_pdf",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "html_to_pdf",
+          "description": "Generate a PDF from HTML content. The HTML can include full styling, images (as base64 or URLs), tables, etc. Parameters: html (required, full HTML document or fragment), css (optional CSS stylesheet or empty string), filename (optional filename like 'report.pdf' or empty string)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "html_to_pdf",
+              "html": "={{ $fromAI('html', 'Full HTML content to convert to PDF', 'string') }}",
+              "css": "={{ $fromAI('css', 'Optional CSS stylesheet or empty string', 'string') }}",
+              "filename": "={{ $fromAI('filename', 'Optional filename like report.pdf or empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "html", "displayName": "html", "type": "string", "description": "HTML content", "required": true },
+              { "id": "css", "displayName": "css", "type": "string", "description": "CSS or empty string", "required": true },
+              { "id": "filename", "displayName": "filename", "type": "string", "description": "Filename or empty string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-extract-text",
+        "name": "extract_text",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "extract_text",
+          "description": "Extract text content from a PDF. Parameter: pdf_url (required, URL of the PDF file), pages (optional, page numbers like '1,2,3' or '1-5' or empty string for all)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "extract_text",
+              "pdf_url": "={{ $fromAI('pdf_url', 'URL of the PDF to extract text from', 'string') }}",
+              "pages": "={{ $fromAI('pages', 'Page numbers like 1,2,3 or 1-5 or empty string for all', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "pdf_url", "displayName": "pdf_url", "type": "string", "description": "PDF URL", "required": true },
+              { "id": "pages", "displayName": "pages", "type": "string", "description": "Page numbers or empty string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-merge-pdfs",
+        "name": "merge_pdfs",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "merge_pdfs",
+          "description": "Merge multiple PDFs into one. Parameter: pdf_urls (required, comma-separated URLs of PDFs to merge), filename (optional, output filename or empty string)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "merge_pdfs",
+              "pdf_urls": "={{ $fromAI('pdf_urls', 'Comma-separated PDF URLs to merge', 'string') }}",
+              "filename": "={{ $fromAI('filename', 'Output filename or empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "pdf_urls", "displayName": "pdf_urls", "type": "string", "description": "Comma-separated PDF URLs", "required": true },
+              { "id": "filename", "displayName": "filename", "type": "string", "description": "Filename or empty string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-files",
+        "name": "list_files",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "list_files",
+          "description": "List stored PDF files. No parameters needed.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_files"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-file",
+        "name": "get_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "get_file",
+          "description": "Get a download link for a stored PDF. Parameter: document_id (required, the document UUID from html_to_pdf or list_files)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_file",
+              "document_id": "={{ $fromAI('document_id', 'Document UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "document_id", "displayName": "document_id", "type": "string", "description": "Document UUID", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "html_to_pdf": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "extract_text": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "merge_pdfs": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_files": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

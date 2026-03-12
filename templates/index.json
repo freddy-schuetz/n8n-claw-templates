@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-10",
+  "updated": "2026-03-12",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -217,6 +217,20 @@
         {
           "key": "deepl_api_key",
           "label": "DeepL API Key"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "pdf-mcp",
+      "name": "PDF Tools (pdf-mcp.io)",
+      "type": "native",
+      "category": "utilities",
+      "description": "Generate PDFs from HTML, extract text from PDFs, merge PDFs, and manage PDF files (pdf-mcp.io, 100 free credits)",
+      "credentials_required": [
+        {
+          "key": "pdfmcp_api_key",
+          "label": "pdf-mcp.io API Key"
         }
       ],
       "version": "1.0.0"
