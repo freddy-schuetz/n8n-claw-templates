@@ -142,7 +142,7 @@ Some skills need additional services running alongside n8n:
 
 ---
 
-## Template Types
+## Skill Types
 
 | Type | Description |
 |------|-------------|
