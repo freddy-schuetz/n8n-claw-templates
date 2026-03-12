@@ -164,6 +164,20 @@
       "description": "Search recipes by name or get a random recipe with ingredients and instructions (TheMealDB, free)",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "vexa-meetings",
+      "name": "Vexa Meetings",
+      "type": "native",
+      "category": "meetings",
+      "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings (Vexa.ai API)",
+      "credentials_required": [
+        {
+          "key": "vexa_api_key",
+          "label": "Vexa API Key"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

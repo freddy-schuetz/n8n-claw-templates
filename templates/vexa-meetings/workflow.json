@@ -1,0 +1,239 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Vexa Meetings",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Vexa Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action;\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst API_BASE = 'https://api.cloud.vexa.ai';\n\n// Fetch API key\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.vexa-meetings&cred_key=eq.vexa_api_key&select=cred_value',\n  headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'Vexa API key not configured. Use add_credential to set it up.' } }];\n}\n\nconst apiKey = creds[0].cred_value;\nconst apiHeaders = { 'X-API-Key': apiKey, 'Content-Type': 'application/json' };\n\n// Parse meeting URL to extract platform and meeting ID\nfunction parseMeetingUrl(url) {\n  if (!url) return null;\n  url = url.trim();\n\n  // Google Meet: https://meet.google.com/abc-defg-hij\n  const gmeetMatch = url.match(/meet\\.google\\.com\\/([a-z]{3}-[a-z]{4}-[a-z]{3})/i);\n  if (gmeetMatch) return { platform: 'google_meet', native_meeting_id: gmeetMatch[1] };\n\n  // Microsoft Teams: https://teams.live.com/meet/1234567890123?p=XYZ\n  const teamsMatch = url.match(/teams\\.(?:live|microsoft)\\.com\\/(?:meet|l\\/meetup-join)\\/([^?&#]+)/);\n  if (teamsMatch) {\n    const meetingId = teamsMatch[1];\n    const passcodeMatch = url.match(/[?&]p=([^&]+)/);\n    return { platform: 'teams', native_meeting_id: meetingId, passcode: passcodeMatch ? passcodeMatch[1] : undefined };\n  }\n\n  // Zoom: https://us05web.zoom.us/j/12345678901?pwd=...\n  const zoomMatch = url.match(/zoom\\.us\\/j\\/(\\d+)/);\n  if (zoomMatch) {\n    const pwdMatch = url.match(/[?&]pwd=([^&]+)/);\n    return { platform: 'zoom', native_meeting_id: zoomMatch[1], passcode: pwdMatch ? pwdMatch[1] : undefined };\n  }\n\n  return null;\n}\n\n// ── ACTION: deploy_meeting_bot ──\nif (action === 'deploy_meeting_bot') {\n  const meetingUrl = input.meeting_url;\n  if (!meetingUrl) {\n    return [{ json: { error: 'Parameter \"meeting_url\" is required. Provide a Google Meet, Teams, or Zoom URL.' } }];\n  }\n\n  const parsed = parseMeetingUrl(meetingUrl);\n  if (!parsed) {\n    return [{ json: { error: 'Could not parse meeting URL. Supported: Google Meet (meet.google.com/xxx-xxxx-xxx), Microsoft Teams (teams.live.com/meet/...), Zoom (zoom.us/j/...)' } }];\n  }\n\n  const body = {\n    platform: parsed.platform,\n    native_meeting_id: parsed.native_meeting_id\n  };\n  if (parsed.passcode) body.passcode = parsed.passcode;\n  if (input.language) body.language = input.language;\n  if (input.bot_name) body.bot_name = input.bot_name;\n  if (input.recording !== undefined) body.recording_enabled = input.recording === true || input.recording === 'true';\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: API_BASE + '/bots',\n      headers: apiHeaders,\n      body: JSON.stringify(body)\n    });\n\n    let result = 'Bot deployed successfully!\\n';\n    result += '  Platform: ' + parsed.platform + '\\n';\n    result += '  Meeting ID: ' + parsed.native_meeting_id + '\\n';\n    result += '  Status: ' + (data.status || 'requested') + '\\n';\n    if (data.constructed_meeting_url) result += '  URL: ' + data.constructed_meeting_url + '\\n';\n    result += '\\nThe bot will join the meeting shortly and start transcribing.';\n    result += '\\nUse get_transcript with platform=\"' + parsed.platform + '\" and meeting_id=\"' + parsed.native_meeting_id + '\" to fetch the transcript later.';\n\n    return [{ json: { result } }];\n  } catch (err) {\n    const msg = err.message || '';\n    if (msg.includes('401') || msg.includes('403')) {\n      return [{ json: { error: 'Authentication failed. Check your Vexa API key.' } }];\n    }\n    return [{ json: { error: 'Failed to deploy bot: ' + msg } }];\n  }\n\n// ── ACTION: get_transcript ──\n} else if (action === 'get_transcript') {\n  let platform = input.platform;\n  let meetingId = input.meeting_id;\n\n  // Also accept meeting_url for convenience\n  if (input.meeting_url && (!platform || !meetingId)) {\n    const parsed = parseMeetingUrl(input.meeting_url);\n    if (parsed) {\n      platform = parsed.platform;\n      meetingId = parsed.native_meeting_id;\n    }\n  }\n\n  if (!platform || !meetingId) {\n    return [{ json: { error: 'Parameters \"platform\" (google_meet/teams/zoom) and \"meeting_id\" are required.' } }];\n  }\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'GET',\n      url: API_BASE + '/transcripts/' + encodeURIComponent(platform) + '/' + encodeURIComponent(meetingId),\n      headers: { 'X-API-Key': apiKey }\n    });\n\n    if (!data.segments || data.segments.length === 0) {\n      let result = 'No transcript segments available yet.';\n      if (data.status) result += ' Meeting status: ' + data.status;\n      return [{ json: { result } }];\n    }\n\n    let result = 'Transcript for ' + platform + ' meeting ' + meetingId + '\\n';\n    result += 'Status: ' + (data.status || 'unknown') + '\\n';\n    if (data.start_time) result += 'Started: ' + data.start_time + '\\n';\n    if (data.end_time) result += 'Ended: ' + data.end_time + '\\n';\n    result += '\\n--- Transcript ---\\n\\n';\n\n    for (const seg of data.segments) {\n      const speaker = seg.speaker || 'Unknown';\n      const text = seg.text || '';\n      result += speaker + ': ' + text + '\\n';\n    }\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to fetch transcript: ' + err.message } }];\n  }\n\n// ── ACTION: share_transcript ──\n} else if (action === 'share_transcript') {\n  let platform = input.platform;\n  let meetingId = input.meeting_id;\n\n  if (input.meeting_url && (!platform || !meetingId)) {\n    const parsed = parseMeetingUrl(input.meeting_url);\n    if (parsed) {\n      platform = parsed.platform;\n      meetingId = parsed.native_meeting_id;\n    }\n  }\n\n  if (!platform || !meetingId) {\n    return [{ json: { error: 'Parameters \"platform\" and \"meeting_id\" are required.' } }];\n  }\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: API_BASE + '/transcripts/' + encodeURIComponent(platform) + '/' + encodeURIComponent(meetingId) + '/share',\n      headers: apiHeaders\n    });\n\n    let result = 'Shareable transcript link created:\\n';\n    result += '  URL: ' + data.url + '\\n';\n    result += '  Expires: ' + data.expires_at + '\\n';\n    result += '  Valid for: ' + Math.round(data.expires_in_seconds / 60) + ' minutes';\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create share link: ' + err.message } }];\n  }\n\n// ── ACTION: list_bots ──\n} else if (action === 'list_bots') {\n  try {\n    const data = await helpers.httpRequest({\n      method: 'GET',\n      url: API_BASE + '/bots/status',\n      headers: { 'X-API-Key': apiKey }\n    });\n\n    const bots = data.running_bots || [];\n    if (bots.length === 0) {\n      return [{ json: { result: 'No bots currently running.' } }];\n    }\n\n    let result = 'Running bots (' + bots.length + '):\\n\\n';\n    for (const bot of bots) {\n      result += '- ' + (bot.platform || 'unknown') + ' / ' + (bot.native_meeting_id || bot.meeting_id_from_name || '?') + '\\n';\n      result += '  Status: ' + (bot.normalized_status || bot.status || 'unknown') + '\\n';\n      if (bot.created_at) result += '  Started: ' + bot.created_at + '\\n';\n      result += '\\n';\n    }\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list bots: ' + err.message } }];\n  }\n\n// ── ACTION: stop_bot ──\n} else if (action === 'stop_bot') {\n  let platform = input.platform;\n  let meetingId = input.meeting_id;\n\n  if (input.meeting_url && (!platform || !meetingId)) {\n    const parsed = parseMeetingUrl(input.meeting_url);\n    if (parsed) {\n      platform = parsed.platform;\n      meetingId = parsed.native_meeting_id;\n    }\n  }\n\n  if (!platform || !meetingId) {\n    return [{ json: { error: 'Parameters \"platform\" and \"meeting_id\" are required.' } }];\n  }\n\n  try {\n    await helpers.httpRequest({\n      method: 'DELETE',\n      url: API_BASE + '/bots/' + encodeURIComponent(platform) + '/' + encodeURIComponent(meetingId),\n      headers: { 'X-API-Key': apiKey }\n    });\n\n    return [{ json: { result: 'Bot stop request accepted. The bot will leave the meeting shortly.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to stop bot: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: deploy_meeting_bot, get_transcript, share_transcript, list_bots, stop_bot' } }];\n}"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Vexa Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Vexa Meetings",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "vexa-meetings"
+        }
+      },
+      {
+        "id": "tool-deploy",
+        "name": "deploy_meeting_bot",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "deploy_meeting_bot",
+          "description": "Deploy a transcription bot to a Google Meet, Teams, or Zoom meeting. The bot joins and transcribes the conversation. Parameters: meeting_url (required, full meeting URL), language (optional, e.g. 'en', 'de'), bot_name (optional, display name in meeting), recording (optional, true/false)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "deploy_meeting_bot",
+              "meeting_url": "={{ $fromAI('meeting_url', 'Full meeting URL (Google Meet, Teams, or Zoom)', 'string') }}",
+              "language": "={{ $fromAI('language', 'Transcription language code (e.g. en, de). Optional, default auto-detect.', 'string') }}",
+              "bot_name": "={{ $fromAI('bot_name', 'Display name for the bot in the meeting. Optional.', 'string') }}",
+              "recording": "={{ $fromAI('recording', 'Enable recording (true/false). Optional.', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "meeting_url", "displayName": "meeting_url", "type": "string", "description": "Full meeting URL (Google Meet, Teams, or Zoom)", "required": true },
+              { "id": "language", "displayName": "language", "type": "string", "description": "Transcription language code (e.g. en, de)", "required": false },
+              { "id": "bot_name", "displayName": "bot_name", "type": "string", "description": "Display name for the bot in the meeting", "required": false },
+              { "id": "recording", "displayName": "recording", "type": "string", "description": "Enable recording (true/false)", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-transcript",
+        "name": "get_transcript",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "get_transcript",
+          "description": "Get the transcript of a meeting. Parameters: platform (google_meet/teams/zoom), meeting_id (the native meeting ID), OR meeting_url (full URL, platform and ID are extracted automatically)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_transcript",
+              "platform": "={{ $fromAI('platform', 'Platform: google_meet, teams, or zoom', 'string') }}",
+              "meeting_id": "={{ $fromAI('meeting_id', 'Native meeting ID', 'string') }}",
+              "meeting_url": "={{ $fromAI('meeting_url', 'Full meeting URL (alternative to platform+meeting_id)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "platform", "displayName": "platform", "type": "string", "description": "Platform: google_meet, teams, or zoom", "required": false },
+              { "id": "meeting_id", "displayName": "meeting_id", "type": "string", "description": "Native meeting ID", "required": false },
+              { "id": "meeting_url", "displayName": "meeting_url", "type": "string", "description": "Full meeting URL", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-share",
+        "name": "share_transcript",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "share_transcript",
+          "description": "Create a temporary shareable link for a meeting transcript (valid ~15 min). Parameters: platform (google_meet/teams/zoom), meeting_id, OR meeting_url",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "share_transcript",
+              "platform": "={{ $fromAI('platform', 'Platform: google_meet, teams, or zoom', 'string') }}",
+              "meeting_id": "={{ $fromAI('meeting_id', 'Native meeting ID', 'string') }}",
+              "meeting_url": "={{ $fromAI('meeting_url', 'Full meeting URL', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "platform", "displayName": "platform", "type": "string", "required": false },
+              { "id": "meeting_id", "displayName": "meeting_id", "type": "string", "required": false },
+              { "id": "meeting_url", "displayName": "meeting_url", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list",
+        "name": "list_bots",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 550],
+        "parameters": {
+          "name": "list_bots",
+          "description": "List all currently running Vexa meeting bots. No parameters needed.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_bots"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-stop",
+        "name": "stop_bot",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 550],
+        "parameters": {
+          "name": "stop_bot",
+          "description": "Stop and remove a bot from a meeting. Parameters: platform (google_meet/teams/zoom), meeting_id, OR meeting_url",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "stop_bot",
+              "platform": "={{ $fromAI('platform', 'Platform: google_meet, teams, or zoom', 'string') }}",
+              "meeting_id": "={{ $fromAI('meeting_id', 'Native meeting ID', 'string') }}",
+              "meeting_url": "={{ $fromAI('meeting_url', 'Full meeting URL', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "platform", "displayName": "platform", "type": "string", "required": false },
+              { "id": "meeting_id", "displayName": "meeting_id", "type": "string", "required": false },
+              { "id": "meeting_url", "displayName": "meeting_url", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "deploy_meeting_bot": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_transcript": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "share_transcript": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "list_bots": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "stop_bot": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}
