@@ -59,20 +59,20 @@
         "position": [0, 300],
         "parameters": {
           "name": "list_tasks",
-          "description": "List tasks from Todoist. Parameters: project_id (filter by project ID, optional), filter (Todoist filter expression like 'today', 'overdue', 'p1', optional)",
+          "description": "List tasks from Todoist. Parameters: project_id (project ID to filter by, or empty string for all), filter (Todoist filter expression like 'today', 'overdue', 'p1', or empty string for all)",
           "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_tasks",
-              "project_id": "={{ $fromAI('project_id', 'Project ID to filter by (optional)', 'string') }}",
-              "filter": "={{ $fromAI('filter', 'Todoist filter: today, overdue, p1, etc. (optional)', 'string') }}"
+              "project_id": "={{ $fromAI('project_id', 'Project ID to filter by, or empty string for all tasks', 'string') }}",
+              "filter": "={{ $fromAI('filter', 'Todoist filter expression like today/overdue/p1, or empty string for all tasks', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
               { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID", "required": false },
-              { "id": "filter", "displayName": "filter", "type": "string", "description": "Todoist filter expression", "required": false }
+              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID or empty string", "required": true },
+              { "id": "filter", "displayName": "filter", "type": "string", "description": "Filter expression or empty string", "required": true }
             ],
             "attemptToConvertTypes": false, "convertFieldsToString": false
           }
@@ -86,28 +86,28 @@
         "position": [250, 300],
         "parameters": {
           "name": "create_task",
-          "description": "Create a new task in Todoist. Parameters: content (task title, required), description (details, optional), due_string (natural language due date like 'tomorrow', 'next Monday', 'Jan 15', optional), priority (1-4 where 4 is highest/P1, optional), project_id (project ID, optional), labels (comma-separated label names, optional)",
+          "description": "Create a new task in Todoist. Parameters: content (task title, required), description (task details or empty string), due_string (natural language due date like 'tomorrow'/'next Monday' or empty string), priority (1-4 where 4=P1/highest, or empty string for default), project_id (project ID or empty string for inbox), labels (comma-separated label names or empty string)",
           "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
               "action": "create_task",
               "content": "={{ $fromAI('content', 'Task title', 'string') }}",
-              "description": "={{ $fromAI('description', 'Task description (optional)', 'string') }}",
-              "due_string": "={{ $fromAI('due_string', 'Due date in natural language: tomorrow, next Monday, Jan 15 (optional)', 'string') }}",
-              "priority": "={{ $fromAI('priority', 'Priority 1-4 where 4=P1/highest (optional)', 'string') }}",
-              "project_id": "={{ $fromAI('project_id', 'Project ID (optional)', 'string') }}",
-              "labels": "={{ $fromAI('labels', 'Comma-separated label names (optional)', 'string') }}"
+              "description": "={{ $fromAI('description', 'Task description or empty string', 'string') }}",
+              "due_string": "={{ $fromAI('due_string', 'Due date in natural language or empty string', 'string') }}",
+              "priority": "={{ $fromAI('priority', 'Priority 1-4 or empty string for default', 'string') }}",
+              "project_id": "={{ $fromAI('project_id', 'Project ID or empty string for inbox', 'string') }}",
+              "labels": "={{ $fromAI('labels', 'Comma-separated labels or empty string', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
               { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
               { "id": "content", "displayName": "content", "type": "string", "description": "Task title", "required": true },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Task description", "required": false },
-              { "id": "due_string", "displayName": "due_string", "type": "string", "description": "Due date", "required": false },
-              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority 1-4", "required": false },
-              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID", "required": false },
-              { "id": "labels", "displayName": "labels", "type": "string", "description": "Labels", "required": false }
+              { "id": "description", "displayName": "description", "type": "string", "description": "Task description or empty string", "required": true },
+              { "id": "due_string", "displayName": "due_string", "type": "string", "description": "Due date or empty string", "required": true },
+              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority 1-4 or empty string", "required": true },
+              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID or empty string", "required": true },
+              { "id": "labels", "displayName": "labels", "type": "string", "description": "Labels or empty string", "required": true }
             ],
             "attemptToConvertTypes": false, "convertFieldsToString": false
           }
