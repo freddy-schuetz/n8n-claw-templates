@@ -53,6 +53,31 @@ In the **server workflow**, parameters are extracted from the user's message via
 "city": "={{ $fromAI('city', 'City name', 'string') }}"
 ```
 
+### Required vs Optional Parameters
+
+**Problem:** When a parameter is marked as `"required": true` in the toolWorkflow schema, the MCP server exposes it as required in `tools/list`. If the AI agent doesn't provide it, the tool call fails — even if the sub-workflow code handles missing values with defaults.
+
+**Rule:** Only mark a parameter as `"required": true` if the tool genuinely cannot work without it. Parameters with defaults in the Code node should be `"required": false`.
+
+**Example — wrong:**
+```json
+"schema": [
+  { "id": "action", "type": "string", "required": true },
+  { "id": "limit", "type": "string", "required": true }
+]
+```
+Here `limit` has a default in the Code node (`const lim = parseInt(input.limit) || 10`), so marking it required forces the AI to always provide it — even when the default is fine.
+
+**Example — correct:**
+```json
+"schema": [
+  { "id": "action", "type": "string", "required": true },
+  { "id": "limit", "type": "string", "required": false }
+]
+```
+
+**Safety net:** The MCP Client in n8n-claw auto-fills missing required params with empty strings via `tools/list` schema inspection. But this is a fallback — templates should set `required` correctly in the first place.
+
 ### Placeholders
 
 - `REPLACE_SUB_WORKFLOW_ID` — patched automatically by Library Manager during install
