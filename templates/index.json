@@ -248,6 +248,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "type": "native",
+      "category": "productivity",
+      "description": "Search, read, and create Notion pages with markdown content support",
+      "credentials_required": [
+        {
+          "key": "notion_token",
+          "label": "Notion Integration Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

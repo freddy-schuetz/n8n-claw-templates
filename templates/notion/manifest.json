@@ -1,0 +1,34 @@
+{
+  "id": "notion",
+  "name": "Notion",
+  "version": "1.0.0",
+  "updated": "2026-03-12",
+  "type": "native",
+  "category": "productivity",
+  "description": "Search, read, and create Notion pages with markdown content support",
+  "credentials_required": [
+    {
+      "key": "notion_token",
+      "label": "Notion Integration Token",
+      "hint": "Create an internal integration at notion.so/profile/integrations — then share pages with the integration"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "search_pages",
+      "description": "Search for pages in Notion by title"
+    },
+    {
+      "name": "read_page",
+      "description": "Read the content of a Notion page"
+    },
+    {
+      "name": "create_page",
+      "description": "Create a new page in Notion with markdown content"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
