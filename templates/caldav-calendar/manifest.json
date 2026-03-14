@@ -1,0 +1,49 @@
+{
+  "id": "caldav-calendar",
+  "name": "CalDAV Calendar",
+  "version": "1.0.0",
+  "updated": "2026-03-14",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage calendars on any CalDAV server — list, create, update, and delete events (Nextcloud, Radicale, Baikal, etc.)",
+  "credentials_required": [
+    {
+      "key": "caldav_url",
+      "label": "CalDAV Server URL (e.g. https://nextcloud.example.com/remote.php/dav)"
+    },
+    {
+      "key": "caldav_username",
+      "label": "Username"
+    },
+    {
+      "key": "caldav_password",
+      "label": "Password or App Password"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_calendars",
+      "description": "List all available calendars"
+    },
+    {
+      "name": "list_events",
+      "description": "List events from a calendar, optionally filtered by date range"
+    },
+    {
+      "name": "create_event",
+      "description": "Create a new calendar event"
+    },
+    {
+      "name": "update_event",
+      "description": "Update an existing calendar event"
+    },
+    {
+      "name": "delete_event",
+      "description": "Delete a calendar event"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

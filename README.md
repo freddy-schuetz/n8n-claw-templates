@@ -59,6 +59,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
+| CalDAV Calendar | Manage calendars on any CalDAV server — list, create, update, delete events (Nextcloud, Radicale, Baikal) | CalDAV URL, Username, Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [GitHub](https://github.com/) | Full GitHub integration: repos, issues, PRs, code search, file content, releases, notifications | GitHub PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
@@ -82,6 +83,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
+| [Deutsche Bahn](https://v6.db.transport.rest/) | Search train connections, departures, and stations across Germany | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Wiener Linien](https://www.wienerlinien.at/) | Plan routes with Vienna public transport, get your station ID from [this CSV File](https://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv) (yes, a CSV file, don't ask), more details on the [Routingservice Wien](https://www.data.gv.at/datasets/9c203fec-dc0d-412c-a7a3-7fd77d0346f1?locale=de) page | None | [@lcx](https://github.com/lcx) |
 
 ### Utilities

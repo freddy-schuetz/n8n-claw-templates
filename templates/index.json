@@ -289,6 +289,28 @@
       "description": "Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients (4M+ products, no API key needed)",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "deutsche-bahn",
+      "name": "Deutsche Bahn",
+      "type": "native",
+      "category": "transport",
+      "description": "Search train connections, departures, and stations across Germany (db-rest API, free)",
+      "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
+      "id": "caldav-calendar",
+      "name": "CalDAV Calendar",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage calendars on any CalDAV server — list, create, update, and delete events (Nextcloud, Radicale, Baikal, etc.)",
+      "credentials_required": [
+        { "key": "caldav_url", "label": "CalDAV Server URL" },
+        { "key": "caldav_username", "label": "Username" },
+        { "key": "caldav_password", "label": "Password or App Password" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
