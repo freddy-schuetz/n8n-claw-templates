@@ -1,0 +1,57 @@
+{
+  "id": "nextcloud-files",
+  "name": "Nextcloud Files",
+  "version": "1.0.0",
+  "updated": "2026-03-15",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload, move, and delete files and folders",
+  "credentials_required": [
+    {
+      "key": "nextcloud_url",
+      "label": "Nextcloud URL (e.g. https://cloud.example.com)"
+    },
+    {
+      "key": "nextcloud_username",
+      "label": "Username"
+    },
+    {
+      "key": "nextcloud_password",
+      "label": "App Password (Settings > Security > App passwords)"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_files",
+      "description": "List files and folders in a directory"
+    },
+    {
+      "name": "read_file",
+      "description": "Read the text content of a file"
+    },
+    {
+      "name": "write_file",
+      "description": "Create or overwrite a file with text content"
+    },
+    {
+      "name": "upload_from_url",
+      "description": "Download a file from a URL and save it to Nextcloud"
+    },
+    {
+      "name": "create_folder",
+      "description": "Create a new folder"
+    },
+    {
+      "name": "delete_file",
+      "description": "Delete a file or folder"
+    },
+    {
+      "name": "move_file",
+      "description": "Move or rename a file or folder"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

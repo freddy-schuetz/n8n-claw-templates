@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-12",
+  "updated": "2026-03-15",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -309,6 +309,19 @@
         { "key": "caldav_url", "label": "CalDAV Server URL" },
         { "key": "caldav_username", "label": "Username" },
         { "key": "caldav_password", "label": "Password or App Password" }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "nextcloud-files",
+      "name": "Nextcloud Files",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload, move, and delete files and folders",
+      "credentials_required": [
+        { "key": "nextcloud_url", "label": "Nextcloud URL" },
+        { "key": "nextcloud_username", "label": "Username" },
+        { "key": "nextcloud_password", "label": "App Password" }
       ],
       "version": "1.0.0"
     }
