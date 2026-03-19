@@ -1,8 +1,8 @@
 {
   "id": "email-imap-smtp",
   "name": "Email (IMAP/SMTP)",
-  "version": "1.0.0",
-  "updated": "2026-03-10",
+  "version": "1.1.0",
+  "updated": "2026-03-19",
   "type": "native",
   "category": "communication",
   "description": "Read and send emails via IMAP/SMTP (requires email-bridge service and email account credentials)",
@@ -43,7 +43,7 @@
   "tools": [
     {
       "name": "read_emails",
-      "description": "Read recent emails from inbox or a specific folder"
+      "description": "Read emails with optional filters (folder, limit, since, before, unseen, from)"
     },
     {
       "name": "send_email",

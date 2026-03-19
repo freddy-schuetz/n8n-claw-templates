@@ -91,7 +91,7 @@
         { "key": "imap_host", "label": "IMAP Server" },
         { "key": "smtp_host", "label": "SMTP Server" }
       ],
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "id": "wiener-linien",
