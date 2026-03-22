@@ -1,0 +1,238 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Vikunja",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Vikunja Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_projects';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.vikunja&select=cred_key,cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0) {\n  return [{ json: { error: 'Vikunja credentials not configured. Use add_credential to set them up.' } }];\n}\n\nconst baseUrl = (creds.find(c => c.cred_key === 'vikunja_url')?.cred_value || '').replace(/\\/$/, '');\nconst token = creds.find(c => c.cred_key === 'vikunja_token')?.cred_value;\n\nif (!baseUrl || !token) {\n  return [{ json: { error: 'Vikunja URL and API token are both required. Use add_credential to configure them.' } }];\n}\n\nconst API = baseUrl + '/api/v1';\nconst apiHeaders = {\n  'Authorization': 'Bearer ' + token,\n  'Content-Type': 'application/json'\n};\n\nconst priorityLabels = { 0: '', 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Urgent' };\n\nfunction formatTask(t) {\n  let line = '- ';\n  if (t.done) line += '[x] '; else line += '[ ] ';\n  line += t.title;\n  if (t.priority > 0) line += ' [' + (priorityLabels[t.priority] || 'P' + t.priority) + ']';\n  if (t.due_date && t.due_date !== '0001-01-01T00:00:00Z') {\n    line += ' (due: ' + t.due_date.substring(0, 10) + ')';\n  }\n  if (t.description) line += '\\n  ' + t.description.substring(0, 100);\n  return line;\n}\n\n// === list_projects ===\nif (action === 'list_projects') {\n  try {\n    const projects = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/projects',\n      headers: apiHeaders\n    });\n\n    if (!Array.isArray(projects) || projects.length === 0) {\n      return [{ json: { result: 'No projects found.' } }];\n    }\n\n    let result = 'Projects (' + projects.length + '):\\n\\n';\n    for (const p of projects) {\n      result += '- **' + p.title + '** (ID: ' + p.id + ')';\n      if (p.description) result += '\\n  ' + p.description.substring(0, 100);\n      if (p.is_archived) result += ' [archived]';\n      result += '\\n';\n    }\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list projects: ' + err.message } }];\n  }\n\n// === list_tasks ===\n} else if (action === 'list_tasks') {\n  const projectId = input.project_id;\n  if (!projectId) return [{ json: { error: 'Parameter \"project_id\" is required. Use vikunja_list_projects to find project IDs.' } }];\n\n  try {\n    let url = API + '/projects/' + projectId + '/tasks';\n    const params = [];\n    if (input.page && input.page !== '') params.push('page=' + input.page);\n    if (input.per_page && input.per_page !== '') params.push('per_page=' + input.per_page);\n    if (input.sort_by && input.sort_by !== '') params.push('sort_by=' + encodeURIComponent(input.sort_by));\n    if (input.order_by && input.order_by !== '') params.push('order_by=' + encodeURIComponent(input.order_by));\n    if (params.length > 0) url += '?' + params.join('&');\n\n    const tasks = await helpers.httpRequest({ method: 'GET', url, headers: apiHeaders });\n\n    if (!Array.isArray(tasks) || tasks.length === 0) {\n      return [{ json: { result: 'No tasks found in this project.' } }];\n    }\n\n    let result = 'Tasks (' + tasks.length + '):\\n\\n';\n    for (const t of tasks.slice(0, 25)) {\n      result += formatTask(t) + '\\n  ID: ' + t.id + '\\n\\n';\n    }\n    if (tasks.length > 25) result += '(' + (tasks.length - 25) + ' more tasks not shown)';\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list tasks: ' + err.message } }];\n  }\n\n// === get_task ===\n} else if (action === 'get_task') {\n  const taskId = input.task_id;\n  if (!taskId) return [{ json: { error: 'Parameter \"task_id\" is required.' } }];\n\n  try {\n    const task = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/tasks/' + taskId,\n      headers: apiHeaders\n    });\n\n    let result = '**' + task.title + '**\\n';\n    result += 'ID: ' + task.id + '\\n';\n    result += 'Status: ' + (task.done ? 'Done' : 'Open') + '\\n';\n    if (task.priority > 0) result += 'Priority: ' + (priorityLabels[task.priority] || task.priority) + '\\n';\n    if (task.due_date && task.due_date !== '0001-01-01T00:00:00Z') {\n      result += 'Due: ' + task.due_date.substring(0, 10) + '\\n';\n    }\n    if (task.description) result += '\\nDescription:\\n' + task.description + '\\n';\n    if (task.labels && task.labels.length > 0) {\n      result += 'Labels: ' + task.labels.map(l => l.title).join(', ') + '\\n';\n    }\n    result += 'Created: ' + (task.created || '?') + '\\n';\n    result += 'Updated: ' + (task.updated || '?') + '\\n';\n    if (task.project_id) result += 'Project ID: ' + task.project_id + '\\n';\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get task: ' + err.message } }];\n  }\n\n// === create_task ===\n} else if (action === 'create_task') {\n  const projectId = input.project_id;\n  const title = input.title;\n  if (!projectId) return [{ json: { error: 'Parameter \"project_id\" is required.' } }];\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n\n  try {\n    const body = { title };\n    if (input.description && input.description !== '') body.description = input.description;\n    if (input.due_date && input.due_date !== '') body.due_date = input.due_date;\n    if (input.priority && input.priority !== '') body.priority = parseInt(input.priority) || 0;\n\n    const task = await helpers.httpRequest({\n      method: 'PUT',\n      url: API + '/projects/' + projectId + '/tasks',\n      headers: apiHeaders,\n      body: JSON.stringify(body)\n    });\n\n    const parsed = typeof task === 'string' ? JSON.parse(task) : task;\n    let result = 'Task created: **' + parsed.title + '**';\n    if (parsed.due_date && parsed.due_date !== '0001-01-01T00:00:00Z') {\n      result += ' (due: ' + parsed.due_date.substring(0, 10) + ')';\n    }\n    result += '\\nID: ' + parsed.id;\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create task: ' + err.message } }];\n  }\n\n// === update_task ===\n} else if (action === 'update_task') {\n  const taskId = input.task_id;\n  if (!taskId) return [{ json: { error: 'Parameter \"task_id\" is required.' } }];\n\n  try {\n    const body = {};\n    if (input.title && input.title !== '') body.title = input.title;\n    if (input.description && input.description !== '') body.description = input.description;\n    if (input.due_date && input.due_date !== '') body.due_date = input.due_date;\n    if (input.done && input.done !== '') body.done = input.done === 'true';\n    if (input.priority && input.priority !== '') body.priority = parseInt(input.priority) || 0;\n\n    if (Object.keys(body).length === 0) {\n      return [{ json: { error: 'No fields to update. Provide at least one of: title, description, due_date, done, priority.' } }];\n    }\n\n    const task = await helpers.httpRequest({\n      method: 'POST',\n      url: API + '/tasks/' + taskId,\n      headers: apiHeaders,\n      body: JSON.stringify(body)\n    });\n\n    const parsed = typeof task === 'string' ? JSON.parse(task) : task;\n    let result = 'Task ' + taskId + ' updated: **' + (parsed.title || '') + '**';\n    if (parsed.done) result += ' [Done]';\n    result += '\\nID: ' + parsed.id;\n\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update task: ' + err.message } }];\n  }\n\n// === delete_task ===\n} else if (action === 'delete_task') {\n  const taskId = input.task_id;\n  if (!taskId) return [{ json: { error: 'Parameter \"task_id\" is required.' } }];\n\n  try {\n    await helpers.httpRequest({\n      method: 'DELETE',\n      url: API + '/tasks/' + taskId,\n      headers: apiHeaders\n    });\n    return [{ json: { result: 'Task ' + taskId + ' deleted.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete task: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Use list_projects, list_tasks, get_task, create_task, update_task, or delete_task.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Vikunja Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Vikunja",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "vikunja"
+        }
+      },
+      {
+        "id": "tool-list-projects",
+        "name": "vikunja_list_projects",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "vikunja_list_projects",
+          "description": "List all Vikunja projects with their IDs. No parameters needed.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_projects"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-tasks",
+        "name": "vikunja_list_tasks",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "vikunja_list_tasks",
+          "description": "List tasks in a Vikunja project. Parameters: project_id (required, from vikunja_list_projects), page (page number, default 1), per_page (tasks per page, default 20), sort_by (field to sort by like 'due_date' or 'priority'), order_by ('asc' or 'desc')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_tasks",
+              "project_id": "={{ $fromAI('project_id', 'Project ID from vikunja_list_projects', 'string') }}",
+              "page": "={{ $fromAI('page', 'Page number or empty string for page 1', 'string') }}",
+              "per_page": "={{ $fromAI('per_page', 'Tasks per page or empty string for default 20', 'string') }}",
+              "sort_by": "={{ $fromAI('sort_by', 'Sort field like due_date or priority, or empty string', 'string') }}",
+              "order_by": "={{ $fromAI('order_by', 'asc or desc, or empty string for default', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID", "required": true },
+              { "id": "page", "displayName": "page", "type": "string", "description": "Page number or empty string", "required": false },
+              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Tasks per page or empty string", "required": false },
+              { "id": "sort_by", "displayName": "sort_by", "type": "string", "description": "Sort field or empty string", "required": false },
+              { "id": "order_by", "displayName": "order_by", "type": "string", "description": "asc or desc or empty string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-task",
+        "name": "vikunja_get_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "vikunja_get_task",
+          "description": "Get details of a single Vikunja task. Parameters: task_id (required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_task",
+              "task_id": "={{ $fromAI('task_id', 'Task ID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task_id", "displayName": "task_id", "type": "string", "description": "Task ID", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-task",
+        "name": "vikunja_create_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "vikunja_create_task",
+          "description": "Create a new task in a Vikunja project. Parameters: project_id (required), title (required), description (task details), due_date (ISO format like '2026-04-01T12:00:00Z'), priority (0=unset, 1=low, 2=medium, 3=high, 4=urgent)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_task",
+              "project_id": "={{ $fromAI('project_id', 'Project ID', 'string') }}",
+              "title": "={{ $fromAI('title', 'Task title', 'string') }}",
+              "description": "={{ $fromAI('description', 'Task description or empty string', 'string') }}",
+              "due_date": "={{ $fromAI('due_date', 'Due date in ISO format or empty string', 'string') }}",
+              "priority": "={{ $fromAI('priority', 'Priority 0-4 or empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "project_id", "displayName": "project_id", "type": "string", "description": "Project ID", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Task title", "required": true },
+              { "id": "description", "displayName": "description", "type": "string", "description": "Description or empty string", "required": false },
+              { "id": "due_date", "displayName": "due_date", "type": "string", "description": "Due date or empty string", "required": false },
+              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority 0-4 or empty string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-update-task",
+        "name": "vikunja_update_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "vikunja_update_task",
+          "description": "Update an existing Vikunja task. Parameters: task_id (required), title (new title), description (new description), due_date (new due date in ISO format), done ('true' or 'false' to change completion), priority (0-4)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_task",
+              "task_id": "={{ $fromAI('task_id', 'Task ID', 'string') }}",
+              "title": "={{ $fromAI('title', 'New title or empty string to keep current', 'string') }}",
+              "description": "={{ $fromAI('description', 'New description or empty string to keep current', 'string') }}",
+              "due_date": "={{ $fromAI('due_date', 'New due date or empty string to keep current', 'string') }}",
+              "done": "={{ $fromAI('done', 'true or false or empty string to keep current', 'string') }}",
+              "priority": "={{ $fromAI('priority', 'Priority 0-4 or empty string to keep current', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task_id", "displayName": "task_id", "type": "string", "description": "Task ID", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Title or empty string", "required": false },
+              { "id": "description", "displayName": "description", "type": "string", "description": "Description or empty string", "required": false },
+              { "id": "due_date", "displayName": "due_date", "type": "string", "description": "Due date or empty string", "required": false },
+              { "id": "done", "displayName": "done", "type": "string", "description": "Done status or empty string", "required": false },
+              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority or empty string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-delete-task",
+        "name": "vikunja_delete_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1250, 300],
+        "parameters": {
+          "name": "vikunja_delete_task",
+          "description": "Delete a Vikunja task. Parameters: task_id (required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_task",
+              "task_id": "={{ $fromAI('task_id', 'Task ID to delete', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task_id", "displayName": "task_id", "type": "string", "description": "Task ID", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "vikunja_list_projects": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "vikunja_list_tasks": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "vikunja_get_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "vikunja_create_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "vikunja_update_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "vikunja_delete_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

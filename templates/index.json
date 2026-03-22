@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-15",
+  "updated": "2026-03-23",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -76,6 +76,18 @@
           "key": "newsapi_key",
           "label": "NewsAPI Key"
         }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "type": "native",
+      "category": "communication",
+      "description": "Send messages to another OpenClaw (n8n-claw) agent instance on a remote server and receive responses",
+      "credentials_required": [
+        { "key": "openclaw_url", "label": "OpenClaw Instance URL" },
+        { "key": "openclaw_api_key", "label": "OpenClaw Webhook API Key" }
       ],
       "version": "1.0.0"
     },
@@ -163,6 +175,18 @@
       "category": "entertainment",
       "description": "Search recipes by name or get a random recipe with ingredients and instructions (TheMealDB, free)",
       "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
+      "id": "nocodb-crm",
+      "name": "NocoDB CRM",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage NocoDB tables and records: list bases, tables, and CRUD operations on records with filtering and sorting",
+      "credentials_required": [
+        { "key": "nocodb_url", "label": "NocoDB Instance URL" },
+        { "key": "nocodb_token", "label": "NocoDB API Token" }
+      ],
       "version": "1.0.0"
     },
     {
@@ -309,6 +333,18 @@
         { "key": "caldav_url", "label": "CalDAV Server URL" },
         { "key": "caldav_username", "label": "Username" },
         { "key": "caldav_password", "label": "Password or App Password" }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "vikunja",
+      "name": "Vikunja",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage Vikunja tasks and projects: list, create, update, and delete tasks with due dates and priorities",
+      "credentials_required": [
+        { "key": "vikunja_url", "label": "Vikunja Instance URL" },
+        { "key": "vikunja_token", "label": "Vikunja API Token" }
       ],
       "version": "1.0.0"
     },

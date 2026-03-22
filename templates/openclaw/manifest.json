@@ -1,0 +1,31 @@
+{
+  "id": "openclaw",
+  "name": "OpenClaw",
+  "version": "1.0.0",
+  "updated": "2026-03-23",
+  "type": "native",
+  "category": "communication",
+  "description": "Send messages to another OpenClaw (n8n-claw) agent instance on a remote server and receive responses",
+  "credentials_required": [
+    {
+      "key": "openclaw_url",
+      "label": "OpenClaw Instance URL",
+      "hint": "Base URL of the remote n8n-claw instance (e.g. https://n8n.example.com)"
+    },
+    {
+      "key": "openclaw_api_key",
+      "label": "OpenClaw Webhook API Key",
+      "hint": "The WEBHOOK_SECRET of the remote instance (X-API-Key header value)"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "openclaw_send_message",
+      "description": "Send a message to another OpenClaw agent instance and get the response"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

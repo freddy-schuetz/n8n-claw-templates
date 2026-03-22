@@ -1,0 +1,33 @@
+{
+  "id": "vikunja",
+  "name": "Vikunja",
+  "version": "1.0.0",
+  "updated": "2026-03-23",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage Vikunja tasks and projects: list, create, update, and delete tasks with due dates and priorities",
+  "credentials_required": [
+    {
+      "key": "vikunja_url",
+      "label": "Vikunja Instance URL",
+      "hint": "Base URL of your Vikunja instance (e.g. https://vikunja.example.com)"
+    },
+    {
+      "key": "vikunja_token",
+      "label": "Vikunja API Token",
+      "hint": "Settings > API Tokens in Vikunja"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "vikunja_list_projects", "description": "List all Vikunja projects" },
+    { "name": "vikunja_list_tasks", "description": "List tasks in a Vikunja project" },
+    { "name": "vikunja_get_task", "description": "Get details of a single Vikunja task" },
+    { "name": "vikunja_create_task", "description": "Create a new task in a Vikunja project" },
+    { "name": "vikunja_update_task", "description": "Update an existing Vikunja task" },
+    { "name": "vikunja_delete_task", "description": "Delete a Vikunja task" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

@@ -1,0 +1,90 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: OpenClaw",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "OpenClaw Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.openclaw&select=cred_key,cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0) {\n  return [{ json: { error: 'OpenClaw credentials not configured. Use add_credential to set them up.' } }];\n}\n\nconst baseUrl = (creds.find(c => c.cred_key === 'openclaw_url')?.cred_value || '').replace(/\\/$/, '');\nconst apiKey = creds.find(c => c.cred_key === 'openclaw_api_key')?.cred_value;\n\nif (!baseUrl || !apiKey) {\n  return [{ json: { error: 'OpenClaw URL and API key are both required. Use add_credential to configure them.' } }];\n}\n\nconst message = input.message;\nif (!message) {\n  return [{ json: { error: 'Parameter \"message\" is required.' } }];\n}\n\ntry {\n  const body = {\n    message: message,\n    user_id: (input.user_id && input.user_id !== '') ? input.user_id : 'openclaw-bridge',\n    session_id: (input.session_id && input.session_id !== '') ? input.session_id : 'openclaw-' + Date.now(),\n    source: (input.source && input.source !== '') ? input.source : 'openclaw'\n  };\n\n  if (input.metadata && input.metadata !== '') {\n    try {\n      body.metadata = typeof input.metadata === 'string' ? JSON.parse(input.metadata) : input.metadata;\n    } catch (e) {\n      return [{ json: { error: 'Invalid JSON in metadata parameter: ' + e.message } }];\n    }\n  } else {\n    body.metadata = {};\n  }\n\n  const resp = await helpers.httpRequest({\n    method: 'POST',\n    url: baseUrl + '/webhook/agent',\n    headers: {\n      'X-API-Key': apiKey,\n      'Content-Type': 'application/json'\n    },\n    body: JSON.stringify(body),\n    timeout: 120000\n  });\n\n  const parsed = typeof resp === 'string' ? JSON.parse(resp) : resp;\n\n  if (parsed.success === false) {\n    return [{ json: { error: 'Remote agent returned error: ' + (parsed.error || parsed.response || 'Unknown error') } }];\n  }\n\n  let result = '**Response from remote OpenClaw agent:**\\n\\n' + (parsed.response || '(empty response)');\n  if (parsed.session_id) result += '\\n\\nSession ID: ' + parsed.session_id;\n\n  return [{ json: { result } }];\n} catch (err) {\n  return [{ json: { error: 'Failed to reach remote OpenClaw instance: ' + err.message } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "OpenClaw Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: OpenClaw",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "openclaw"
+        }
+      },
+      {
+        "id": "tool-send-message",
+        "name": "openclaw_send_message",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "openclaw_send_message",
+          "description": "Send a message to another OpenClaw (n8n-claw) agent instance on a remote server and get the response. Parameters: message (required, the message to send), user_id (sender identifier, default 'openclaw-bridge'), session_id (for conversation continuity, auto-generated if empty), source (source identifier, default 'openclaw'), metadata (JSON string of additional metadata)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "message": "={{ $fromAI('message', 'The message to send to the remote agent', 'string') }}",
+              "user_id": "={{ $fromAI('user_id', 'User ID or empty string for default openclaw-bridge', 'string') }}",
+              "session_id": "={{ $fromAI('session_id', 'Session ID for conversation continuity or empty string for auto-generated', 'string') }}",
+              "source": "={{ $fromAI('source', 'Source identifier or empty string for default openclaw', 'string') }}",
+              "metadata": "={{ $fromAI('metadata', 'JSON string of additional metadata or empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "message", "displayName": "message", "type": "string", "description": "Message to send", "required": true },
+              { "id": "user_id", "displayName": "user_id", "type": "string", "description": "User ID or empty string", "required": false },
+              { "id": "session_id", "displayName": "session_id", "type": "string", "description": "Session ID or empty string", "required": false },
+              { "id": "source", "displayName": "source", "type": "string", "description": "Source or empty string", "required": false },
+              { "id": "metadata", "displayName": "metadata", "type": "string", "description": "Metadata JSON or empty string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "openclaw_send_message": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

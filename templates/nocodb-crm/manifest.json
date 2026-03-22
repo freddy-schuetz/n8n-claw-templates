@@ -1,0 +1,34 @@
+{
+  "id": "nocodb-crm",
+  "name": "NocoDB CRM",
+  "version": "1.0.0",
+  "updated": "2026-03-23",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage NocoDB tables and records: list bases, tables, and CRUD operations on records with filtering and sorting",
+  "credentials_required": [
+    {
+      "key": "nocodb_url",
+      "label": "NocoDB Instance URL",
+      "hint": "Base URL of your NocoDB instance (e.g. https://nocodb.example.com)"
+    },
+    {
+      "key": "nocodb_token",
+      "label": "NocoDB API Token",
+      "hint": "Account Settings > API Tokens in NocoDB"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "nocodb_list_bases", "description": "List all NocoDB bases (databases)" },
+    { "name": "nocodb_list_tables", "description": "List tables in a NocoDB base" },
+    { "name": "nocodb_list_records", "description": "List records from a NocoDB table with optional filtering and sorting" },
+    { "name": "nocodb_get_record", "description": "Get a single record by ID from a NocoDB table" },
+    { "name": "nocodb_create_record", "description": "Create a new record in a NocoDB table" },
+    { "name": "nocodb_update_record", "description": "Update an existing record in a NocoDB table" },
+    { "name": "nocodb_delete_record", "description": "Delete a record from a NocoDB table" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
