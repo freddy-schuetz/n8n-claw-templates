@@ -1,28 +1,28 @@
 {
   "id": "openclaw",
   "name": "OpenClaw",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "updated": "2026-03-23",
   "type": "native",
   "category": "communication",
-  "description": "Send messages to another OpenClaw (n8n-claw) agent instance on a remote server and receive responses",
+  "description": "Connect to an OpenClaw autonomous AI agent instance — send messages and receive responses via the OpenAI-compatible Gateway API",
   "credentials_required": [
     {
       "key": "openclaw_url",
-      "label": "OpenClaw Instance URL",
-      "hint": "Base URL of the remote n8n-claw instance (e.g. https://n8n.example.com)"
+      "label": "OpenClaw Gateway URL",
+      "hint": "Gateway URL of the OpenClaw instance (e.g. http://127.0.0.1:18789 or via Tailnet/tunnel)"
     },
     {
-      "key": "openclaw_api_key",
-      "label": "OpenClaw Webhook API Key",
-      "hint": "The WEBHOOK_SECRET of the remote instance (X-API-Key header value)"
+      "key": "openclaw_token",
+      "label": "OpenClaw Gateway Token",
+      "hint": "Bearer token for the Gateway API (see OpenClaw config)"
     }
   ],
   "credentials_optional": [],
   "tools": [
     {
       "name": "openclaw_send_message",
-      "description": "Send a message to another OpenClaw agent instance and get the response"
+      "description": "Send a message to an OpenClaw agent and get the response"
     }
   ],
   "author": "freddy-schuetz",

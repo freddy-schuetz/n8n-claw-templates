@@ -11,7 +11,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | Email (IMAP/SMTP) | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [OpenClaw](https://github.com/freddy-schuetz/n8n-claw) | Send messages to another OpenClaw agent instance and get responses | OpenClaw URL, API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [OpenClaw](https://openclaw.ai/) | Connect to an OpenClaw autonomous AI agent via Gateway API | Gateway URL, Gateway Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Entertainment
 

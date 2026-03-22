@@ -84,12 +84,12 @@
       "name": "OpenClaw",
       "type": "native",
       "category": "communication",
-      "description": "Send messages to another OpenClaw (n8n-claw) agent instance on a remote server and receive responses",
+      "description": "Connect to an OpenClaw autonomous AI agent instance via the OpenAI-compatible Gateway API",
       "credentials_required": [
-        { "key": "openclaw_url", "label": "OpenClaw Instance URL" },
-        { "key": "openclaw_api_key", "label": "OpenClaw Webhook API Key" }
+        { "key": "openclaw_url", "label": "OpenClaw Gateway URL" },
+        { "key": "openclaw_token", "label": "OpenClaw Gateway Token" }
       ],
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "id": "email-imap-smtp",
