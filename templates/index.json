@@ -87,7 +87,8 @@
       "description": "Connect to an OpenClaw autonomous AI agent instance via the OpenAI-compatible Gateway API",
       "credentials_required": [
         { "key": "openclaw_url", "label": "OpenClaw Gateway URL" },
-        { "key": "openclaw_token", "label": "OpenClaw Gateway Token" }
+        { "key": "openclaw_token", "label": "OpenClaw Gateway Token" },
+        { "key": "openclaw_caller_id", "label": "Caller ID" }
       ],
       "version": "2.0.0"
     },
