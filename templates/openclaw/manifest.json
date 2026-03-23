@@ -18,7 +18,13 @@
       "hint": "Bearer token for the Gateway API (see OpenClaw config)"
     }
   ],
-  "credentials_optional": [],
+  "credentials_optional": [
+    {
+      "key": "openclaw_caller_id",
+      "label": "Caller ID",
+      "hint": "How this agent identifies itself to OpenClaw (default: n8n-claw)"
+    }
+  ],
   "tools": [
     {
       "name": "openclaw_send_message",
