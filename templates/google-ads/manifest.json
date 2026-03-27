@@ -1,0 +1,57 @@
+{
+  "id": "google-ads",
+  "name": "Google Ads",
+  "version": "1.0.0-beta",
+  "updated": "2026-03-27",
+  "type": "native",
+  "category": "marketing",
+  "description": "Query Google Ads campaigns, ad groups, and performance data via GAQL (Beta: requires Google Ads API developer token)",
+  "credential_type": "oauth2",
+  "oauth_config": {
+    "provider": "google",
+    "shared_credential_id": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/adwords"
+    ]
+  },
+  "credentials_required": [
+    {
+      "key": "client_id",
+      "label": "Google OAuth Client ID",
+      "hint": "Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "client_secret",
+      "label": "Google OAuth Client Secret",
+      "hint": "From the same OAuth 2.0 Client ID page in Google Cloud Console",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "developer_token",
+      "label": "Google Ads Developer Token",
+      "hint": "Google Ads → Tools & Settings → API Center → Developer Token. Requires approved API access."
+    },
+    {
+      "key": "customer_id",
+      "label": "Google Ads Customer ID",
+      "hint": "Your 10-digit Google Ads account ID (without dashes), e.g. 1234567890"
+    }
+  ],
+  "credentials_optional": [
+    {
+      "key": "login_customer_id",
+      "label": "Manager Account ID (optional)",
+      "hint": "Only needed if accessing client accounts via a Manager (MCC) account"
+    }
+  ],
+  "tools": [
+    { "name": "list_campaigns", "description": "List Google Ads campaigns. Parameters: customer_id (optional, uses default), status_filter (optional: ENABLED, PAUSED, REMOVED)" },
+    { "name": "get_campaign_stats", "description": "Get campaign performance statistics. Parameters: campaign_id (required), date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), customer_id (optional)" },
+    { "name": "list_ad_groups", "description": "List ad groups for a campaign. Parameters: campaign_id (required), customer_id (optional)" },
+    { "name": "get_ad_performance", "description": "Get overall ad performance metrics. Parameters: date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), customer_id (optional)" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

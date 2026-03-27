@@ -6,11 +6,18 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ## Available Skills
 
+### Analytics
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [Google Analytics](https://analytics.google.com/) | Query GA4 reports, properties, and realtime data | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
 ### Communication
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | Email (IMAP/SMTP) | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Gmail](https://mail.google.com/) | Search, read, send emails and manage drafts via Gmail API | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [OpenClaw](https://openclaw.ai/) | Connect to an OpenClaw autonomous AI agent via Gateway API | Gateway URL, Gateway Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Entertainment
@@ -43,6 +50,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [DeepL Translate](https://www.deepl.com/) | Translate text between 30+ languages and detect languages | DeepL API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Dictionary](https://dictionaryapi.dev/) | English word definitions, phonetics, and examples | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
+### Marketing
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [Google Ads](https://ads.google.com/) | Query campaigns, ad groups, and performance data via GAQL (Beta) | Google OAuth2, Developer Token, Customer ID | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
 ### Meetings
 
 | Skill | Description | Credentials | Author |
@@ -62,6 +75,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|
 | CalDAV Calendar | Manage calendars on any CalDAV server — list, create, update, delete events (Nextcloud, Radicale, Baikal) | CalDAV URL, Username, Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [GitHub](https://github.com/) | Full GitHub integration: repos, issues, PRs, code search, file content, releases, notifications | GitHub PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Google Calendar](https://calendar.google.com/) | List, create, update, delete events in Google Calendar | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Nextcloud Files](https://nextcloud.com) | Manage files on Nextcloud via WebDAV — list, read, write, upload from URL, move, delete | Nextcloud URL, Username, App Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |

@@ -1,0 +1,43 @@
+{
+  "id": "google-calendar",
+  "name": "Google Calendar",
+  "version": "1.0.0",
+  "updated": "2026-03-27",
+  "type": "native",
+  "category": "productivity",
+  "description": "List, create, update and delete events in Google Calendar",
+  "credential_type": "oauth2",
+  "oauth_config": {
+    "provider": "google",
+    "shared_credential_id": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/calendar.readonly"
+    ]
+  },
+  "credentials_required": [
+    {
+      "key": "client_id",
+      "label": "Google OAuth Client ID",
+      "hint": "Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID. Redirect URI must be set to: https://YOUR-N8N-URL/webhook/oauth-callback",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "client_secret",
+      "label": "Google OAuth Client Secret",
+      "hint": "From the same OAuth 2.0 Client ID page in Google Cloud Console",
+      "shared_id": "google-oauth"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_events", "description": "List upcoming calendar events. Parameters: calendar_id (default 'primary'), time_min (ISO date, optional), time_max (ISO date, optional), max_results (default 10)" },
+    { "name": "create_event", "description": "Create a calendar event. Parameters: summary (required), start (ISO datetime, required), end (ISO datetime, required), description (optional), location (optional), calendar_id (default 'primary')" },
+    { "name": "update_event", "description": "Update an existing event. Parameters: event_id (required), summary (optional), start (optional), end (optional), description (optional), location (optional), calendar_id (default 'primary')" },
+    { "name": "delete_event", "description": "Delete a calendar event. Parameters: event_id (required), calendar_id (default 'primary')" },
+    { "name": "list_calendars", "description": "List all calendars accessible to the user. No parameters required." }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

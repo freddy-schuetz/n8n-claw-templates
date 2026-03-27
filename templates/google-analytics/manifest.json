@@ -1,0 +1,40 @@
+{
+  "id": "google-analytics",
+  "name": "Google Analytics",
+  "version": "1.0.0",
+  "updated": "2026-03-27",
+  "type": "native",
+  "category": "analytics",
+  "description": "Query Google Analytics 4 (GA4) reports, properties, and realtime data",
+  "credential_type": "oauth2",
+  "oauth_config": {
+    "provider": "google",
+    "shared_credential_id": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/analytics.readonly"
+    ]
+  },
+  "credentials_required": [
+    {
+      "key": "client_id",
+      "label": "Google OAuth Client ID",
+      "hint": "Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "client_secret",
+      "label": "Google OAuth Client Secret",
+      "hint": "From the same OAuth 2.0 Client ID page in Google Cloud Console",
+      "shared_id": "google-oauth"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "get_report", "description": "Run a GA4 report. Parameters: property_id (required, e.g. '123456789'), date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), metrics (comma-separated, e.g. 'sessions,activeUsers'), dimensions (comma-separated, optional, e.g. 'date,country')" },
+    { "name": "list_properties", "description": "List GA4 properties accessible to the user. No parameters required." },
+    { "name": "get_realtime_data", "description": "Get realtime analytics data. Parameters: property_id (required), metrics (comma-separated, e.g. 'activeUsers,screenPageViews')" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

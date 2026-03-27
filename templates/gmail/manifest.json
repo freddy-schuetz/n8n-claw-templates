@@ -1,0 +1,44 @@
+{
+  "id": "gmail",
+  "name": "Gmail",
+  "version": "1.0.0",
+  "updated": "2026-03-27",
+  "type": "native",
+  "category": "communication",
+  "description": "Search, read, send emails and manage drafts via Gmail API",
+  "credential_type": "oauth2",
+  "oauth_config": {
+    "provider": "google",
+    "shared_credential_id": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.send"
+    ]
+  },
+  "credentials_required": [
+    {
+      "key": "client_id",
+      "label": "Google OAuth Client ID",
+      "hint": "Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID. Redirect URI must be set to: https://YOUR-N8N-URL/webhook/oauth-callback",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "client_secret",
+      "label": "Google OAuth Client Secret",
+      "hint": "From the same OAuth 2.0 Client ID page in Google Cloud Console",
+      "shared_id": "google-oauth"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "search_emails", "description": "Search emails using Gmail search syntax. Parameters: query (Gmail search query, required), max_results (number, default 10)" },
+    { "name": "read_email", "description": "Read a specific email by ID. Parameters: message_id (required)" },
+    { "name": "send_email", "description": "Send an email. Parameters: to (required), subject (required), body (required), cc (optional), bcc (optional)" },
+    { "name": "create_draft", "description": "Create an email draft. Parameters: to (required), subject (required), body (required)" },
+    { "name": "list_labels", "description": "List all Gmail labels. No parameters required." }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

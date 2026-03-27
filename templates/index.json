@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-23",
+  "updated": "2026-03-27",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -361,6 +361,60 @@
         { "key": "nextcloud_password", "label": "App Password" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "type": "native",
+      "category": "communication",
+      "description": "Search, read, send emails and manage drafts via Gmail API (Google OAuth2)",
+      "credential_type": "oauth2",
+      "credentials_required": [
+        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
+        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "google-calendar",
+      "name": "Google Calendar",
+      "type": "native",
+      "category": "productivity",
+      "description": "List, create, update and delete events in Google Calendar (Google OAuth2)",
+      "credential_type": "oauth2",
+      "credentials_required": [
+        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
+        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "google-analytics",
+      "name": "Google Analytics",
+      "type": "native",
+      "category": "analytics",
+      "description": "Query Google Analytics 4 (GA4) reports, properties, and realtime data (Google OAuth2)",
+      "credential_type": "oauth2",
+      "credentials_required": [
+        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
+        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "google-ads",
+      "name": "Google Ads",
+      "type": "native",
+      "category": "marketing",
+      "description": "Query Google Ads campaigns, ad groups, and performance data via GAQL (Google OAuth2, Beta)",
+      "credential_type": "oauth2",
+      "credentials_required": [
+        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
+        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" },
+        { "key": "developer_token", "label": "Google Ads Developer Token" },
+        { "key": "customer_id", "label": "Google Ads Customer ID" }
+      ],
+      "version": "1.0.0-beta"
     }
   ]
 }

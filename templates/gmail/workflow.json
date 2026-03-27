@@ -1,0 +1,200 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Gmail",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Gmail Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'search_emails';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY,\n  'Content-Type': 'application/json'\n};\n\n// === Google OAuth Token Helper ===\nasync function getGoogleToken() {\n  const creds = await helpers.httpRequest({\n    method: 'GET',\n    url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&select=cred_key,cred_value',\n    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }\n  });\n  const m = {};\n  for (const c of creds) m[c.cred_key] = c.cred_value;\n\n  if (!m.access_token || !m.refresh_token) {\n    throw new Error('Google OAuth not configured. Install a Google skill and complete authorization first.');\n  }\n\n  if (new Date(m.token_expiry || 0) <= new Date(Date.now() + 5 * 60 * 1000)) {\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://oauth2.googleapis.com/token',\n      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n      body: 'grant_type=refresh_token'\n        + '&refresh_token=' + encodeURIComponent(m.refresh_token)\n        + '&client_id=' + encodeURIComponent(m.client_id)\n        + '&client_secret=' + encodeURIComponent(m.client_secret)\n    });\n    if (resp.error) throw new Error('Token refresh failed: ' + resp.error_description);\n\n    const newExpiry = new Date(Date.now() + (resp.expires_in - 60) * 1000).toISOString();\n    for (const [key, val] of [['access_token', resp.access_token], ['token_expiry', newExpiry]]) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.' + key, headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: key, cred_value: val }) });\n    }\n    if (resp.refresh_token) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.refresh_token', headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: 'refresh_token', cred_value: resp.refresh_token }) });\n    }\n    return resp.access_token;\n  }\n  return m.access_token;\n}\n\nlet accessToken;\ntry {\n  accessToken = await getGoogleToken();\n} catch(e) {\n  return [{ json: { error: e.message } }];\n}\n\nconst gHeaders = {\n  'Authorization': 'Bearer ' + accessToken,\n  'Content-Type': 'application/json'\n};\nconst GMAIL_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';\n\n// === search_emails ===\nif (action === 'search_emails') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Use Gmail search syntax (e.g. \"from:user@example.com\", \"is:unread\", \"subject:hello\").' } }];\n  const maxResults = parseInt(input.max_results) || 10;\n\n  try {\n    const listResp = await helpers.httpRequest({\n      method: 'GET',\n      url: GMAIL_BASE + '/messages?q=' + encodeURIComponent(query) + '&maxResults=' + maxResults,\n      headers: gHeaders\n    });\n\n    if (!listResp.messages || listResp.messages.length === 0) {\n      return [{ json: { result: 'No emails found for query: ' + query } }];\n    }\n\n    let result = 'Found ' + (listResp.resultSizeEstimate || listResp.messages.length) + ' emails for \"' + query + '\":\\n\\n';\n\n    for (const msg of listResp.messages.slice(0, maxResults)) {\n      const detail = await helpers.httpRequest({\n        method: 'GET',\n        url: GMAIL_BASE + '/messages/' + msg.id + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date',\n        headers: gHeaders\n      });\n      const headers = detail.payload && detail.payload.headers ? detail.payload.headers : [];\n      const from = (headers.find(h => h.name === 'From') || {}).value || 'Unknown';\n      const subject = (headers.find(h => h.name === 'Subject') || {}).value || '(no subject)';\n      const date = (headers.find(h => h.name === 'Date') || {}).value || '';\n      const labels = (detail.labelIds || []).join(', ');\n      const snippet = detail.snippet || '';\n\n      result += '**' + subject + '**\\n';\n      result += 'From: ' + from + '\\n';\n      result += 'Date: ' + date + '\\n';\n      result += 'ID: ' + msg.id + '\\n';\n      if (labels) result += 'Labels: ' + labels + '\\n';\n      if (snippet) result += snippet.substring(0, 150) + '\\n';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Gmail search failed: ' + e.message } }];\n  }\n\n// === read_email ===\n} else if (action === 'read_email') {\n  const messageId = input.message_id;\n  if (!messageId) return [{ json: { error: 'Parameter \"message_id\" is required.' } }];\n\n  try {\n    const msg = await helpers.httpRequest({\n      method: 'GET',\n      url: GMAIL_BASE + '/messages/' + messageId + '?format=full',\n      headers: gHeaders\n    });\n\n    const headers = msg.payload && msg.payload.headers ? msg.payload.headers : [];\n    const from = (headers.find(h => h.name === 'From') || {}).value || 'Unknown';\n    const to = (headers.find(h => h.name === 'To') || {}).value || '';\n    const subject = (headers.find(h => h.name === 'Subject') || {}).value || '(no subject)';\n    const date = (headers.find(h => h.name === 'Date') || {}).value || '';\n\n    // Extract body\n    let body = '';\n    function extractText(part) {\n      if (part.mimeType === 'text/plain' && part.body && part.body.data) {\n        body += Buffer.from(part.body.data, 'base64url').toString('utf-8');\n      } else if (part.parts) {\n        for (const p of part.parts) extractText(p);\n      }\n    }\n    if (msg.payload) extractText(msg.payload);\n    if (!body && msg.snippet) body = msg.snippet;\n\n    let result = '**' + subject + '**\\n';\n    result += 'From: ' + from + '\\n';\n    result += 'To: ' + to + '\\n';\n    result += 'Date: ' + date + '\\n';\n    result += 'Labels: ' + (msg.labelIds || []).join(', ') + '\\n\\n';\n    if (body.length > 5000) {\n      result += body.substring(0, 5000) + '\\n\\n... (truncated, ' + body.length + ' chars total)';\n    } else {\n      result += body;\n    }\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to read email: ' + e.message } }];\n  }\n\n// === send_email ===\n} else if (action === 'send_email') {\n  const to = input.to;\n  const subject = input.subject;\n  const body = input.body;\n  if (!to || !subject || !body) return [{ json: { error: 'Parameters \"to\", \"subject\", and \"body\" are required.' } }];\n\n  try {\n    let rawEmail = 'To: ' + to + '\\r\\n';\n    if (input.cc) rawEmail += 'Cc: ' + input.cc + '\\r\\n';\n    if (input.bcc) rawEmail += 'Bcc: ' + input.bcc + '\\r\\n';\n    rawEmail += 'Subject: ' + subject + '\\r\\n';\n    rawEmail += 'Content-Type: text/plain; charset=UTF-8\\r\\n';\n    rawEmail += '\\r\\n' + body;\n\n    const encoded = Buffer.from(rawEmail).toString('base64url');\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: GMAIL_BASE + '/messages/send',\n      headers: gHeaders,\n      body: JSON.stringify({ raw: encoded })\n    });\n\n    return [{ json: { result: 'Email sent successfully to ' + to + '. Message ID: ' + resp.id } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to send email: ' + e.message } }];\n  }\n\n// === create_draft ===\n} else if (action === 'create_draft') {\n  const to = input.to;\n  const subject = input.subject;\n  const body = input.body;\n  if (!to || !subject || !body) return [{ json: { error: 'Parameters \"to\", \"subject\", and \"body\" are required.' } }];\n\n  try {\n    let rawEmail = 'To: ' + to + '\\r\\n';\n    rawEmail += 'Subject: ' + subject + '\\r\\n';\n    rawEmail += 'Content-Type: text/plain; charset=UTF-8\\r\\n';\n    rawEmail += '\\r\\n' + body;\n\n    const encoded = Buffer.from(rawEmail).toString('base64url');\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: GMAIL_BASE + '/drafts',\n      headers: gHeaders,\n      body: JSON.stringify({ message: { raw: encoded } })\n    });\n\n    return [{ json: { result: 'Draft created successfully. Draft ID: ' + resp.id } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to create draft: ' + e.message } }];\n  }\n\n// === list_labels ===\n} else if (action === 'list_labels') {\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'GET',\n      url: GMAIL_BASE + '/labels',\n      headers: gHeaders\n    });\n\n    if (!resp.labels || resp.labels.length === 0) {\n      return [{ json: { result: 'No labels found.' } }];\n    }\n\n    let result = 'Gmail Labels:\\n\\n';\n    const system = resp.labels.filter(l => l.type === 'system');\n    const user = resp.labels.filter(l => l.type === 'user');\n\n    if (user.length > 0) {\n      result += 'User Labels:\\n';\n      for (const l of user) result += '- ' + l.name + ' (ID: ' + l.id + ')\\n';\n      result += '\\n';\n    }\n    result += 'System Labels: ' + system.map(l => l.name).join(', ') + '\\n';\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to list labels: ' + e.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: search_emails, read_email, send_email, create_draft, list_labels.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Gmail Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Gmail",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "gmail"
+        }
+      },
+      {
+        "id": "tool-search-emails",
+        "name": "search_emails",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "search_emails",
+          "description": "Search emails using Gmail search syntax (e.g. 'from:user@example.com', 'is:unread', 'subject:hello'). Parameters: query (search query, required), max_results (number, default 10)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_emails",
+              "query": "={{ $fromAI('query', 'Gmail search query', 'string') }}",
+              "max_results": "={{ $fromAI('max_results', 'Maximum number of results (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "required": true },
+              { "id": "max_results", "displayName": "max_results", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-read-email",
+        "name": "read_email",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "read_email",
+          "description": "Read a specific email by its message ID. Returns full email content including headers, body text, and labels. Parameters: message_id (required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "read_email",
+              "message_id": "={{ $fromAI('message_id', 'The Gmail message ID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "message_id", "displayName": "message_id", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-send-email",
+        "name": "send_email",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "send_email",
+          "description": "Send an email via Gmail. Parameters: to (recipient email, required), subject (required), body (plain text content, required), cc (optional), bcc (optional)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "send_email",
+              "to": "={{ $fromAI('to', 'Recipient email address', 'string') }}",
+              "subject": "={{ $fromAI('subject', 'Email subject line', 'string') }}",
+              "body": "={{ $fromAI('body', 'Email body text', 'string') }}",
+              "cc": "={{ $fromAI('cc', 'CC recipients (optional)', 'string') }}",
+              "bcc": "={{ $fromAI('bcc', 'BCC recipients (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "to", "displayName": "to", "type": "string", "required": true },
+              { "id": "subject", "displayName": "subject", "type": "string", "required": true },
+              { "id": "body", "displayName": "body", "type": "string", "required": true },
+              { "id": "cc", "displayName": "cc", "type": "string", "required": false },
+              { "id": "bcc", "displayName": "bcc", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-draft",
+        "name": "create_draft",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [900, 300],
+        "parameters": {
+          "name": "create_draft",
+          "description": "Create an email draft in Gmail. Parameters: to (recipient email, required), subject (required), body (plain text content, required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_draft",
+              "to": "={{ $fromAI('to', 'Recipient email address', 'string') }}",
+              "subject": "={{ $fromAI('subject', 'Email subject line', 'string') }}",
+              "body": "={{ $fromAI('body', 'Email body text', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "to", "displayName": "to", "type": "string", "required": true },
+              { "id": "subject", "displayName": "subject", "type": "string", "required": true },
+              { "id": "body", "displayName": "body", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-labels",
+        "name": "list_labels",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1200, 300],
+        "parameters": {
+          "name": "list_labels",
+          "description": "List all Gmail labels (both system and user-created labels).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_labels"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "search_emails": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "read_email": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "send_email": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_draft": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_labels": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

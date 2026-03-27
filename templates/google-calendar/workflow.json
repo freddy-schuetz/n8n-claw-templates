@@ -1,0 +1,208 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Google Calendar",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": { "inputSource": "passthrough" }
+      },
+      {
+        "id": "sub-code",
+        "name": "Calendar Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_events';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY,\n  'Content-Type': 'application/json'\n};\n\nasync function getGoogleToken() {\n  const creds = await helpers.httpRequest({\n    method: 'GET',\n    url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&select=cred_key,cred_value',\n    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }\n  });\n  const m = {};\n  for (const c of creds) m[c.cred_key] = c.cred_value;\n  if (!m.access_token || !m.refresh_token) throw new Error('Google OAuth not configured.');\n  if (new Date(m.token_expiry || 0) <= new Date(Date.now() + 5 * 60 * 1000)) {\n    const resp = await helpers.httpRequest({\n      method: 'POST', url: 'https://oauth2.googleapis.com/token',\n      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n      body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(m.refresh_token) + '&client_id=' + encodeURIComponent(m.client_id) + '&client_secret=' + encodeURIComponent(m.client_secret)\n    });\n    if (resp.error) throw new Error('Token refresh failed: ' + resp.error_description);\n    const newExpiry = new Date(Date.now() + (resp.expires_in - 60) * 1000).toISOString();\n    for (const [key, val] of [['access_token', resp.access_token], ['token_expiry', newExpiry]]) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.' + key, headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: key, cred_value: val }) });\n    }\n    if (resp.refresh_token) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.refresh_token', headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: 'refresh_token', cred_value: resp.refresh_token }) });\n    }\n    return resp.access_token;\n  }\n  return m.access_token;\n}\n\nlet accessToken;\ntry { accessToken = await getGoogleToken(); } catch(e) { return [{ json: { error: e.message } }]; }\n\nconst gHeaders = { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' };\nconst CAL_BASE = 'https://www.googleapis.com/calendar/v3';\n\n// === list_events ===\nif (action === 'list_events') {\n  const calId = input.calendar_id || 'primary';\n  const maxResults = parseInt(input.max_results) || 10;\n  const timeMin = input.time_min || new Date().toISOString();\n  let url = CAL_BASE + '/calendars/' + encodeURIComponent(calId) + '/events?maxResults=' + maxResults + '&timeMin=' + encodeURIComponent(timeMin) + '&singleEvents=true&orderBy=startTime';\n  if (input.time_max) url += '&timeMax=' + encodeURIComponent(input.time_max);\n\n  try {\n    const resp = await helpers.httpRequest({ method: 'GET', url, headers: gHeaders });\n    if (!resp.items || resp.items.length === 0) return [{ json: { result: 'No upcoming events found.' } }];\n\n    let result = 'Upcoming events (' + resp.items.length + '):\\n\\n';\n    for (const ev of resp.items) {\n      const start = ev.start.dateTime || ev.start.date || '';\n      const end = ev.end.dateTime || ev.end.date || '';\n      result += '**' + (ev.summary || '(no title)') + '**\\n';\n      result += 'Start: ' + start + '\\n';\n      result += 'End: ' + end + '\\n';\n      result += 'ID: ' + ev.id + '\\n';\n      if (ev.location) result += 'Location: ' + ev.location + '\\n';\n      if (ev.description) result += 'Description: ' + ev.description.substring(0, 200) + '\\n';\n      if (ev.attendees) result += 'Attendees: ' + ev.attendees.map(a => a.email).join(', ') + '\\n';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch(e) { return [{ json: { error: 'Failed to list events: ' + e.message } }]; }\n\n// === create_event ===\n} else if (action === 'create_event') {\n  const summary = input.summary;\n  const start = input.start;\n  const end = input.end;\n  if (!summary || !start || !end) return [{ json: { error: 'Parameters \"summary\", \"start\" (ISO datetime), and \"end\" (ISO datetime) are required.' } }];\n  const calId = input.calendar_id || 'primary';\n\n  const eventBody = {\n    summary,\n    start: { dateTime: start, timeZone: 'Europe/Berlin' },\n    end: { dateTime: end, timeZone: 'Europe/Berlin' }\n  };\n  if (input.description) eventBody.description = input.description;\n  if (input.location) eventBody.location = input.location;\n\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: CAL_BASE + '/calendars/' + encodeURIComponent(calId) + '/events',\n      headers: gHeaders,\n      body: JSON.stringify(eventBody)\n    });\n    return [{ json: { result: 'Event created: ' + resp.summary + '\\nStart: ' + (resp.start.dateTime || resp.start.date) + '\\nID: ' + resp.id + '\\nLink: ' + (resp.htmlLink || '') } }];\n  } catch(e) { return [{ json: { error: 'Failed to create event: ' + e.message } }]; }\n\n// === update_event ===\n} else if (action === 'update_event') {\n  const eventId = input.event_id;\n  if (!eventId) return [{ json: { error: 'Parameter \"event_id\" is required.' } }];\n  const calId = input.calendar_id || 'primary';\n\n  const patchBody = {};\n  if (input.summary) patchBody.summary = input.summary;\n  if (input.start) patchBody.start = { dateTime: input.start, timeZone: 'Europe/Berlin' };\n  if (input.end) patchBody.end = { dateTime: input.end, timeZone: 'Europe/Berlin' };\n  if (input.description) patchBody.description = input.description;\n  if (input.location) patchBody.location = input.location;\n\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'PATCH',\n      url: CAL_BASE + '/calendars/' + encodeURIComponent(calId) + '/events/' + encodeURIComponent(eventId),\n      headers: gHeaders,\n      body: JSON.stringify(patchBody)\n    });\n    return [{ json: { result: 'Event updated: ' + resp.summary + '\\nID: ' + resp.id } }];\n  } catch(e) { return [{ json: { error: 'Failed to update event: ' + e.message } }]; }\n\n// === delete_event ===\n} else if (action === 'delete_event') {\n  const eventId = input.event_id;\n  if (!eventId) return [{ json: { error: 'Parameter \"event_id\" is required.' } }];\n  const calId = input.calendar_id || 'primary';\n\n  try {\n    await helpers.httpRequest({\n      method: 'DELETE',\n      url: CAL_BASE + '/calendars/' + encodeURIComponent(calId) + '/events/' + encodeURIComponent(eventId),\n      headers: gHeaders\n    });\n    return [{ json: { result: 'Event ' + eventId + ' deleted successfully.' } }];\n  } catch(e) { return [{ json: { error: 'Failed to delete event: ' + e.message } }]; }\n\n// === list_calendars ===\n} else if (action === 'list_calendars') {\n  try {\n    const resp = await helpers.httpRequest({ method: 'GET', url: CAL_BASE + '/users/me/calendarList', headers: gHeaders });\n    if (!resp.items || resp.items.length === 0) return [{ json: { result: 'No calendars found.' } }];\n\n    let result = 'Your Calendars:\\n\\n';\n    for (const cal of resp.items) {\n      result += '**' + cal.summary + '**\\n';\n      result += 'ID: ' + cal.id + '\\n';\n      result += 'Access: ' + cal.accessRole + '\\n';\n      if (cal.description) result += 'Description: ' + cal.description + '\\n';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch(e) { return [{ json: { error: 'Failed to list calendars: ' + e.message } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: list_events, create_event, update_event, delete_event, list_calendars.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Calendar Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Google Calendar",
+    "settings": { "executionOrder": "v1" },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": { "path": "google-calendar" }
+      },
+      {
+        "id": "tool-list-events",
+        "name": "list_events",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "list_events",
+          "description": "List upcoming calendar events. Parameters: calendar_id (default 'primary'), time_min (ISO date), time_max (ISO date), max_results (default 10)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_events",
+              "calendar_id": "={{ $fromAI('calendar_id', 'Calendar ID (default: primary)', 'string') }}",
+              "time_min": "={{ $fromAI('time_min', 'Start time filter (ISO datetime)', 'string') }}",
+              "time_max": "={{ $fromAI('time_max', 'End time filter (ISO datetime)', 'string') }}",
+              "max_results": "={{ $fromAI('max_results', 'Max results (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "calendar_id", "displayName": "calendar_id", "type": "string", "required": false },
+              { "id": "time_min", "displayName": "time_min", "type": "string", "required": false },
+              { "id": "time_max", "displayName": "time_max", "type": "string", "required": false },
+              { "id": "max_results", "displayName": "max_results", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-event",
+        "name": "create_event",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "create_event",
+          "description": "Create a new calendar event. Parameters: summary (title, required), start (ISO datetime, required), end (ISO datetime, required), description (optional), location (optional), calendar_id (default 'primary')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_event",
+              "summary": "={{ $fromAI('summary', 'Event title', 'string') }}",
+              "start": "={{ $fromAI('start', 'Start datetime (ISO format)', 'string') }}",
+              "end": "={{ $fromAI('end', 'End datetime (ISO format)', 'string') }}",
+              "description": "={{ $fromAI('description', 'Event description (optional)', 'string') }}",
+              "location": "={{ $fromAI('location', 'Event location (optional)', 'string') }}",
+              "calendar_id": "={{ $fromAI('calendar_id', 'Calendar ID (default: primary)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "summary", "displayName": "summary", "type": "string", "required": true },
+              { "id": "start", "displayName": "start", "type": "string", "required": true },
+              { "id": "end", "displayName": "end", "type": "string", "required": true },
+              { "id": "description", "displayName": "description", "type": "string", "required": false },
+              { "id": "location", "displayName": "location", "type": "string", "required": false },
+              { "id": "calendar_id", "displayName": "calendar_id", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-update-event",
+        "name": "update_event",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "update_event",
+          "description": "Update an existing calendar event. Parameters: event_id (required), summary (optional), start (optional), end (optional), description (optional), location (optional), calendar_id (default 'primary')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_event",
+              "event_id": "={{ $fromAI('event_id', 'Event ID to update', 'string') }}",
+              "summary": "={{ $fromAI('summary', 'New event title (optional)', 'string') }}",
+              "start": "={{ $fromAI('start', 'New start datetime (optional)', 'string') }}",
+              "end": "={{ $fromAI('end', 'New end datetime (optional)', 'string') }}",
+              "description": "={{ $fromAI('description', 'New description (optional)', 'string') }}",
+              "location": "={{ $fromAI('location', 'New location (optional)', 'string') }}",
+              "calendar_id": "={{ $fromAI('calendar_id', 'Calendar ID (default: primary)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "event_id", "displayName": "event_id", "type": "string", "required": true },
+              { "id": "summary", "displayName": "summary", "type": "string", "required": false },
+              { "id": "start", "displayName": "start", "type": "string", "required": false },
+              { "id": "end", "displayName": "end", "type": "string", "required": false },
+              { "id": "description", "displayName": "description", "type": "string", "required": false },
+              { "id": "location", "displayName": "location", "type": "string", "required": false },
+              { "id": "calendar_id", "displayName": "calendar_id", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-delete-event",
+        "name": "delete_event",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [900, 300],
+        "parameters": {
+          "name": "delete_event",
+          "description": "Delete a calendar event. Parameters: event_id (required), calendar_id (default 'primary')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_event",
+              "event_id": "={{ $fromAI('event_id', 'Event ID to delete', 'string') }}",
+              "calendar_id": "={{ $fromAI('calendar_id', 'Calendar ID (default: primary)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "event_id", "displayName": "event_id", "type": "string", "required": true },
+              { "id": "calendar_id", "displayName": "calendar_id", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-calendars",
+        "name": "list_calendars",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1200, 300],
+        "parameters": {
+          "name": "list_calendars",
+          "description": "List all calendars accessible to the user.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_calendars" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_events": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_event": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "update_event": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "delete_event": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_calendars": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}
