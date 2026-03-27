@@ -49,7 +49,7 @@
     { "name": "list_campaigns", "description": "List Google Ads campaigns. Parameters: customer_id (optional, uses default), status_filter (optional: ENABLED, PAUSED, REMOVED)" },
     { "name": "get_campaign_stats", "description": "Get campaign performance statistics. Parameters: campaign_id (required), date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), customer_id (optional)" },
     { "name": "list_ad_groups", "description": "List ad groups for a campaign. Parameters: campaign_id (required), customer_id (optional)" },
-    { "name": "get_ad_performance", "description": "Get overall ad performance metrics. Parameters: date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), customer_id (optional)" }
+    { "name": "get_account_stats", "description": "Get ACCOUNT-LEVEL totals (impressions, clicks, cost, conversions) across ALL campaigns for a date range. Parameters: date_from (YYYY-MM-DD, required), date_to (YYYY-MM-DD, required), customer_id (optional)" }
   ],
   "author": "freddy-schuetz",
   "license": "MIT",
