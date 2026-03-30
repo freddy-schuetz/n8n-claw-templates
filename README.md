@@ -102,6 +102,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | [Deutsche Bahn](https://v6.db.transport.rest/) | Search train connections, departures, and stations across Germany | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Route Planner](https://openrouteservice.org/) | Plan hiking, cycling, and walking routes with GPX output, POI search, elevation profiles, isochrones (ORS + BRouter) | ORS API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Wiener Linien](https://www.wienerlinien.at/) | Plan routes with Vienna public transport, get your station ID from [this CSV File](https://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv) (yes, a CSV file, don't ask), more details on the [Routingservice Wien](https://www.data.gv.at/datasets/9c203fec-dc0d-412c-a7a3-7fd77d0346f1?locale=de) page | None | [@lcx](https://github.com/lcx) |
 
 ### Utilities

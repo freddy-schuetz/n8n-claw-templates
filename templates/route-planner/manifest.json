@@ -1,0 +1,29 @@
+{
+  "id": "route-planner",
+  "name": "Route Planner (OpenRouteService)",
+  "version": "1.0.0",
+  "updated": "2026-03-30",
+  "type": "native",
+  "category": "transport",
+  "description": "Plan hiking, cycling, and walking routes with GPX output, geocoding, POI search, elevation profiles, and isochrones (OpenRouteService + BRouter)",
+  "credentials_required": [
+    {
+      "key": "ors_api_key",
+      "label": "OpenRouteService API Key",
+      "hint": "Free key at openrouteservice.org/dev/#/signup"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "plan_route", "description": "Plan a route with directions and GPX (ORS)" },
+    { "name": "plan_route_outdoor", "description": "Plan hiking/cycling route with best track quality (BRouter)" },
+    { "name": "search_place", "description": "Geocode a place name to coordinates" },
+    { "name": "find_pois", "description": "Find points of interest near a location" },
+    { "name": "get_elevation_profile", "description": "Get elevation profile between points" },
+    { "name": "get_isochrone", "description": "Get reachability area from a point" },
+    { "name": "optimize_route", "description": "Optimize waypoint order for multi-stop trips" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

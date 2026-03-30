@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-27",
+  "updated": "2026-03-30",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -105,6 +105,20 @@
         { "key": "smtp_host", "label": "SMTP Server" }
       ],
       "version": "1.1.0"
+    },
+    {
+      "id": "route-planner",
+      "name": "Route Planner (OpenRouteService)",
+      "type": "native",
+      "category": "transport",
+      "description": "Plan hiking, cycling, and walking routes with GPX output, geocoding, POI search, elevation profiles, and isochrones (OpenRouteService + BRouter)",
+      "credentials_required": [
+        {
+          "key": "ors_api_key",
+          "label": "OpenRouteService API Key"
+        }
+      ],
+      "version": "1.0.0"
     },
     {
       "id": "wiener-linien",
