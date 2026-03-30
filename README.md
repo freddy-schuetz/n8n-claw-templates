@@ -130,8 +130,6 @@ Skills are managed via chat with your n8n-claw agent:
 "Remove weather-openmeteo"          → uninstalls and cleans up
 ```
 
-> **Important:** After installing a skill, open the n8n UI and **deactivate → reactivate** the new MCP server workflow. This is required due to a webhook registration bug in n8n.
-
 ### Skills with API keys
 
 Some skills require API credentials. When you install one, the agent sends you a **secure one-time link** (valid 10 minutes) to enter your API key via HTTPS form. Your key is never visible in the chat.
