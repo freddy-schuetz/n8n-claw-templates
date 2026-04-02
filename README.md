@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (35)
+## Available Skills (36)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -15,7 +15,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
 | [Finance](#finance) | 3 | Crypto, currencies, banking |
-| [Knowledge](#knowledge) | 2 | Food facts, Wikipedia |
+| [Knowledge](#knowledge) | 3 | Food facts, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Marketing](#marketing) | 1 | Google Ads |
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
@@ -84,6 +84,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | [OpenFoodFacts](https://world.openfoodfacts.org/) | Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [OpenWebUI Knowledge](https://openwebui.com/) | Manage knowledge collections and RAG files — create collections, upload documents, ingest web pages | OpenWebUI URL, API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Wikipedia](https://www.wikipedia.org/) | Search Wikipedia and get article summaries | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Language

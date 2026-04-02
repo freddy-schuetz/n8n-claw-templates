@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-03-30",
+  "updated": "2026-04-02",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -317,6 +317,18 @@
           "key": "kontoflux_workspace_id",
           "label": "KontoFlux Workspace ID"
         }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "openwebui-knowledge",
+      "name": "OpenWebUI Knowledge Manager",
+      "type": "native",
+      "category": "knowledge",
+      "description": "Manage OpenWebUI knowledge collections and RAG files — create collections, upload documents, ingest web pages, and organize knowledge bases",
+      "credentials_required": [
+        { "key": "openwebui_url", "label": "OpenWebUI URL" },
+        { "key": "openwebui_api_key", "label": "OpenWebUI API Key" }
       ],
       "version": "1.0.0"
     },

@@ -1,0 +1,36 @@
+{
+  "id": "openwebui-knowledge",
+  "name": "OpenWebUI Knowledge Manager",
+  "version": "1.0.0",
+  "updated": "2026-04-02",
+  "type": "native",
+  "category": "knowledge",
+  "description": "Manage OpenWebUI knowledge collections and RAG files — create collections, upload documents, ingest web pages, and organize knowledge bases",
+  "credentials_required": [
+    {
+      "key": "openwebui_url",
+      "label": "OpenWebUI URL",
+      "hint": "Base URL of your OpenWebUI instance, e.g. https://webui.example.com"
+    },
+    {
+      "key": "openwebui_api_key",
+      "label": "OpenWebUI API Key",
+      "hint": "Settings > Account > API Keys in OpenWebUI"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_knowledge", "description": "List all knowledge collections" },
+    { "name": "create_knowledge", "description": "Create a new knowledge collection" },
+    { "name": "get_knowledge", "description": "Get details and files of a knowledge collection" },
+    { "name": "update_knowledge", "description": "Update name or description of a knowledge collection" },
+    { "name": "delete_knowledge", "description": "Delete a knowledge collection" },
+    { "name": "list_files", "description": "List all uploaded files" },
+    { "name": "upload_file", "description": "Upload a file from a URL into a knowledge collection" },
+    { "name": "ingest_web_url", "description": "Process a web page URL into a knowledge collection" },
+    { "name": "remove_file", "description": "Remove and delete a file from a knowledge collection" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
