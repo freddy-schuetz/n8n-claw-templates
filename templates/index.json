@@ -415,6 +415,19 @@
       "version": "1.0.0"
     },
     {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "type": "native",
+      "category": "productivity",
+      "description": "List, search, read, create, and share files in Google Drive (Google OAuth2)",
+      "credential_type": "oauth2",
+      "credentials_required": [
+        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
+        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+      ],
+      "version": "1.0.0"
+    },
+    {
       "id": "google-analytics",
       "name": "Google Analytics",
       "type": "native",

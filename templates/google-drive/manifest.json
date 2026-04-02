@@ -1,0 +1,44 @@
+{
+  "id": "google-drive",
+  "name": "Google Drive",
+  "version": "1.0.0",
+  "updated": "2026-04-02",
+  "type": "native",
+  "category": "productivity",
+  "description": "List, search, read, create, and share files in Google Drive",
+  "credential_type": "oauth2",
+  "oauth_config": {
+    "provider": "google",
+    "shared_credential_id": "google-oauth",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive"
+    ]
+  },
+  "credentials_required": [
+    {
+      "key": "client_id",
+      "label": "Google OAuth Client ID",
+      "hint": "Google Cloud Console -> APIs & Services -> Credentials -> OAuth 2.0 Client ID. Redirect URI must be set to: https://YOUR-N8N-URL/webhook/oauth-callback",
+      "shared_id": "google-oauth"
+    },
+    {
+      "key": "client_secret",
+      "label": "Google OAuth Client Secret",
+      "hint": "From the same OAuth 2.0 Client ID page in Google Cloud Console",
+      "shared_id": "google-oauth"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_files", "description": "List files and folders in a directory. Parameters: folder_id (default 'root'), max_results (default 20), query (optional name filter)" },
+    { "name": "search_files", "description": "Search for files by name across all of Google Drive. Parameters: query (required), max_results (default 20)" },
+    { "name": "read_file", "description": "Read file content. Exports Google Docs/Sheets/Slides as text. Returns webViewLink for binary files. Parameters: file_id (required)" },
+    { "name": "create_file", "description": "Create a text file or Google Doc with content. Parameters: name (required), content (required), folder_id (optional), mime_type ('doc' for Google Doc, default plain text)" },
+    { "name": "create_folder", "description": "Create a new folder. Parameters: name (required), parent_folder_id (optional)" },
+    { "name": "delete_file", "description": "Delete a file or folder. Parameters: file_id (required)" },
+    { "name": "share_file", "description": "Share a file or folder. Parameters: file_id (required), email (optional), role ('reader'/'writer'/'commenter', default 'reader'), type ('user'/'anyone', default 'user')" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

@@ -1,0 +1,260 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Google Drive",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Google Drive Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_files';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY,\n  'Content-Type': 'application/json'\n};\n\n// === Google OAuth Token Helper ===\nasync function getGoogleToken() {\n  const creds = await helpers.httpRequest({\n    method: 'GET',\n    url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&select=cred_key,cred_value',\n    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }\n  });\n  const m = {};\n  for (const c of creds) m[c.cred_key] = c.cred_value;\n\n  if (!m.access_token || !m.refresh_token) {\n    throw new Error('Google OAuth not configured. Install a Google skill and complete authorization first.');\n  }\n\n  if (new Date(m.token_expiry || 0) <= new Date(Date.now() + 5 * 60 * 1000)) {\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://oauth2.googleapis.com/token',\n      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n      body: 'grant_type=refresh_token'\n        + '&refresh_token=' + encodeURIComponent(m.refresh_token)\n        + '&client_id=' + encodeURIComponent(m.client_id)\n        + '&client_secret=' + encodeURIComponent(m.client_secret)\n    });\n    if (resp.error) throw new Error('Token refresh failed: ' + resp.error_description);\n\n    const newExpiry = new Date(Date.now() + (resp.expires_in - 60) * 1000).toISOString();\n    for (const [key, val] of [['access_token', resp.access_token], ['token_expiry', newExpiry]]) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.' + key, headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: key, cred_value: val }) });\n    }\n    if (resp.refresh_token) {\n      await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.google-oauth&cred_key=eq.refresh_token', headers: { ...pgHeaders, 'Prefer': 'return=minimal' } });\n      await helpers.httpRequest({ method: 'POST', url: SUPABASE_URL + '/rest/v1/template_credentials', headers: { ...pgHeaders, 'Prefer': 'return=minimal' }, body: JSON.stringify({ template_id: 'google-oauth', cred_key: 'refresh_token', cred_value: resp.refresh_token }) });\n    }\n    return resp.access_token;\n  }\n  return m.access_token;\n}\n\nlet accessToken;\ntry {\n  accessToken = await getGoogleToken();\n} catch(e) {\n  return [{ json: { error: e.message } }];\n}\n\nconst gHeaders = {\n  'Authorization': 'Bearer ' + accessToken,\n  'Content-Type': 'application/json'\n};\nconst DRIVE_BASE = 'https://www.googleapis.com/drive/v3';\nconst DRIVE_FIELDS = 'id,name,mimeType,size,modifiedTime,webViewLink,parents';\n\n// === list_files ===\nif (action === 'list_files') {\n  const folderId = input.folder_id || 'root';\n  const maxResults = parseInt(input.max_results) || 20;\n  let q = \"'\" + folderId + \"' in parents and trashed = false\";\n  if (input.query) {\n    q += \" and name contains '\" + input.query.replace(/'/g, \"\\\\'\") + \"'\";\n  }\n\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'GET',\n      url: DRIVE_BASE + '/files?q=' + encodeURIComponent(q)\n        + '&fields=files(' + DRIVE_FIELDS + ')'\n        + '&pageSize=' + maxResults\n        + '&orderBy=folder,name',\n      headers: gHeaders\n    });\n\n    if (!resp.files || resp.files.length === 0) {\n      return [{ json: { result: 'No files found in this folder.' } }];\n    }\n\n    let result = 'Files in folder (' + resp.files.length + ' items):\\n\\n';\n    for (const f of resp.files) {\n      const isFolder = f.mimeType === 'application/vnd.google-apps.folder';\n      const icon = isFolder ? '[Folder]' : '[File]';\n      const size = f.size ? ' (' + (parseInt(f.size) / 1024).toFixed(1) + ' KB)' : '';\n      result += icon + ' ' + f.name + size + '\\n';\n      result += '  ID: ' + f.id + '\\n';\n      result += '  Modified: ' + (f.modifiedTime || '') + '\\n';\n      if (!isFolder) result += '  Type: ' + f.mimeType + '\\n';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to list files: ' + e.message } }];\n  }\n\n// === search_files ===\n} else if (action === 'search_files') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required.' } }];\n  const maxResults = parseInt(input.max_results) || 20;\n  const q = \"name contains '\" + query.replace(/'/g, \"\\\\'\") + \"' and trashed = false\";\n\n  try {\n    const resp = await helpers.httpRequest({\n      method: 'GET',\n      url: DRIVE_BASE + '/files?q=' + encodeURIComponent(q)\n        + '&fields=files(' + DRIVE_FIELDS + ')'\n        + '&pageSize=' + maxResults\n        + '&orderBy=modifiedTime desc',\n      headers: gHeaders\n    });\n\n    if (!resp.files || resp.files.length === 0) {\n      return [{ json: { result: 'No files found matching \"' + query + '\".' } }];\n    }\n\n    let result = 'Search results for \"' + query + '\" (' + resp.files.length + ' files):\\n\\n';\n    for (const f of resp.files) {\n      const isFolder = f.mimeType === 'application/vnd.google-apps.folder';\n      const icon = isFolder ? '[Folder]' : '[File]';\n      const size = f.size ? ' (' + (parseInt(f.size) / 1024).toFixed(1) + ' KB)' : '';\n      result += icon + ' ' + f.name + size + '\\n';\n      result += '  ID: ' + f.id + '\\n';\n      result += '  Type: ' + f.mimeType + '\\n';\n      result += '  Modified: ' + (f.modifiedTime || '') + '\\n';\n      if (f.webViewLink) result += '  Link: ' + f.webViewLink + '\\n';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Search failed: ' + e.message } }];\n  }\n\n// === read_file ===\n} else if (action === 'read_file') {\n  const fileId = input.file_id;\n  if (!fileId) return [{ json: { error: 'Parameter \"file_id\" is required.' } }];\n\n  try {\n    const meta = await helpers.httpRequest({\n      method: 'GET',\n      url: DRIVE_BASE + '/files/' + fileId + '?fields=' + DRIVE_FIELDS,\n      headers: gHeaders\n    });\n\n    const mime = meta.mimeType || '';\n    let content = '';\n    let exported = false;\n\n    // Google Workspace files: export\n    const exportMap = {\n      'application/vnd.google-apps.document': 'text/plain',\n      'application/vnd.google-apps.spreadsheet': 'text/csv',\n      'application/vnd.google-apps.presentation': 'text/plain'\n    };\n\n    if (exportMap[mime]) {\n      const exportResp = await helpers.httpRequest({\n        method: 'GET',\n        url: DRIVE_BASE + '/files/' + fileId + '/export?mimeType=' + encodeURIComponent(exportMap[mime]),\n        headers: { 'Authorization': 'Bearer ' + accessToken },\n        encoding: 'utf-8',\n        returnFullResponse: true\n      });\n      content = typeof exportResp.body === 'string' ? exportResp.body : JSON.stringify(exportResp.body);\n      exported = true;\n    } else if (mime.startsWith('application/vnd.google-apps.')) {\n      // Other Google types (Drawing, Form, etc.) — no text export\n      let result = '**' + meta.name + '** (Google Workspace file)\\n';\n      result += 'Type: ' + mime + '\\n';\n      result += 'This file type cannot be exported as text.\\n';\n      if (meta.webViewLink) result += 'View: ' + meta.webViewLink + '\\n';\n      return [{ json: { result } }];\n    } else if (mime.startsWith('text/') || mime === 'application/json' || mime === 'application/xml'\n      || mime === 'application/javascript' || mime === 'application/x-yaml'\n      || mime.includes('csv') || mime.includes('markdown')) {\n      // Text-based files: download inline\n      const dlResp = await helpers.httpRequest({\n        method: 'GET',\n        url: DRIVE_BASE + '/files/' + fileId + '?alt=media',\n        headers: { 'Authorization': 'Bearer ' + accessToken },\n        encoding: 'utf-8',\n        returnFullResponse: true\n      });\n      content = typeof dlResp.body === 'string' ? dlResp.body : JSON.stringify(dlResp.body);\n    } else {\n      // Binary files: return metadata + link\n      let result = '**' + meta.name + '** (binary file)\\n';\n      result += 'Type: ' + mime + '\\n';\n      const size = meta.size ? (parseInt(meta.size) / 1024).toFixed(1) + ' KB' : 'unknown';\n      result += 'Size: ' + size + '\\n';\n      result += 'Modified: ' + (meta.modifiedTime || '') + '\\n';\n      if (meta.webViewLink) result += 'View/Download: ' + meta.webViewLink + '\\n';\n      return [{ json: { result } }];\n    }\n\n    let result = '**' + meta.name + '**';\n    if (exported) result += ' (exported from Google ' + mime.split('.').pop() + ')';\n    result += '\\nType: ' + mime + '\\nModified: ' + (meta.modifiedTime || '') + '\\n\\n';\n\n    if (content.length > 5000) {\n      result += content.substring(0, 5000) + '\\n\\n... (truncated, ' + content.length + ' chars total)';\n    } else {\n      result += content;\n    }\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to read file: ' + e.message } }];\n  }\n\n// === create_file ===\n} else if (action === 'create_file') {\n  const name = input.name;\n  const content = input.content;\n  if (!name || !content) return [{ json: { error: 'Parameters \"name\" and \"content\" are required.' } }];\n\n  const isDoc = input.mime_type === 'doc';\n  const fileMime = isDoc ? 'application/vnd.google-apps.document' : 'text/plain';\n\n  try {\n    const boundary = 'n8n_boundary_' + Date.now();\n    const metadata = { name: name, mimeType: fileMime };\n    if (input.folder_id) metadata.parents = [input.folder_id];\n\n    const body = '--' + boundary + '\\r\\n'\n      + 'Content-Type: application/json; charset=UTF-8\\r\\n\\r\\n'\n      + JSON.stringify(metadata) + '\\r\\n'\n      + '--' + boundary + '\\r\\n'\n      + 'Content-Type: text/plain; charset=UTF-8\\r\\n\\r\\n'\n      + content + '\\r\\n'\n      + '--' + boundary + '--';\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink',\n      headers: {\n        'Authorization': 'Bearer ' + accessToken,\n        'Content-Type': 'multipart/related; boundary=' + boundary\n      },\n      body: body\n    });\n\n    let result = 'File created successfully:\\n';\n    result += 'Name: ' + resp.name + '\\n';\n    result += 'ID: ' + resp.id + '\\n';\n    result += 'Type: ' + resp.mimeType + '\\n';\n    if (resp.webViewLink) result += 'Link: ' + resp.webViewLink + '\\n';\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to create file: ' + e.message } }];\n  }\n\n// === create_folder ===\n} else if (action === 'create_folder') {\n  const name = input.name;\n  if (!name) return [{ json: { error: 'Parameter \"name\" is required.' } }];\n\n  try {\n    const metadata = {\n      name: name,\n      mimeType: 'application/vnd.google-apps.folder'\n    };\n    if (input.parent_folder_id) metadata.parents = [input.parent_folder_id];\n\n    const resp = await helpers.httpRequest({\n      method: 'POST',\n      url: DRIVE_BASE + '/files?fields=id,name,mimeType,webViewLink',\n      headers: gHeaders,\n      body: JSON.stringify(metadata)\n    });\n\n    let result = 'Folder created successfully:\\n';\n    result += 'Name: ' + resp.name + '\\n';\n    result += 'ID: ' + resp.id + '\\n';\n    if (resp.webViewLink) result += 'Link: ' + resp.webViewLink + '\\n';\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to create folder: ' + e.message } }];\n  }\n\n// === delete_file ===\n} else if (action === 'delete_file') {\n  const fileId = input.file_id;\n  if (!fileId) return [{ json: { error: 'Parameter \"file_id\" is required.' } }];\n\n  try {\n    // Get name first for confirmation message\n    const meta = await helpers.httpRequest({\n      method: 'GET',\n      url: DRIVE_BASE + '/files/' + fileId + '?fields=name,mimeType',\n      headers: gHeaders\n    });\n\n    await helpers.httpRequest({\n      method: 'DELETE',\n      url: DRIVE_BASE + '/files/' + fileId,\n      headers: gHeaders\n    });\n\n    const type = meta.mimeType === 'application/vnd.google-apps.folder' ? 'Folder' : 'File';\n    return [{ json: { result: type + ' \"' + meta.name + '\" deleted successfully.' } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to delete: ' + e.message } }];\n  }\n\n// === share_file ===\n} else if (action === 'share_file') {\n  const fileId = input.file_id;\n  if (!fileId) return [{ json: { error: 'Parameter \"file_id\" is required.' } }];\n\n  const shareType = input.type || 'user';\n  const role = input.role || 'reader';\n\n  if (shareType === 'user' && !input.email) {\n    return [{ json: { error: 'Parameter \"email\" is required when type is \"user\".' } }];\n  }\n\n  try {\n    const permission = { role: role, type: shareType };\n    if (shareType === 'user') permission.emailAddress = input.email;\n\n    await helpers.httpRequest({\n      method: 'POST',\n      url: DRIVE_BASE + '/files/' + fileId + '/permissions',\n      headers: gHeaders,\n      body: JSON.stringify(permission)\n    });\n\n    // Get file name for confirmation\n    const meta = await helpers.httpRequest({\n      method: 'GET',\n      url: DRIVE_BASE + '/files/' + fileId + '?fields=name,webViewLink',\n      headers: gHeaders\n    });\n\n    let result = 'File \"' + meta.name + '\" shared successfully.\\n';\n    result += 'Role: ' + role + '\\n';\n    if (shareType === 'user') result += 'Shared with: ' + input.email + '\\n';\n    if (shareType === 'anyone') result += 'Shared publicly (anyone with the link)\\n';\n    if (meta.webViewLink) result += 'Link: ' + meta.webViewLink + '\\n';\n    return [{ json: { result } }];\n  } catch(e) {\n    return [{ json: { error: 'Failed to share file: ' + e.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: list_files, search_files, read_file, create_file, create_folder, delete_file, share_file.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Google Drive Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Google Drive",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "google-drive"
+        }
+      },
+      {
+        "id": "tool-list-files",
+        "name": "list_files",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "list_files",
+          "description": "List files and folders in a Google Drive directory. Parameters: folder_id (ID of folder to list, default 'root'), max_results (number, default 20), query (optional name filter)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_files",
+              "folder_id": "={{ $fromAI('folder_id', 'Folder ID to list (default root)', 'string') }}",
+              "max_results": "={{ $fromAI('max_results', 'Maximum results (default 20)', 'string') }}",
+              "query": "={{ $fromAI('query', 'Optional name filter', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "folder_id", "displayName": "folder_id", "type": "string", "required": false },
+              { "id": "max_results", "displayName": "max_results", "type": "string", "required": false },
+              { "id": "query", "displayName": "query", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-search-files",
+        "name": "search_files",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "search_files",
+          "description": "Search for files by name across all of Google Drive. Parameters: query (search term, required), max_results (number, default 20)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_files",
+              "query": "={{ $fromAI('query', 'Search term', 'string') }}",
+              "max_results": "={{ $fromAI('max_results', 'Maximum results (default 20)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "required": true },
+              { "id": "max_results", "displayName": "max_results", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-read-file",
+        "name": "read_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "read_file",
+          "description": "Read the content of a file by ID. Google Docs/Sheets/Slides are exported as plain text. Text files return content inline. Binary files return a view link. Parameters: file_id (required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "read_file",
+              "file_id": "={{ $fromAI('file_id', 'The Google Drive file ID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "file_id", "displayName": "file_id", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-file",
+        "name": "create_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [900, 300],
+        "parameters": {
+          "name": "create_file",
+          "description": "Create a new text file or Google Doc with content. Parameters: name (filename, required), content (file content, required), folder_id (optional parent folder ID), mime_type ('doc' for Google Doc, otherwise plain text)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_file",
+              "name": "={{ $fromAI('name', 'Filename', 'string') }}",
+              "content": "={{ $fromAI('content', 'File content', 'string') }}",
+              "folder_id": "={{ $fromAI('folder_id', 'Parent folder ID (optional)', 'string') }}",
+              "mime_type": "={{ $fromAI('mime_type', 'Use doc for Google Doc, otherwise plain text (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "required": true },
+              { "id": "content", "displayName": "content", "type": "string", "required": true },
+              { "id": "folder_id", "displayName": "folder_id", "type": "string", "required": false },
+              { "id": "mime_type", "displayName": "mime_type", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-folder",
+        "name": "create_folder",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1200, 300],
+        "parameters": {
+          "name": "create_folder",
+          "description": "Create a new folder in Google Drive. Parameters: name (folder name, required), parent_folder_id (optional parent folder ID)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_folder",
+              "name": "={{ $fromAI('name', 'Folder name', 'string') }}",
+              "parent_folder_id": "={{ $fromAI('parent_folder_id', 'Parent folder ID (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "required": true },
+              { "id": "parent_folder_id", "displayName": "parent_folder_id", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-delete-file",
+        "name": "delete_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1500, 300],
+        "parameters": {
+          "name": "delete_file",
+          "description": "Delete a file or folder from Google Drive. Parameters: file_id (required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_file",
+              "file_id": "={{ $fromAI('file_id', 'The file or folder ID to delete', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "file_id", "displayName": "file_id", "type": "string", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-share-file",
+        "name": "share_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1800, 300],
+        "parameters": {
+          "name": "share_file",
+          "description": "Share a file or folder in Google Drive. Parameters: file_id (required), email (required for user sharing), role ('reader'/'writer'/'commenter', default 'reader'), type ('user' or 'anyone', default 'user')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "share_file",
+              "file_id": "={{ $fromAI('file_id', 'The file or folder ID to share', 'string') }}",
+              "email": "={{ $fromAI('email', 'Email address to share with (required for user sharing)', 'string') }}",
+              "role": "={{ $fromAI('role', 'Permission role: reader, writer, or commenter (default reader)', 'string') }}",
+              "type": "={{ $fromAI('type', 'Share type: user or anyone (default user)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "required": true },
+              { "id": "file_id", "displayName": "file_id", "type": "string", "required": true },
+              { "id": "email", "displayName": "email", "type": "string", "required": false },
+              { "id": "role", "displayName": "role", "type": "string", "required": false },
+              { "id": "type", "displayName": "type", "type": "string", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_files": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "search_files": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "read_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_folder": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "delete_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "share_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}
