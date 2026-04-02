@@ -28,6 +28,7 @@
     { "name": "list_files", "description": "List all uploaded files" },
     { "name": "upload_file", "description": "Upload a file from a URL into a knowledge collection" },
     { "name": "ingest_web_url", "description": "Process a web page URL into a knowledge collection" },
+    { "name": "add_content", "description": "Write text content directly into a knowledge collection" },
     { "name": "remove_file", "description": "Remove and delete a file from a knowledge collection" }
   ],
   "author": "freddy-schuetz",
