@@ -12,6 +12,21 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|
 | [Google Analytics](https://analytics.google.com/) | Query GA4 reports, properties, and realtime data | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
+### Calendar
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| CalDAV Calendar | Manage calendars on any CalDAV server — list, create, update, delete events (Nextcloud, Radicale, Baikal) | CalDAV URL, Username, Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Google Calendar](https://calendar.google.com/) | List, create, update, delete events in Google Calendar | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
+### Cloud Storage
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [Google Drive](https://drive.google.com/) | List, search, read, create, and share files in Google Drive | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Nextcloud Files](https://nextcloud.com) | Manage files on Nextcloud via WebDAV — list, read, write, upload from URL, move, delete | Nextcloud URL, Username, App Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Seafile](https://www.seafile.com/) | Manage files on a Seafile library: browse, read, create, download, rename, move, copy, delete | Seafile URL, Library API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
 ### Communication
 
 | Skill | Description | Credentials | Author |
@@ -19,6 +34,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Email (IMAP/SMTP) | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Gmail](https://mail.google.com/) | Search, read, send emails and manage drafts via Gmail API | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [OpenClaw](https://openclaw.ai/) | Connect to an OpenClaw autonomous AI agent via Gateway API | Gateway URL, Gateway Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
+### Developer Tools
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [GitHub](https://github.com/) | Full GitHub integration: repos, issues, PRs, code search, file content, releases, notifications | GitHub PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Entertainment
 
@@ -69,27 +90,19 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [IP Geolocation](https://ip-api.com/) | Get location, ISP, and org info for any IP address | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | Website Check | Website health check: load time, security headers, meta tags, structured data | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
-### Productivity
-
-| Skill | Description | Credentials | Author |
-|-------|-------------|-------------|--------|
-| CalDAV Calendar | Manage calendars on any CalDAV server — list, create, update, delete events (Nextcloud, Radicale, Baikal) | CalDAV URL, Username, Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [GitHub](https://github.com/) | Full GitHub integration: repos, issues, PRs, code search, file content, releases, notifications | GitHub PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Google Calendar](https://calendar.google.com/) | List, create, update, delete events in Google Calendar | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Google Drive](https://drive.google.com/) | List, search, read, create, and share files in Google Drive | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Nextcloud Files](https://nextcloud.com) | Manage files on Nextcloud via WebDAV — list, read, write, upload from URL, move, delete | Nextcloud URL, Username, App Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Seafile](https://www.seafile.com/) | Manage files on a Seafile library: browse, read, create, download, rename, move, copy, delete | Seafile URL, Library API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-
 ### News
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | [Hacker News](https://news.ycombinator.com/) | Search Hacker News stories and get top stories | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [NewsAPI](https://newsapi.org/) | Search news articles from 80,000+ sources | NewsAPI Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
+### Notes & CRM
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Reference
 
@@ -98,6 +111,13 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
+### Tasks
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Transport
 
