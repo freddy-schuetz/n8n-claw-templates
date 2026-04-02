@@ -381,7 +381,7 @@
       "name": "Seafile",
       "type": "native",
       "category": "productivity",
-      "description": "Manage files on a Seafile instance: list libraries, browse directories, search, download, share, and manage files",
+      "description": "Manage files on a Seafile library: browse directories, read files, download, rename, move, copy, and delete",
       "credentials_required": [
         { "key": "seafile_url", "label": "Seafile URL" },
         { "key": "seafile_token", "label": "Seafile API Token" }
