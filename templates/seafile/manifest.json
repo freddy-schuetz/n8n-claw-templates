@@ -15,10 +15,16 @@
     {
       "key": "seafile_token",
       "label": "Seafile API Token",
-      "hint": "API token — obtain via POST /api2/auth-token/ with username+password, or generate in Seafile web UI under Settings > Web API Auth Token"
+      "hint": "Library Token (recommended): Seafile web UI > Library > kebab menu > API Token. Account Token (advanced): POST /api2/auth-token/ with username+password"
     }
   ],
-  "credentials_optional": [],
+  "credentials_optional": [
+    {
+      "key": "seafile_repo_id",
+      "label": "Library ID (for Library Token)",
+      "hint": "Required when using a Library Token. Find it in the URL when you open the library in Seafile (e.g. https://seafile.example.com/library/abc123-def456/). Leave empty for Account Token mode."
+    }
+  ],
   "tools": [
     { "name": "list_libraries", "description": "List all accessible libraries/repos" },
     { "name": "list_directory", "description": "List files and folders in a library directory" },
