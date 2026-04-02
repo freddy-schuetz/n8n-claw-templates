@@ -1,0 +1,35 @@
+{
+  "id": "seafile",
+  "name": "Seafile",
+  "version": "1.0.0",
+  "updated": "2026-04-02",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage files on a Seafile instance: list libraries, browse directories, search, download, share, and manage files",
+  "credentials_required": [
+    {
+      "key": "seafile_url",
+      "label": "Seafile Instance URL",
+      "hint": "Base URL of your Seafile server (e.g. https://seafile.example.com) — no trailing slash. Works with Seafile Cloud and self-hosted."
+    },
+    {
+      "key": "seafile_token",
+      "label": "Seafile API Token",
+      "hint": "API token — obtain via POST /api2/auth-token/ with username+password, or generate in Seafile web UI under Settings > Web API Auth Token"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_libraries", "description": "List all accessible libraries/repos" },
+    { "name": "list_directory", "description": "List files and folders in a library directory" },
+    { "name": "get_file_detail", "description": "Get metadata for a file (size, last modified, etc.)" },
+    { "name": "download_file", "description": "Get a file download link or read text file content inline" },
+    { "name": "search_files", "description": "Search for files across libraries by keyword" },
+    { "name": "create_share_link", "description": "Create a public share link for a file or folder" },
+    { "name": "delete_file", "description": "Delete a file or directory" },
+    { "name": "file_operation", "description": "Rename, move, or copy a file" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

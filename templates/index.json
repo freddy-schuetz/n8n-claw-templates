@@ -377,6 +377,18 @@
       "version": "1.0.0"
     },
     {
+      "id": "seafile",
+      "name": "Seafile",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage files on a Seafile instance: list libraries, browse directories, search, download, share, and manage files",
+      "credentials_required": [
+        { "key": "seafile_url", "label": "Seafile URL" },
+        { "key": "seafile_token", "label": "Seafile API Token" }
+      ],
+      "version": "1.0.0"
+    },
+    {
       "id": "gmail",
       "name": "Gmail",
       "type": "native",
