@@ -45,31 +45,31 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Recipes](https://www.themealdb.com/) | Search recipes or get a random recipe with ingredients and instructions | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Recipes](https://www.themealdb.com/) | Search recipes or get a random recipe with ingredients and instructions | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [TMDB Movies & TV](https://www.themoviedb.org/) | Search movies and TV shows, discover trending titles | TMDB API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Trivia](https://opentdb.com/) | Random trivia questions with answers from various categories | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Trivia](https://opentdb.com/) | Random trivia questions with answers from various categories | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Finance
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Crypto Prices](https://www.coingecko.com/) | Get cryptocurrency prices, market cap, and 24h changes | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Exchange Rates](https://www.frankfurter.app/) | Convert currencies using live exchange rates | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Crypto Prices](https://www.coingecko.com/) | Get cryptocurrency prices, market cap, and 24h changes | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Exchange Rates](https://www.frankfurter.app/) | Convert currencies using live exchange rates | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [KontoFlux](https://kontoflux.io/) | Access German bank accounts and transactions via KontoFlux Open-Banking API (5000+ banks, read-only) | KontoFlux API Key, Workspace ID | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Knowledge
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [OpenFoodFacts](https://world.openfoodfacts.org/) | Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Wikipedia](https://www.wikipedia.org/) | Search Wikipedia and get article summaries | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [OpenFoodFacts](https://world.openfoodfacts.org/) | Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Wikipedia](https://www.wikipedia.org/) | Search Wikipedia and get article summaries | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Language
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | [DeepL Translate](https://www.deepl.com/) | Translate text between 30+ languages and detect languages | DeepL API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Dictionary](https://dictionaryapi.dev/) | English word definitions, phonetics, and examples | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Dictionary](https://dictionaryapi.dev/) | English word definitions, phonetics, and examples | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Marketing
 
@@ -87,14 +87,14 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [IP Geolocation](https://ip-api.com/) | Get location, ISP, and org info for any IP address | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| Website Check | Website health check: load time, security headers, meta tags, structured data | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [IP Geolocation](https://ip-api.com/) | Get location, ISP, and org info for any IP address | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| Website Check | Website health check: load time, security headers, meta tags, structured data | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### News
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Hacker News](https://news.ycombinator.com/) | Search Hacker News stories and get top stories | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Hacker News](https://news.ycombinator.com/) | Search Hacker News stories and get top stories | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [NewsAPI](https://newsapi.org/) | Search news articles from 80,000+ sources | NewsAPI Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Notes & CRM
@@ -108,9 +108,9 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Tasks
 
@@ -123,22 +123,22 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Deutsche Bahn](https://v6.db.transport.rest/) | Search train connections, departures, and stations across Germany | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Deutsche Bahn](https://v6.db.transport.rest/) | Search train connections, departures, and stations across Germany | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Route Planner](https://openrouteservice.org/) | Plan hiking, cycling, and walking routes with GPX output, POI search, elevation profiles, isochrones (ORS + BRouter) | ORS API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Wiener Linien](https://www.wienerlinien.at/) | Plan routes with Vienna public transport, get your station ID from [this CSV File](https://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv) (yes, a CSV file, don't ask), more details on the [Routingservice Wien](https://www.data.gv.at/datasets/9c203fec-dc0d-412c-a7a3-7fd77d0346f1?locale=de) page | None | [@lcx](https://github.com/lcx) |
+| [Wiener Linien](https://www.wienerlinien.at/) | Plan routes with Vienna public transport, get your station ID from [this CSV File](https://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv) (yes, a CSV file, don't ask), more details on the [Routingservice Wien](https://www.data.gv.at/datasets/9c203fec-dc0d-412c-a7a3-7fd77d0346f1?locale=de) page | - | [@lcx](https://github.com/lcx) |
 
 ### Utilities
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | [PDF Tools](https://pdf-mcp.io/) | Generate PDFs from HTML, extract text, merge PDFs | pdf-mcp.io API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [QR Code](https://goqr.me/) | Generate QR codes from text or URLs | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [QR Code](https://goqr.me/) | Generate QR codes from text or URLs | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Weather
 
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
-| [Weather](https://open-meteo.com/) | Current weather and 3-day forecast for any city | None | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Weather](https://open-meteo.com/) | Current weather and 3-day forecast for any city | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ---
 
