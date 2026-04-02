@@ -24,6 +24,7 @@
     { "name": "list_directory", "description": "List files and folders in a directory" },
     { "name": "get_file_detail", "description": "Get metadata for a file (size, last modified, etc.)" },
     { "name": "download_file", "description": "Get a file download link or read text file content inline" },
+    { "name": "create_file", "description": "Create or overwrite a text file with given content" },
     { "name": "delete_file", "description": "Delete a file or directory" },
     { "name": "file_operation", "description": "Rename, move, or copy a file" }
   ],
