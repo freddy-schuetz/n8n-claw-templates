@@ -466,6 +466,20 @@
         { "key": "customer_id", "label": "Google Ads Customer ID" }
       ],
       "version": "1.0.0-beta"
+    },
+    {
+      "id": "lexware",
+      "name": "Lexware Office",
+      "type": "native",
+      "category": "finance",
+      "description": "Lexware Office integration: manage articles, quotations, invoices, and vouchers via the Lexware API",
+      "credentials_required": [
+        {
+          "key": "lexware_api_token",
+          "label": "Lexware API Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

@@ -1,0 +1,78 @@
+{
+  "id": "lexware",
+  "name": "Lexware Office",
+  "version": "1.0.0",
+  "updated": "2026-04-02",
+  "type": "native",
+  "category": "finance",
+  "description": "Lexware Office integration: manage articles, quotations, invoices, and vouchers via the Lexware API",
+  "credentials_required": [
+    {
+      "key": "lexware_api_token",
+      "label": "Lexware API Token",
+      "hint": "Create at app.lexware.de/addons/public-api — needs 'Public API' permission"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_articles",
+      "description": "List articles (products and services) with optional filters"
+    },
+    {
+      "name": "get_article",
+      "description": "Get details of a specific article by ID"
+    },
+    {
+      "name": "create_article",
+      "description": "Create a new article (product or service)"
+    },
+    {
+      "name": "update_article",
+      "description": "Update an existing article by ID"
+    },
+    {
+      "name": "delete_article",
+      "description": "Delete an article by ID"
+    },
+    {
+      "name": "list_quotations",
+      "description": "List quotations (Angebote) with optional status filter"
+    },
+    {
+      "name": "get_quotation",
+      "description": "Get details of a specific quotation by ID"
+    },
+    {
+      "name": "create_quotation",
+      "description": "Create a new quotation with line items"
+    },
+    {
+      "name": "list_invoices",
+      "description": "List invoices (Rechnungen) with optional status filter"
+    },
+    {
+      "name": "get_invoice",
+      "description": "Get details of a specific invoice by ID"
+    },
+    {
+      "name": "create_invoice",
+      "description": "Create a new invoice with line items"
+    },
+    {
+      "name": "create_invoice_from_quotation",
+      "description": "Create an invoice from an existing quotation"
+    },
+    {
+      "name": "upload_file",
+      "description": "Upload a voucher file (receipt/document) to Lexware"
+    },
+    {
+      "name": "list_vouchers",
+      "description": "List vouchers with optional type and status filters"
+    }
+  ],
+  "author": "Bastian Hiller",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
