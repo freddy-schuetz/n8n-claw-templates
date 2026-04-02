@@ -4,7 +4,29 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills
+## Available Skills (35)
+
+| Category | Skills | Focus |
+|----------|:------:|-------|
+| [Analytics](#analytics) | 1 | Google Analytics |
+| [Calendar](#calendar) | 2 | CalDAV, Google Calendar |
+| [Cloud Storage](#cloud-storage) | 3 | Google Drive, Nextcloud, Seafile |
+| [Communication](#communication) | 3 | Email, Gmail, OpenClaw |
+| [Developer Tools](#developer-tools) | 1 | GitHub |
+| [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
+| [Finance](#finance) | 3 | Crypto, currencies, banking |
+| [Knowledge](#knowledge) | 2 | Food facts, Wikipedia |
+| [Language](#language) | 2 | Translation, dictionary |
+| [Marketing](#marketing) | 1 | Google Ads |
+| [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
+| [Network](#network) | 2 | IP geolocation, website checks |
+| [News](#news) | 2 | Hacker News, NewsAPI |
+| [Notes & CRM](#notes--crm) | 2 | NocoDB, Notion |
+| [Reference](#reference) | 3 | Countries, holidays, timezones |
+| [Tasks](#tasks) | 2 | Todoist, Vikunja |
+| [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
+| [Utilities](#utilities) | 2 | PDF tools, QR codes |
+| [Weather](#weather) | 1 | Open-Meteo forecasts |
 
 ### Analytics
 
