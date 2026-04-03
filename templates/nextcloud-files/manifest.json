@@ -39,6 +39,10 @@
       "description": "Upload a binary file (PDF, image, etc.) to Nextcloud from a file_ref or external URL"
     },
     {
+      "name": "download_file",
+      "description": "Download a file from Nextcloud and prepare it for sending to the user"
+    },
+    {
       "name": "upload_from_url",
       "description": "Download a file from a URL and save it to Nextcloud"
     },

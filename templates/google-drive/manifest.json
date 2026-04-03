@@ -37,7 +37,8 @@
     { "name": "create_folder", "description": "Create a new folder. Parameters: name (required), parent_folder_id (optional)" },
     { "name": "delete_file", "description": "Delete a file or folder. Parameters: file_id (required)" },
     { "name": "share_file", "description": "Share a file or folder. Parameters: file_id (required), email (optional), role ('reader'/'writer'/'commenter', default 'reader'), type ('user'/'anyone', default 'user')" },
-    { "name": "upload_file", "description": "Upload a binary file (PDF, image, etc.) to Google Drive from a file_ref or external URL" }
+    { "name": "upload_file", "description": "Upload a binary file (PDF, image, etc.) to Google Drive from a file_ref or external URL" },
+    { "name": "download_file", "description": "Download a file from Google Drive and prepare it for sending to the user (Google Docs/Sheets exported as PDF)" }
   ],
   "author": "freddy-schuetz",
   "license": "MIT",
