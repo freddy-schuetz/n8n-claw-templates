@@ -86,9 +86,18 @@
       "category": "communication",
       "description": "Connect to an OpenClaw autonomous AI agent instance via the OpenAI-compatible Gateway API",
       "credentials_required": [
-        { "key": "openclaw_url", "label": "OpenClaw Gateway URL" },
-        { "key": "openclaw_token", "label": "OpenClaw Gateway Token" },
-        { "key": "openclaw_caller_id", "label": "Caller ID" }
+        {
+          "key": "openclaw_url",
+          "label": "OpenClaw Gateway URL"
+        },
+        {
+          "key": "openclaw_token",
+          "label": "OpenClaw Gateway Token"
+        },
+        {
+          "key": "openclaw_caller_id",
+          "label": "Caller ID"
+        }
       ],
       "version": "2.0.0"
     },
@@ -99,10 +108,22 @@
       "category": "communication",
       "description": "Read and send emails via IMAP/SMTP (requires email-bridge service and email account credentials)",
       "credentials_required": [
-        { "key": "email_user", "label": "Email Address" },
-        { "key": "email_password", "label": "Email Password" },
-        { "key": "imap_host", "label": "IMAP Server" },
-        { "key": "smtp_host", "label": "SMTP Server" }
+        {
+          "key": "email_user",
+          "label": "Email Address"
+        },
+        {
+          "key": "email_password",
+          "label": "Email Password"
+        },
+        {
+          "key": "imap_host",
+          "label": "IMAP Server"
+        },
+        {
+          "key": "smtp_host",
+          "label": "SMTP Server"
+        }
       ],
       "version": "1.1.0"
     },
@@ -199,8 +220,14 @@
       "category": "productivity",
       "description": "Manage NocoDB tables and records: list bases, tables, and CRUD operations on records with filtering and sorting",
       "credentials_required": [
-        { "key": "nocodb_url", "label": "NocoDB Instance URL" },
-        { "key": "nocodb_token", "label": "NocoDB API Token" }
+        {
+          "key": "nocodb_url",
+          "label": "NocoDB Instance URL"
+        },
+        {
+          "key": "nocodb_token",
+          "label": "NocoDB API Token"
+        }
       ],
       "version": "1.0.0"
     },
@@ -325,10 +352,16 @@
       "name": "OpenWebUI Knowledge Manager",
       "type": "native",
       "category": "knowledge",
-      "description": "Manage OpenWebUI knowledge collections and RAG files — create collections, upload documents, ingest web pages, and organize knowledge bases",
+      "description": "Manage OpenWebUI knowledge collections and RAG files \u2014 create collections, upload documents, ingest web pages, and organize knowledge bases",
       "credentials_required": [
-        { "key": "openwebui_url", "label": "OpenWebUI URL" },
-        { "key": "openwebui_api_key", "label": "OpenWebUI API Key" }
+        {
+          "key": "openwebui_url",
+          "label": "OpenWebUI URL"
+        },
+        {
+          "key": "openwebui_api_key",
+          "label": "OpenWebUI API Key"
+        }
       ],
       "version": "1.0.0"
     },
@@ -337,7 +370,7 @@
       "name": "OpenFoodFacts",
       "type": "native",
       "category": "knowledge",
-      "description": "Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients (4M+ products, no API key needed)",
+      "description": "Look up food products by barcode or name \u2014 nutrition facts, Nutri-Score, allergens, ingredients (4M+ products, no API key needed)",
       "credentials_required": [],
       "version": "1.0.0"
     },
@@ -355,11 +388,20 @@
       "name": "CalDAV Calendar",
       "type": "native",
       "category": "productivity",
-      "description": "Manage calendars on any CalDAV server — list, create, update, and delete events (Nextcloud, Radicale, Baikal, etc.)",
+      "description": "Manage calendars on any CalDAV server \u2014 list, create, update, and delete events (Nextcloud, Radicale, Baikal, etc.)",
       "credentials_required": [
-        { "key": "caldav_url", "label": "CalDAV Server URL" },
-        { "key": "caldav_username", "label": "Username" },
-        { "key": "caldav_password", "label": "Password or App Password" }
+        {
+          "key": "caldav_url",
+          "label": "CalDAV Server URL"
+        },
+        {
+          "key": "caldav_username",
+          "label": "Username"
+        },
+        {
+          "key": "caldav_password",
+          "label": "Password or App Password"
+        }
       ],
       "version": "1.0.0"
     },
@@ -370,8 +412,14 @@
       "category": "productivity",
       "description": "Manage Vikunja tasks and projects: list, create, update, and delete tasks with due dates and priorities",
       "credentials_required": [
-        { "key": "vikunja_url", "label": "Vikunja Instance URL" },
-        { "key": "vikunja_token", "label": "Vikunja API Token" }
+        {
+          "key": "vikunja_url",
+          "label": "Vikunja Instance URL"
+        },
+        {
+          "key": "vikunja_token",
+          "label": "Vikunja API Token"
+        }
       ],
       "version": "1.0.0"
     },
@@ -380,11 +428,20 @@
       "name": "Nextcloud Files",
       "type": "native",
       "category": "productivity",
-      "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload, move, and delete files and folders",
+      "description": "Manage files on a Nextcloud instance via WebDAV \u2014 list, read, write, upload, move, and delete files and folders",
       "credentials_required": [
-        { "key": "nextcloud_url", "label": "Nextcloud URL" },
-        { "key": "nextcloud_username", "label": "Username" },
-        { "key": "nextcloud_password", "label": "App Password" }
+        {
+          "key": "nextcloud_url",
+          "label": "Nextcloud URL"
+        },
+        {
+          "key": "nextcloud_username",
+          "label": "Username"
+        },
+        {
+          "key": "nextcloud_password",
+          "label": "App Password"
+        }
       ],
       "version": "1.0.0"
     },
@@ -395,8 +452,14 @@
       "category": "productivity",
       "description": "Manage files on a Seafile library: browse directories, read files, download, rename, move, copy, and delete",
       "credentials_required": [
-        { "key": "seafile_url", "label": "Seafile URL" },
-        { "key": "seafile_token", "label": "Seafile API Token" }
+        {
+          "key": "seafile_url",
+          "label": "Seafile URL"
+        },
+        {
+          "key": "seafile_token",
+          "label": "Seafile API Token"
+        }
       ],
       "version": "1.0.0"
     },
@@ -408,8 +471,16 @@
       "description": "Search, read, send emails and manage drafts via Gmail API (Google OAuth2)",
       "credential_type": "oauth2",
       "credentials_required": [
-        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
-        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+        {
+          "key": "client_id",
+          "label": "Google OAuth Client ID",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "client_secret",
+          "label": "Google OAuth Client Secret",
+          "shared_id": "google-oauth"
+        }
       ],
       "version": "1.0.0"
     },
@@ -421,8 +492,16 @@
       "description": "List, create, update and delete events in Google Calendar (Google OAuth2)",
       "credential_type": "oauth2",
       "credentials_required": [
-        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
-        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+        {
+          "key": "client_id",
+          "label": "Google OAuth Client ID",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "client_secret",
+          "label": "Google OAuth Client Secret",
+          "shared_id": "google-oauth"
+        }
       ],
       "version": "1.0.0"
     },
@@ -434,8 +513,16 @@
       "description": "List, search, read, create, and share files in Google Drive (Google OAuth2)",
       "credential_type": "oauth2",
       "credentials_required": [
-        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
-        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+        {
+          "key": "client_id",
+          "label": "Google OAuth Client ID",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "client_secret",
+          "label": "Google OAuth Client Secret",
+          "shared_id": "google-oauth"
+        }
       ],
       "version": "1.0.0"
     },
@@ -447,8 +534,16 @@
       "description": "Query Google Analytics 4 (GA4) reports, properties, and realtime data (Google OAuth2)",
       "credential_type": "oauth2",
       "credentials_required": [
-        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
-        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" }
+        {
+          "key": "client_id",
+          "label": "Google OAuth Client ID",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "client_secret",
+          "label": "Google OAuth Client Secret",
+          "shared_id": "google-oauth"
+        }
       ],
       "version": "1.0.0"
     },
@@ -460,10 +555,24 @@
       "description": "Query Google Ads campaigns, ad groups, and performance data via GAQL (Google OAuth2, Beta)",
       "credential_type": "oauth2",
       "credentials_required": [
-        { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
-        { "key": "client_secret", "label": "Google OAuth Client Secret", "shared_id": "google-oauth" },
-        { "key": "developer_token", "label": "Google Ads Developer Token" },
-        { "key": "customer_id", "label": "Google Ads Customer ID" }
+        {
+          "key": "client_id",
+          "label": "Google OAuth Client ID",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "client_secret",
+          "label": "Google OAuth Client Secret",
+          "shared_id": "google-oauth"
+        },
+        {
+          "key": "developer_token",
+          "label": "Google Ads Developer Token"
+        },
+        {
+          "key": "customer_id",
+          "label": "Google Ads Customer ID"
+        }
       ],
       "version": "1.0.0-beta"
     },
@@ -472,14 +581,14 @@
       "name": "Lexware Office",
       "type": "native",
       "category": "finance",
-      "description": "Lexware Office integration: manage articles, quotations, invoices, and vouchers via the Lexware API",
+      "description": "Lexware Office integration: manage articles, quotations, invoices, contacts, and vouchers via the Lexware API",
       "credentials_required": [
         {
           "key": "lexware_api_token",
           "label": "Lexware API Token"
         }
       ],
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

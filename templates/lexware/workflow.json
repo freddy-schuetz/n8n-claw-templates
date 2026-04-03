@@ -13,7 +13,10 @@
         "name": "Execute Workflow Trigger",
         "type": "n8n-nodes-base.executeWorkflowTrigger",
         "typeVersion": 1.1,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "inputSource": "passthrough"
         }
@@ -23,15 +26,26 @@
         "name": "Lexware Logic",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [256, 0],
+        "position": [
+          256,
+          0
+        ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_articles';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.lexware&cred_key=eq.lexware_api_token&select=cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'Lexware API token not configured. Use add_credential to set it up.' } }];\n}\n\nconst token = creds[0].cred_value;\nconst baseUrl = 'https://api.lexware.io/v1';\nconst headers = {\n  'Authorization': 'Bearer ' + token,\n  'Accept': 'application/json'\n};\nconst jsonHeaders = {\n  ...headers,\n  'Content-Type': 'application/json'\n};\n\nfunction formatDate(dateStr) {\n  if (!dateStr) return '';\n  return dateStr.split('T')[0];\n}\n\nfunction formatCurrency(amount) {\n  if (amount === undefined || amount === null) return '0.00';\n  return Number(amount).toFixed(2);\n}\n\n// === list_articles ===\nif (action === 'list_articles') {\n  const page = input.page || '0';\n  const type = input.type || '';\n  try {\n    let url = baseUrl + '/articles?page=' + page + '&size=25';\n    if (type) url += '&type=' + type;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No articles found.' } }];\n    }\n    let result = 'Articles (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const a of data.content) {\n      result += '**' + a.title + '**';\n      if (a.articleNumber) result += ' (#' + a.articleNumber + ')';\n      result += '\\n';\n      result += '  Type: ' + a.type;\n      if (a.unitName) result += ' | Unit: ' + a.unitName;\n      result += '\\n';\n      if (a.price) {\n        const p = a.price;\n        result += '  Price: ' + formatCurrency(p.netPrice) + ' net';\n        if (p.grossPrice) result += ' / ' + formatCurrency(p.grossPrice) + ' gross';\n        result += ' (Tax: ' + (p.taxRate || 0) + '%)\\n';\n      }\n      result += '  ID: ' + a.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list articles: ' + err.message } }];\n  }\n\n// === get_article ===\n} else if (action === 'get_article') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const a = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/articles/' + id, headers });\n    let result = '**' + a.title + '**';\n    if (a.articleNumber) result += ' (#' + a.articleNumber + ')';\n    result += '\\n';\n    result += 'Type: ' + a.type + '\\n';\n    if (a.description) result += 'Description: ' + a.description + '\\n';\n    if (a.unitName) result += 'Unit: ' + a.unitName + '\\n';\n    if (a.price) {\n      const p = a.price;\n      result += 'Net Price: ' + formatCurrency(p.netPrice) + '\\n';\n      result += 'Gross Price: ' + formatCurrency(p.grossPrice) + '\\n';\n      result += 'Leading Price: ' + p.leadingPrice + '\\n';\n      result += 'Tax Rate: ' + (p.taxRate || 0) + '%\\n';\n    }\n    if (a.gtin) result += 'GTIN: ' + a.gtin + '\\n';\n    result += 'Version: ' + a.version + '\\n';\n    result += 'ID: ' + a.id + '\\n';\n    result += 'Created: ' + formatDate(a.createdDate) + '\\n';\n    result += 'Updated: ' + formatDate(a.updatedDate) + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get article: ' + err.message } }];\n  }\n\n// === create_article ===\n} else if (action === 'create_article') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  try {\n    const body = {\n      title: title,\n      type: input.type || 'SERVICE',\n      unitName: input.unitName || 'Stück',\n      price: {\n        netPrice: parseFloat(input.netPrice || '0'),\n        taxRate: parseFloat(input.taxRate || '19'),\n        leadingPrice: input.leadingPrice || 'net'\n      }\n    };\n    if (input.description) body.description = input.description;\n    if (input.articleNumber) body.articleNumber = input.articleNumber;\n    if (input.gtin) body.gtin = input.gtin;\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: baseUrl + '/articles',\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Article created successfully.\\nID: ' + data.id + '\\nResource: ' + data.resourceUri } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create article: ' + err.message } }];\n  }\n\n// === update_article ===\n} else if (action === 'update_article') {\n  const id = input.id;\n  const version = input.version;\n  if (!id || !version) return [{ json: { error: 'Parameters \"id\" and \"version\" are required. Use get_article first to get the current version.' } }];\n  try {\n    const body = {\n      version: parseInt(version),\n      title: input.title,\n      type: input.type || 'SERVICE',\n      unitName: input.unitName || 'Stück',\n      price: {\n        netPrice: parseFloat(input.netPrice || '0'),\n        taxRate: parseFloat(input.taxRate || '19'),\n        leadingPrice: input.leadingPrice || 'net'\n      }\n    };\n    if (input.description) body.description = input.description;\n    if (input.articleNumber) body.articleNumber = input.articleNumber;\n    if (input.gtin) body.gtin = input.gtin;\n    const data = await helpers.httpRequest({\n      method: 'PUT',\n      url: baseUrl + '/articles/' + id,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Article updated successfully.\\nID: ' + data.id + '\\nNew Version: ' + data.version } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update article: ' + err.message } }];\n  }\n\n// === delete_article ===\n} else if (action === 'delete_article') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: baseUrl + '/articles/' + id, headers });\n    return [{ json: { result: 'Article deleted successfully. ID: ' + id } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete article: ' + err.message } }];\n  }\n\n// === list_quotations ===\n} else if (action === 'list_quotations') {\n  const page = input.page || '0';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?voucherType=quotation&page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No quotations found.' } }];\n    }\n    let result = 'Quotations (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const q of data.content) {\n      result += '**' + (q.voucherNumber || 'Draft') + '**';\n      result += ' — ' + (q.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(q.voucherDate);\n      result += ' | Status: ' + q.voucherStatus;\n      result += ' | Total: ' + formatCurrency(q.totalAmount) + '\\n';\n      result += '  ID: ' + q.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list quotations: ' + err.message } }];\n  }\n\n// === get_quotation ===\n} else if (action === 'get_quotation') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const q = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/quotations/' + id, headers });\n    let result = '**Quotation';\n    if (q.voucherNumber) result += ' ' + q.voucherNumber;\n    result += '**\\n';\n    if (q.address) {\n      if (q.address.name) result += 'To: ' + q.address.name + '\\n';\n      if (q.address.street) result += '  ' + q.address.street + '\\n';\n      if (q.address.zip || q.address.city) result += '  ' + (q.address.zip || '') + ' ' + (q.address.city || '') + '\\n';\n    }\n    result += 'Date: ' + formatDate(q.voucherDate) + '\\n';\n    if (q.expirationDate) result += 'Expires: ' + formatDate(q.expirationDate) + '\\n';\n    result += '\\nLine Items:\\n';\n    if (q.lineItems) {\n      for (const item of q.lineItems) {\n        if (item.type === 'custom') {\n          result += '  - ' + item.name;\n          if (item.quantity) result += ' (x' + item.quantity + ')';\n          if (item.unitPrice && item.unitPrice.netAmount !== undefined) result += ' @ ' + formatCurrency(item.unitPrice.netAmount);\n          result += '\\n';\n          if (item.description) result += '    ' + item.description + '\\n';\n        }\n      }\n    }\n    if (q.totalPrice) {\n      result += '\\nTotal Net: ' + formatCurrency(q.totalPrice.totalNetAmount) + '\\n';\n      result += 'Total Gross: ' + formatCurrency(q.totalPrice.totalGrossAmount) + '\\n';\n      result += 'Tax: ' + formatCurrency(q.totalPrice.totalTaxAmount) + '\\n';\n    }\n    result += '\\nID: ' + q.id + '\\n';\n    result += 'Deep Link: https://app.lexware.de/permalink/quotations/view/' + q.id + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get quotation: ' + err.message } }];\n  }\n\n// === create_quotation ===\n} else if (action === 'create_quotation') {\n  const contactId = input.contactId || '';\n  const voucherDate = input.voucherDate || new Date().toISOString().split('T')[0];\n  const lineItemsStr = input.lineItems;\n  if (!lineItemsStr) return [{ json: { error: 'Parameter \"lineItems\" is required. Provide as JSON array, e.g. [{\"name\":\"Service\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]' } }];\n  try {\n    let lineItemsRaw;\n    try { lineItemsRaw = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON: ' + e.message } }]; }\n    const lineItems = lineItemsRaw.map(item => ({\n      type: 'custom',\n      name: item.name,\n      quantity: item.quantity || 1,\n      unitName: item.unitName || 'Stück',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: item.unitPrice || item.netAmount || 0,\n        taxRatePercentage: item.taxRate || item.taxRatePercentage || 19\n      }\n    }));\n    const body = {\n      voucherDate: voucherDate,\n      lineItems: lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' }\n    };\n    if (contactId) body.address = { contactId: contactId };\n    if (input.introduction) body.introduction = input.introduction;\n    if (input.remark) body.remark = input.remark;\n    if (input.expirationDate) body.expirationDate = input.expirationDate;\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/quotations';\n    if (finalize) url += '?finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    let result = 'Quotation created successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/quotations/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create quotation: ' + err.message } }];\n  }\n\n// === list_invoices ===\n} else if (action === 'list_invoices') {\n  const page = input.page || '0';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?voucherType=invoice&page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No invoices found.' } }];\n    }\n    let result = 'Invoices (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const inv of data.content) {\n      result += '**' + (inv.voucherNumber || 'Draft') + '**';\n      result += ' — ' + (inv.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(inv.voucherDate);\n      result += ' | Status: ' + inv.voucherStatus;\n      result += ' | Total: ' + formatCurrency(inv.totalAmount) + '\\n';\n      if (inv.dueDate) result += '  Due: ' + formatDate(inv.dueDate) + '\\n';\n      result += '  ID: ' + inv.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list invoices: ' + err.message } }];\n  }\n\n// === get_invoice ===\n} else if (action === 'get_invoice') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const inv = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/invoices/' + id, headers });\n    let result = '**Invoice';\n    if (inv.voucherNumber) result += ' ' + inv.voucherNumber;\n    result += '**\\n';\n    if (inv.address) {\n      if (inv.address.name) result += 'To: ' + inv.address.name + '\\n';\n      if (inv.address.street) result += '  ' + inv.address.street + '\\n';\n      if (inv.address.zip || inv.address.city) result += '  ' + (inv.address.zip || '') + ' ' + (inv.address.city || '') + '\\n';\n    }\n    result += 'Date: ' + formatDate(inv.voucherDate) + '\\n';\n    if (inv.dueDate) result += 'Due: ' + formatDate(inv.dueDate) + '\\n';\n    result += '\\nLine Items:\\n';\n    if (inv.lineItems) {\n      for (const item of inv.lineItems) {\n        if (item.type === 'custom') {\n          result += '  - ' + item.name;\n          if (item.quantity) result += ' (x' + item.quantity + ')';\n          if (item.unitPrice && item.unitPrice.netAmount !== undefined) result += ' @ ' + formatCurrency(item.unitPrice.netAmount);\n          result += '\\n';\n          if (item.description) result += '    ' + item.description + '\\n';\n        }\n      }\n    }\n    if (inv.totalPrice) {\n      result += '\\nTotal Net: ' + formatCurrency(inv.totalPrice.totalNetAmount) + '\\n';\n      result += 'Total Gross: ' + formatCurrency(inv.totalPrice.totalGrossAmount) + '\\n';\n      result += 'Tax: ' + formatCurrency(inv.totalPrice.totalTaxAmount) + '\\n';\n    }\n    if (inv.paymentConditions) {\n      result += '\\nPayment: ' + inv.paymentConditions.paymentTermLabel + '\\n';\n    }\n    result += '\\nID: ' + inv.id + '\\n';\n    result += 'Deep Link: https://app.lexware.de/permalink/invoices/view/' + inv.id + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get invoice: ' + err.message } }];\n  }\n\n// === create_invoice ===\n} else if (action === 'create_invoice') {\n  const contactId = input.contactId || '';\n  const voucherDate = input.voucherDate || new Date().toISOString().split('T')[0];\n  const lineItemsStr = input.lineItems;\n  if (!lineItemsStr) return [{ json: { error: 'Parameter \"lineItems\" is required. Provide as JSON array, e.g. [{\"name\":\"Service\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]' } }];\n  try {\n    let lineItemsRaw;\n    try { lineItemsRaw = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON: ' + e.message } }]; }\n    const lineItems = lineItemsRaw.map(item => ({\n      type: 'custom',\n      name: item.name,\n      quantity: item.quantity || 1,\n      unitName: item.unitName || 'Stück',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: item.unitPrice || item.netAmount || 0,\n        taxRatePercentage: item.taxRate || item.taxRatePercentage || 19\n      }\n    }));\n    const body = {\n      voucherDate: voucherDate,\n      lineItems: lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' },\n      shippingConditions: { shippingType: 'none' }\n    };\n    if (contactId) body.address = { contactId: contactId };\n    if (input.introduction) body.introduction = input.introduction;\n    if (input.remark) body.remark = input.remark;\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/invoices';\n    if (finalize) url += '?finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    let result = 'Invoice created successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/invoices/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create invoice: ' + err.message } }];\n  }\n\n// === create_invoice_from_quotation ===\n} else if (action === 'create_invoice_from_quotation') {\n  const quotationId = input.quotation_id;\n  if (!quotationId) return [{ json: { error: 'Parameter \"quotation_id\" is required.' } }];\n  try {\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/invoices?precedingSalesVoucherId=' + quotationId;\n    if (finalize) url += '&finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: '{}'\n    });\n    let result = 'Invoice created from quotation successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/invoices/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create invoice from quotation: ' + err.message } }];\n  }\n\n// === upload_file ===\n} else if (action === 'upload_file') {\n  const fileBase64 = input.file_base64;\n  const fileName = input.file_name || 'document.pdf';\n  if (!fileBase64) return [{ json: { error: 'Parameter \"file_base64\" is required. Provide the file content as base64-encoded string.' } }];\n  try {\n    const fileBuffer = Buffer.from(fileBase64, 'base64');\n    const boundary = '----n8nFormBoundary' + Date.now();\n    const contentType = fileName.endsWith('.pdf') ? 'application/pdf' : fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/octet-stream';\n    let bodyParts = [];\n    bodyParts.push('--' + boundary);\n    bodyParts.push('Content-Disposition: form-data; name=\"file\"; filename=\"' + fileName + '\"');\n    bodyParts.push('Content-Type: ' + contentType);\n    bodyParts.push('');\n    const headerStr = bodyParts.join('\\r\\n') + '\\r\\n';\n    const footerStr = '\\r\\n--' + boundary + '--\\r\\n';\n    const headerBuf = Buffer.from(headerStr);\n    const footerBuf = Buffer.from(footerStr);\n    const fullBody = Buffer.concat([headerBuf, fileBuffer, footerBuf]);\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: baseUrl + '/files',\n      headers: {\n        'Authorization': 'Bearer ' + token,\n        'Accept': 'application/json',\n        'Content-Type': 'multipart/form-data; boundary=' + boundary\n      },\n      body: fullBody\n    });\n    return [{ json: { result: 'File uploaded successfully.\\nFile ID: ' + data.id + '\\nResource: ' + data.resourceUri } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to upload file: ' + err.message } }];\n  }\n\n// === list_vouchers ===\n} else if (action === 'list_vouchers') {\n  const page = input.page || '0';\n  const voucherType = input.voucherType || '';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (voucherType) url += '&voucherType=' + voucherType;\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No vouchers found.' } }];\n    }\n    let result = 'Vouchers (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const v of data.content) {\n      result += '**' + (v.voucherNumber || 'Draft') + '**';\n      result += ' [' + v.voucherType + ']';\n      result += ' — ' + (v.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(v.voucherDate);\n      result += ' | Status: ' + v.voucherStatus;\n      result += ' | Total: ' + formatCurrency(v.totalAmount) + '\\n';\n      result += '  ID: ' + v.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list vouchers: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: list_articles, get_article, create_article, update_article, delete_article, list_quotations, get_quotation, create_quotation, list_invoices, get_invoice, create_invoice, create_invoice_from_quotation, upload_file, list_vouchers.' } }];\n}\n"
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_articles';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.lexware&cred_key=eq.lexware_api_token&select=cred_value',\n  headers: pgHeaders\n});\n\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'Lexware API token not configured. Use add_credential to set it up.' } }];\n}\n\nconst token = creds[0].cred_value;\nconst baseUrl = 'https://api.lexware.io/v1';\nconst headers = {\n  'Authorization': 'Bearer ' + token,\n  'Accept': 'application/json'\n};\nconst jsonHeaders = {\n  ...headers,\n  'Content-Type': 'application/json'\n};\n\nfunction formatDate(dateStr) {\n  if (!dateStr) return '';\n  return dateStr.split('T')[0];\n}\n\nfunction formatCurrency(amount) {\n  if (amount === undefined || amount === null) return '0.00';\n  return Number(amount).toFixed(2);\n}\n\n// === list_articles ===\nif (action === 'list_articles') {\n  const page = input.page || '0';\n  const type = input.type || '';\n  try {\n    let url = baseUrl + '/articles?page=' + page + '&size=25';\n    if (type) url += '&type=' + type;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No articles found.' } }];\n    }\n    let result = 'Articles (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const a of data.content) {\n      result += '**' + a.title + '**';\n      if (a.articleNumber) result += ' (#' + a.articleNumber + ')';\n      result += '\\n';\n      result += '  Type: ' + a.type;\n      if (a.unitName) result += ' | Unit: ' + a.unitName;\n      result += '\\n';\n      if (a.price) {\n        const p = a.price;\n        result += '  Price: ' + formatCurrency(p.netPrice) + ' net';\n        if (p.grossPrice) result += ' / ' + formatCurrency(p.grossPrice) + ' gross';\n        result += ' (Tax: ' + (p.taxRate || 0) + '%)\\n';\n      }\n      result += '  ID: ' + a.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list articles: ' + err.message } }];\n  }\n\n// === get_article ===\n} else if (action === 'get_article') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const a = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/articles/' + id, headers });\n    let result = '**' + a.title + '**';\n    if (a.articleNumber) result += ' (#' + a.articleNumber + ')';\n    result += '\\n';\n    result += 'Type: ' + a.type + '\\n';\n    if (a.description) result += 'Description: ' + a.description + '\\n';\n    if (a.unitName) result += 'Unit: ' + a.unitName + '\\n';\n    if (a.price) {\n      const p = a.price;\n      result += 'Net Price: ' + formatCurrency(p.netPrice) + '\\n';\n      result += 'Gross Price: ' + formatCurrency(p.grossPrice) + '\\n';\n      result += 'Leading Price: ' + p.leadingPrice + '\\n';\n      result += 'Tax Rate: ' + (p.taxRate || 0) + '%\\n';\n    }\n    if (a.gtin) result += 'GTIN: ' + a.gtin + '\\n';\n    result += 'Version: ' + a.version + '\\n';\n    result += 'ID: ' + a.id + '\\n';\n    result += 'Created: ' + formatDate(a.createdDate) + '\\n';\n    result += 'Updated: ' + formatDate(a.updatedDate) + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get article: ' + err.message } }];\n  }\n\n// === create_article ===\n} else if (action === 'create_article') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  try {\n    const body = {\n      title: title,\n      type: input.type || 'SERVICE',\n      unitName: input.unitName || 'St\u00fcck',\n      price: {\n        netPrice: parseFloat(input.netPrice || '0'),\n        taxRate: parseFloat(input.taxRate || '19'),\n        leadingPrice: input.leadingPrice || 'net'\n      }\n    };\n    if (input.description) body.description = input.description;\n    if (input.articleNumber) body.articleNumber = input.articleNumber;\n    if (input.gtin) body.gtin = input.gtin;\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: baseUrl + '/articles',\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Article created successfully.\\nID: ' + data.id + '\\nResource: ' + data.resourceUri } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create article: ' + err.message } }];\n  }\n\n// === update_article ===\n} else if (action === 'update_article') {\n  const id = input.id;\n  const version = input.version;\n  if (!id || !version) return [{ json: { error: 'Parameters \"id\" and \"version\" are required. Use get_article first to get the current version.' } }];\n  try {\n    const body = {\n      version: parseInt(version),\n      title: input.title,\n      type: input.type || 'SERVICE',\n      unitName: input.unitName || 'St\u00fcck',\n      price: {\n        netPrice: parseFloat(input.netPrice || '0'),\n        taxRate: parseFloat(input.taxRate || '19'),\n        leadingPrice: input.leadingPrice || 'net'\n      }\n    };\n    if (input.description) body.description = input.description;\n    if (input.articleNumber) body.articleNumber = input.articleNumber;\n    if (input.gtin) body.gtin = input.gtin;\n    const data = await helpers.httpRequest({\n      method: 'PUT',\n      url: baseUrl + '/articles/' + id,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Article updated successfully.\\nID: ' + data.id + '\\nNew Version: ' + data.version } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update article: ' + err.message } }];\n  }\n\n// === delete_article ===\n} else if (action === 'delete_article') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: baseUrl + '/articles/' + id, headers });\n    return [{ json: { result: 'Article deleted successfully. ID: ' + id } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete article: ' + err.message } }];\n  }\n\n// === list_quotations ===\n} else if (action === 'list_quotations') {\n  const page = input.page || '0';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?voucherType=quotation&page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No quotations found.' } }];\n    }\n    let result = 'Quotations (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const q of data.content) {\n      result += '**' + (q.voucherNumber || 'Draft') + '**';\n      result += ' \u2014 ' + (q.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(q.voucherDate);\n      result += ' | Status: ' + q.voucherStatus;\n      result += ' | Total: ' + formatCurrency(q.totalAmount) + '\\n';\n      result += '  ID: ' + q.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list quotations: ' + err.message } }];\n  }\n\n// === get_quotation ===\n} else if (action === 'get_quotation') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const q = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/quotations/' + id, headers });\n    let result = '**Quotation';\n    if (q.voucherNumber) result += ' ' + q.voucherNumber;\n    result += '**\\n';\n    if (q.address) {\n      if (q.address.name) result += 'To: ' + q.address.name + '\\n';\n      if (q.address.street) result += '  ' + q.address.street + '\\n';\n      if (q.address.zip || q.address.city) result += '  ' + (q.address.zip || '') + ' ' + (q.address.city || '') + '\\n';\n    }\n    result += 'Date: ' + formatDate(q.voucherDate) + '\\n';\n    if (q.expirationDate) result += 'Expires: ' + formatDate(q.expirationDate) + '\\n';\n    result += '\\nLine Items:\\n';\n    if (q.lineItems) {\n      for (const item of q.lineItems) {\n        if (item.type === 'custom') {\n          result += '  - ' + item.name;\n          if (item.quantity) result += ' (x' + item.quantity + ')';\n          if (item.unitPrice && item.unitPrice.netAmount !== undefined) result += ' @ ' + formatCurrency(item.unitPrice.netAmount);\n          result += '\\n';\n          if (item.description) result += '    ' + item.description + '\\n';\n        }\n      }\n    }\n    if (q.totalPrice) {\n      result += '\\nTotal Net: ' + formatCurrency(q.totalPrice.totalNetAmount) + '\\n';\n      result += 'Total Gross: ' + formatCurrency(q.totalPrice.totalGrossAmount) + '\\n';\n      result += 'Tax: ' + formatCurrency(q.totalPrice.totalTaxAmount) + '\\n';\n    }\n    result += '\\nID: ' + q.id + '\\n';\n    result += 'Deep Link: https://app.lexware.de/permalink/quotations/view/' + q.id + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get quotation: ' + err.message } }];\n  }\n\n// === create_quotation ===\n} else if (action === 'create_quotation') {\n  const contactId = input.contactId || '';\n  const voucherDate = input.voucherDate || new Date().toISOString().split('T')[0];\n  const lineItemsStr = input.lineItems;\n  if (!lineItemsStr) return [{ json: { error: 'Parameter \"lineItems\" is required. Provide as JSON array, e.g. [{\"name\":\"Service\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]' } }];\n  try {\n    let lineItemsRaw;\n    try { lineItemsRaw = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON: ' + e.message } }]; }\n    const lineItems = lineItemsRaw.map(item => ({\n      type: 'custom',\n      name: item.name,\n      quantity: item.quantity || 1,\n      unitName: item.unitName || 'St\u00fcck',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: item.unitPrice || item.netAmount || 0,\n        taxRatePercentage: item.taxRate || item.taxRatePercentage || 19\n      }\n    }));\n    const body = {\n      voucherDate: voucherDate,\n      lineItems: lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' }\n    };\n    if (contactId) body.address = { contactId: contactId };\n    if (input.introduction) body.introduction = input.introduction;\n    if (input.remark) body.remark = input.remark;\n    if (input.expirationDate) body.expirationDate = input.expirationDate;\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/quotations';\n    if (finalize) url += '?finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    let result = 'Quotation created successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/quotations/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create quotation: ' + err.message } }];\n  }\n\n// === list_invoices ===\n} else if (action === 'list_invoices') {\n  const page = input.page || '0';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?voucherType=invoice&page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No invoices found.' } }];\n    }\n    let result = 'Invoices (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const inv of data.content) {\n      result += '**' + (inv.voucherNumber || 'Draft') + '**';\n      result += ' \u2014 ' + (inv.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(inv.voucherDate);\n      result += ' | Status: ' + inv.voucherStatus;\n      result += ' | Total: ' + formatCurrency(inv.totalAmount) + '\\n';\n      if (inv.dueDate) result += '  Due: ' + formatDate(inv.dueDate) + '\\n';\n      result += '  ID: ' + inv.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list invoices: ' + err.message } }];\n  }\n\n// === get_invoice ===\n} else if (action === 'get_invoice') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const inv = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/invoices/' + id, headers });\n    let result = '**Invoice';\n    if (inv.voucherNumber) result += ' ' + inv.voucherNumber;\n    result += '**\\n';\n    if (inv.address) {\n      if (inv.address.name) result += 'To: ' + inv.address.name + '\\n';\n      if (inv.address.street) result += '  ' + inv.address.street + '\\n';\n      if (inv.address.zip || inv.address.city) result += '  ' + (inv.address.zip || '') + ' ' + (inv.address.city || '') + '\\n';\n    }\n    result += 'Date: ' + formatDate(inv.voucherDate) + '\\n';\n    if (inv.dueDate) result += 'Due: ' + formatDate(inv.dueDate) + '\\n';\n    result += '\\nLine Items:\\n';\n    if (inv.lineItems) {\n      for (const item of inv.lineItems) {\n        if (item.type === 'custom') {\n          result += '  - ' + item.name;\n          if (item.quantity) result += ' (x' + item.quantity + ')';\n          if (item.unitPrice && item.unitPrice.netAmount !== undefined) result += ' @ ' + formatCurrency(item.unitPrice.netAmount);\n          result += '\\n';\n          if (item.description) result += '    ' + item.description + '\\n';\n        }\n      }\n    }\n    if (inv.totalPrice) {\n      result += '\\nTotal Net: ' + formatCurrency(inv.totalPrice.totalNetAmount) + '\\n';\n      result += 'Total Gross: ' + formatCurrency(inv.totalPrice.totalGrossAmount) + '\\n';\n      result += 'Tax: ' + formatCurrency(inv.totalPrice.totalTaxAmount) + '\\n';\n    }\n    if (inv.paymentConditions) {\n      result += '\\nPayment: ' + inv.paymentConditions.paymentTermLabel + '\\n';\n    }\n    result += '\\nID: ' + inv.id + '\\n';\n    result += 'Deep Link: https://app.lexware.de/permalink/invoices/view/' + inv.id + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get invoice: ' + err.message } }];\n  }\n\n// === create_invoice ===\n} else if (action === 'create_invoice') {\n  const contactId = input.contactId || '';\n  const voucherDate = input.voucherDate || new Date().toISOString().split('T')[0];\n  const lineItemsStr = input.lineItems;\n  if (!lineItemsStr) return [{ json: { error: 'Parameter \"lineItems\" is required. Provide as JSON array, e.g. [{\"name\":\"Service\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]' } }];\n  try {\n    let lineItemsRaw;\n    try { lineItemsRaw = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON: ' + e.message } }]; }\n    const lineItems = lineItemsRaw.map(item => ({\n      type: 'custom',\n      name: item.name,\n      quantity: item.quantity || 1,\n      unitName: item.unitName || 'St\u00fcck',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: item.unitPrice || item.netAmount || 0,\n        taxRatePercentage: item.taxRate || item.taxRatePercentage || 19\n      }\n    }));\n    const body = {\n      voucherDate: voucherDate,\n      lineItems: lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' },\n      shippingConditions: { shippingType: 'none' }\n    };\n    if (contactId) body.address = { contactId: contactId };\n    if (input.introduction) body.introduction = input.introduction;\n    if (input.remark) body.remark = input.remark;\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/invoices';\n    if (finalize) url += '?finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    let result = 'Invoice created successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/invoices/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create invoice: ' + err.message } }];\n  }\n\n// === create_invoice_from_quotation ===\n} else if (action === 'create_invoice_from_quotation') {\n  const quotationId = input.quotation_id;\n  if (!quotationId) return [{ json: { error: 'Parameter \"quotation_id\" is required.' } }];\n  try {\n    const finalize = input.finalize === 'true' || input.finalize === true;\n    let url = baseUrl + '/invoices?precedingSalesVoucherId=' + quotationId;\n    if (finalize) url += '&finalize=true';\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: jsonHeaders,\n      body: '{}'\n    });\n    let result = 'Invoice created from quotation successfully.';\n    if (finalize) result += ' (finalized)';\n    result += '\\nID: ' + data.id;\n    result += '\\nResource: ' + data.resourceUri;\n    result += '\\nDeep Link: https://app.lexware.de/permalink/invoices/edit/' + data.id;\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create invoice from quotation: ' + err.message } }];\n  }\n\n// === upload_file ===\n} else if (action === 'upload_file') {\n  const fileBase64 = input.file_base64;\n  const fileName = input.file_name || 'document.pdf';\n  if (!fileBase64) return [{ json: { error: 'Parameter \"file_base64\" is required. Provide the file content as base64-encoded string.' } }];\n  try {\n    const fileBuffer = Buffer.from(fileBase64, 'base64');\n    const boundary = '----n8nFormBoundary' + Date.now();\n    const contentType = fileName.endsWith('.pdf') ? 'application/pdf' : fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/octet-stream';\n    let bodyParts = [];\n    bodyParts.push('--' + boundary);\n    bodyParts.push('Content-Disposition: form-data; name=\"file\"; filename=\"' + fileName + '\"');\n    bodyParts.push('Content-Type: ' + contentType);\n    bodyParts.push('');\n    const headerStr = bodyParts.join('\\r\\n') + '\\r\\n';\n    const footerStr = '\\r\\n--' + boundary + '--\\r\\n';\n    const headerBuf = Buffer.from(headerStr);\n    const footerBuf = Buffer.from(footerStr);\n    const fullBody = Buffer.concat([headerBuf, fileBuffer, footerBuf]);\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: baseUrl + '/files',\n      headers: {\n        'Authorization': 'Bearer ' + token,\n        'Accept': 'application/json',\n        'Content-Type': 'multipart/form-data; boundary=' + boundary\n      },\n      body: fullBody\n    });\n    return [{ json: { result: 'File uploaded successfully.\\nFile ID: ' + data.id + '\\nResource: ' + data.resourceUri } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to upload file: ' + err.message } }];\n  }\n\n// === list_vouchers ===\n} else if (action === 'list_vouchers') {\n  const page = input.page || '0';\n  const voucherType = input.voucherType || '';\n  const status = input.status || '';\n  try {\n    let url = baseUrl + '/voucherlist?page=' + page + '&size=25&sort=voucherDate,DESC';\n    if (voucherType) url += '&voucherType=' + voucherType;\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No vouchers found.' } }];\n    }\n    let result = 'Vouchers (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const v of data.content) {\n      result += '**' + (v.voucherNumber || 'Draft') + '**';\n      result += ' [' + v.voucherType + ']';\n      result += ' \u2014 ' + (v.contactName || 'Unknown contact') + '\\n';\n      result += '  Date: ' + formatDate(v.voucherDate);\n      result += ' | Status: ' + v.voucherStatus;\n      result += ' | Total: ' + formatCurrency(v.totalAmount) + '\\n';\n      result += '  ID: ' + v.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list vouchers: ' + err.message } }];\n  }\n\n\n\n// === list_contacts ===\n} else if (action === 'list_contacts') {\n  const page = input.page || '0';\n  const name = input.name || '';\n  const email = input.email || '';\n  const customer = input.customer || '';\n  const vendor = input.vendor || '';\n  try {\n    let url = baseUrl + '/contacts?page=' + page + '&size=25';\n    if (name) url += '&name=' + encodeURIComponent(name);\n    if (email) url += '&email=' + encodeURIComponent(email);\n    if (customer) url += '&customer=' + customer;\n    if (vendor) url += '&vendor=' + vendor;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) {\n      return [{ json: { result: 'No contacts found.' } }];\n    }\n    let result = 'Contacts (page ' + data.number + ' of ' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const c of data.content) {\n      let contactName = '';\n      if (c.company) contactName = c.company.name;\n      else if (c.person) contactName = (c.person.firstName ? c.person.firstName + ' ' : '') + (c.person.lastName || '');\n      result += '**' + contactName + '**';\n      const roles = [];\n      if (c.roles && c.roles.customer) roles.push('Customer #' + (c.roles.customer.number || ''));\n      if (c.roles && c.roles.vendor) roles.push('Vendor #' + (c.roles.vendor.number || ''));\n      if (roles.length > 0) result += ' (' + roles.join(', ') + ')';\n      result += '\\n';\n      if (c.emailAddresses) {\n        const email = c.emailAddresses.business || c.emailAddresses.office || c.emailAddresses.private || c.emailAddresses.other || '';\n        if (email) result += '  Email: ' + email + '\\n';\n      }\n      if (c.phoneNumbers) {\n        const phone = c.phoneNumbers.business || c.phoneNumbers.mobile || c.phoneNumbers.office || c.phoneNumbers.private || '';\n        if (phone) result += '  Phone: ' + phone + '\\n';\n      }\n      result += '  ID: ' + c.id + '\\n\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list contacts: ' + err.message } }];\n  }\n\n// === get_contact ===\n} else if (action === 'get_contact') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    let result = '';\n    if (c.company) {\n      result += '**' + c.company.name + '** (Company)\\n';\n      if (c.company.taxNumber) result += 'Tax Number: ' + c.company.taxNumber + '\\n';\n      if (c.company.vatRegistrationId) result += 'VAT ID: ' + c.company.vatRegistrationId + '\\n';\n      if (c.company.contactPersons && c.company.contactPersons.length > 0) {\n        result += '\\nContact Persons:\\n';\n        for (const cp of c.company.contactPersons) {\n          result += '  - ' + (cp.firstName ? cp.firstName + ' ' : '') + (cp.lastName || '');\n          if (cp.primary) result += ' [primary]';\n          if (cp.emailAddress) result += ' | ' + cp.emailAddress;\n          if (cp.phoneNumber) result += ' | ' + cp.phoneNumber;\n          result += '\\n';\n        }\n      }\n    } else if (c.person) {\n      result += '**' + (c.person.firstName ? c.person.firstName + ' ' : '') + (c.person.lastName || '') + '** (Person)\\n';\n      if (c.person.salutation) result += 'Salutation: ' + c.person.salutation + '\\n';\n    }\n    const roles = [];\n    if (c.roles && c.roles.customer) roles.push('Customer #' + (c.roles.customer.number || ''));\n    if (c.roles && c.roles.vendor) roles.push('Vendor #' + (c.roles.vendor.number || ''));\n    if (roles.length > 0) result += 'Roles: ' + roles.join(', ') + '\\n';\n    if (c.addresses) {\n      if (c.addresses.billing && c.addresses.billing.length > 0) {\n        const a = c.addresses.billing[0];\n        result += '\\nBilling Address:\\n  ' + (a.street || '') + '\\n  ' + (a.zip || '') + ' ' + (a.city || '') + '\\n  ' + (a.countryCode || '') + '\\n';\n      }\n    }\n    if (c.emailAddresses) {\n      const emails = Object.entries(c.emailAddresses).filter(([k,v]) => v);\n      if (emails.length > 0) result += '\\nEmail: ' + emails.map(([k,v]) => v + ' (' + k + ')').join(', ') + '\\n';\n    }\n    if (c.phoneNumbers) {\n      const phones = Object.entries(c.phoneNumbers).filter(([k,v]) => v);\n      if (phones.length > 0) result += 'Phone: ' + phones.map(([k,v]) => v + ' (' + k + ')').join(', ') + '\\n';\n    }\n    if (c.note) result += '\\nNote: ' + c.note + '\\n';\n    result += '\\nVersion: ' + c.version + '\\n';\n    result += 'ID: ' + c.id + '\\n';\n    result += 'Deep Link: https://app.lexware.de/permalink/contacts/view/' + c.id + '\\n';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get contact: ' + err.message } }];\n  }\n\n// === create_contact ===\n} else if (action === 'create_contact') {\n  const contactType = input.contact_type || 'company';\n  try {\n    const body = { version: 0, roles: {} };\n    const role = input.role || 'customer';\n    if (role === 'customer' || role === 'both') body.roles.customer = {};\n    if (role === 'vendor' || role === 'both') body.roles.vendor = {};\n    if (!body.roles.customer && !body.roles.vendor) body.roles.customer = {};\n    if (contactType === 'person') {\n      if (!input.lastName) return [{ json: { error: 'Parameter \"lastName\" is required for person contacts.' } }];\n      body.person = { lastName: input.lastName };\n      if (input.firstName) body.person.firstName = input.firstName;\n      if (input.salutation) body.person.salutation = input.salutation;\n    } else {\n      if (!input.companyName) return [{ json: { error: 'Parameter \"companyName\" is required for company contacts.' } }];\n      body.company = { name: input.companyName };\n      if (input.taxNumber) body.company.taxNumber = input.taxNumber;\n      if (input.vatId) body.company.vatRegistrationId = input.vatId;\n      if (input.contactPersonName) {\n        const parts = input.contactPersonName.split(' ');\n        const cp = { lastName: parts.pop(), primary: true };\n        if (parts.length > 0) cp.firstName = parts.join(' ');\n        if (input.contactPersonEmail) cp.emailAddress = input.contactPersonEmail;\n        if (input.contactPersonPhone) cp.phoneNumber = input.contactPersonPhone;\n        body.company.contactPersons = [cp];\n      }\n    }\n    if (input.email) body.emailAddresses = { business: [input.email] };\n    if (input.phone) body.phoneNumbers = { business: [input.phone] };\n    if (input.street || input.city) {\n      body.addresses = { billing: [{ street: input.street || '', city: input.city || '', zip: input.zip || '', countryCode: input.countryCode || 'DE' }] };\n    }\n    if (input.note) body.note = input.note;\n    const data = await helpers.httpRequest({\n      method: 'POST',\n      url: baseUrl + '/contacts',\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Contact created successfully.\\nID: ' + data.id + '\\nResource: ' + data.resourceUri + '\\nDeep Link: https://app.lexware.de/permalink/contacts/view/' + data.id } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create contact: ' + err.message } }];\n  }\n\n// === update_contact ===\n} else if (action === 'update_contact') {\n  const id = input.id;\n  const version = input.version;\n  if (!id || !version) return [{ json: { error: 'Parameters \"id\" and \"version\" are required. Use get_contact first.' } }];\n  try {\n    // First get the current contact\n    const current = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    const body = { version: parseInt(version), roles: current.roles };\n    if (current.company) {\n      body.company = current.company;\n      if (input.companyName) body.company.name = input.companyName;\n    } else if (current.person) {\n      body.person = current.person;\n      if (input.firstName) body.person.firstName = input.firstName;\n      if (input.lastName) body.person.lastName = input.lastName;\n    }\n    if (input.email) body.emailAddresses = { business: [input.email] };\n    else if (current.emailAddresses) body.emailAddresses = current.emailAddresses;\n    if (input.phone) body.phoneNumbers = { business: [input.phone] };\n    else if (current.phoneNumbers) body.phoneNumbers = current.phoneNumbers;\n    if (current.addresses) body.addresses = current.addresses;\n    if (input.note !== undefined) body.note = input.note;\n    else if (current.note) body.note = current.note;\n    const data = await helpers.httpRequest({\n      method: 'PUT',\n      url: baseUrl + '/contacts/' + id,\n      headers: jsonHeaders,\n      body: JSON.stringify(body)\n    });\n    return [{ json: { result: 'Contact updated successfully.\\nID: ' + data.id + '\\nNew Version: ' + data.version } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update contact: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: list_articles, get_article, create_article, update_article, delete_article, list_quotations, get_quotation, create_quotation, list_invoices, get_invoice, create_invoice, create_invoice_from_quotation, upload_file, list_vouchers, list_contacts, get_contact, create_contact, update_contact.' } }];\n}\n"
         }
       }
     ],
     "connections": {
       "Execute Workflow Trigger": {
-        "main": [[{ "node": "Lexware Logic", "type": "main", "index": 0 }]]
+        "main": [
+          [
+            {
+              "node": "Lexware Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   },
@@ -46,21 +60,32 @@
         "name": "MCP Server Trigger",
         "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
         "typeVersion": 2,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "path": "lexware"
-        }
+        },
+        "webhookId": "2990a404-4da2-43c4-945b-d9b8ee6883d4"
       },
       {
         "id": "tool-list-articles",
         "name": "list_articles",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 300],
+        "position": [
+          0,
+          300
+        ],
         "parameters": {
           "name": "list_articles",
           "description": "List articles (products and services) from Lexware. Parameters: page (page number starting at 0, optional, default 0), type ('PRODUCT' or 'SERVICE', optional, lists all if empty)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -70,11 +95,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "page", "displayName": "page", "type": "string", "description": "Page number", "required": false },
-              { "id": "type", "displayName": "type", "type": "string", "description": "PRODUCT or SERVICE", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "PRODUCT or SERVICE",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -83,11 +127,18 @@
         "name": "get_article",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 300],
+        "position": [
+          250,
+          300
+        ],
         "parameters": {
           "name": "get_article",
           "description": "Get details of a specific article by ID. Parameters: id (article UUID, required)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -96,10 +147,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Article UUID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -108,18 +172,25 @@
         "name": "create_article",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 300],
+        "position": [
+          500,
+          300
+        ],
         "parameters": {
           "name": "create_article",
-          "description": "Create a new article (product or service). Parameters: title (article name, required), type ('PRODUCT' or 'SERVICE', optional, default 'SERVICE'), unitName (unit of measure, optional, default 'Stück'), netPrice (net price as number, optional, default 0), taxRate (tax rate percentage, optional, default 19), description (optional), articleNumber (optional), gtin (EAN/barcode, optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "description": "Create a new article (product or service). Parameters: title (article name, required), type ('PRODUCT' or 'SERVICE', optional, default 'SERVICE'), unitName (unit of measure, optional, default 'St\u00fcck'), netPrice (net price as number, optional, default 0), taxRate (tax rate percentage, optional, default 19), description (optional), articleNumber (optional), gtin (EAN/barcode, optional)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
               "action": "create_article",
               "title": "={{ $fromAI('title', 'Article name', 'string') }}",
               "type": "={{ $fromAI('type', 'PRODUCT or SERVICE (default: SERVICE)', 'string') }}",
-              "unitName": "={{ $fromAI('unitName', 'Unit of measure (default: Stück)', 'string') }}",
+              "unitName": "={{ $fromAI('unitName', 'Unit of measure (default: St\u00fcck)', 'string') }}",
               "netPrice": "={{ $fromAI('netPrice', 'Net price (default: 0)', 'string') }}",
               "taxRate": "={{ $fromAI('taxRate', 'Tax rate percentage (default: 19)', 'string') }}",
               "description": "={{ $fromAI('description', 'Article description (optional)', 'string') }}",
@@ -127,16 +198,65 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Article name", "required": true },
-              { "id": "type", "displayName": "type", "type": "string", "description": "PRODUCT or SERVICE", "required": false },
-              { "id": "unitName", "displayName": "unitName", "type": "string", "description": "Unit of measure", "required": false },
-              { "id": "netPrice", "displayName": "netPrice", "type": "string", "description": "Net price", "required": false },
-              { "id": "taxRate", "displayName": "taxRate", "type": "string", "description": "Tax rate", "required": false },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Description", "required": false },
-              { "id": "articleNumber", "displayName": "articleNumber", "type": "string", "description": "Article number", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Article name",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "PRODUCT or SERVICE",
+                "required": false
+              },
+              {
+                "id": "unitName",
+                "displayName": "unitName",
+                "type": "string",
+                "description": "Unit of measure",
+                "required": false
+              },
+              {
+                "id": "netPrice",
+                "displayName": "netPrice",
+                "type": "string",
+                "description": "Net price",
+                "required": false
+              },
+              {
+                "id": "taxRate",
+                "displayName": "taxRate",
+                "type": "string",
+                "description": "Tax rate",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "articleNumber",
+                "displayName": "articleNumber",
+                "type": "string",
+                "description": "Article number",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -145,11 +265,18 @@
         "name": "update_article",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 300],
+        "position": [
+          750,
+          300
+        ],
         "parameters": {
           "name": "update_article",
           "description": "Update an existing article. IMPORTANT: Use get_article first to get the current version number. Parameters: id (article UUID, required), version (current version number for optimistic locking, required), title (article name, required), type ('PRODUCT' or 'SERVICE', optional), unitName (optional), netPrice (optional), taxRate (optional), description (optional), articleNumber (optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -166,18 +293,79 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Article UUID", "required": true },
-              { "id": "version", "displayName": "version", "type": "string", "description": "Version number", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Article name", "required": true },
-              { "id": "type", "displayName": "type", "type": "string", "description": "PRODUCT or SERVICE", "required": false },
-              { "id": "unitName", "displayName": "unitName", "type": "string", "description": "Unit of measure", "required": false },
-              { "id": "netPrice", "displayName": "netPrice", "type": "string", "description": "Net price", "required": false },
-              { "id": "taxRate", "displayName": "taxRate", "type": "string", "description": "Tax rate", "required": false },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Description", "required": false },
-              { "id": "articleNumber", "displayName": "articleNumber", "type": "string", "description": "Article number", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Version number",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Article name",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "PRODUCT or SERVICE",
+                "required": false
+              },
+              {
+                "id": "unitName",
+                "displayName": "unitName",
+                "type": "string",
+                "description": "Unit of measure",
+                "required": false
+              },
+              {
+                "id": "netPrice",
+                "displayName": "netPrice",
+                "type": "string",
+                "description": "Net price",
+                "required": false
+              },
+              {
+                "id": "taxRate",
+                "displayName": "taxRate",
+                "type": "string",
+                "description": "Tax rate",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "articleNumber",
+                "displayName": "articleNumber",
+                "type": "string",
+                "description": "Article number",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -186,11 +374,18 @@
         "name": "delete_article",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 600],
+        "position": [
+          0,
+          600
+        ],
         "parameters": {
           "name": "delete_article",
           "description": "Delete an article by ID. Parameters: id (article UUID, required)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -199,10 +394,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Article UUID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -211,11 +419,18 @@
         "name": "list_quotations",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 600],
+        "position": [
+          250,
+          600
+        ],
         "parameters": {
           "name": "list_quotations",
           "description": "List quotations (Angebote). Parameters: page (page number, optional, default 0), status (filter by status: 'draft', 'open', 'accepted', 'rejected', 'expired', optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -225,11 +440,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "page", "displayName": "page", "type": "string", "description": "Page number", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Voucher status", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Voucher status",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -238,11 +472,18 @@
         "name": "get_quotation",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 600],
+        "position": [
+          500,
+          600
+        ],
         "parameters": {
           "name": "get_quotation",
           "description": "Get details of a specific quotation by ID, including line items and totals. Parameters: id (quotation UUID, required)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -251,10 +492,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Quotation UUID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Quotation UUID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -263,11 +517,18 @@
         "name": "create_quotation",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 600],
+        "position": [
+          750,
+          600
+        ],
         "parameters": {
           "name": "create_quotation",
           "description": "Create a new quotation. Parameters: lineItems (JSON array of items, required, e.g. [{\"name\":\"Beratung\",\"quantity\":2,\"unitPrice\":150,\"taxRate\":19}]), contactId (Lexware contact UUID, optional), voucherDate (YYYY-MM-DD, optional, default today), finalize ('true' to finalize immediately, optional, default draft), expirationDate (YYYY-MM-DD, optional), introduction (intro text, optional), remark (closing text, optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -282,16 +543,65 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "lineItems", "displayName": "lineItems", "type": "string", "description": "JSON array of line items", "required": true },
-              { "id": "contactId", "displayName": "contactId", "type": "string", "description": "Contact UUID", "required": false },
-              { "id": "voucherDate", "displayName": "voucherDate", "type": "string", "description": "Voucher date", "required": false },
-              { "id": "finalize", "displayName": "finalize", "type": "string", "description": "Finalize immediately", "required": false },
-              { "id": "expirationDate", "displayName": "expirationDate", "type": "string", "description": "Expiration date", "required": false },
-              { "id": "introduction", "displayName": "introduction", "type": "string", "description": "Introduction text", "required": false },
-              { "id": "remark", "displayName": "remark", "type": "string", "description": "Closing remark", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "lineItems",
+                "displayName": "lineItems",
+                "type": "string",
+                "description": "JSON array of line items",
+                "required": true
+              },
+              {
+                "id": "contactId",
+                "displayName": "contactId",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": false
+              },
+              {
+                "id": "voucherDate",
+                "displayName": "voucherDate",
+                "type": "string",
+                "description": "Voucher date",
+                "required": false
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "Finalize immediately",
+                "required": false
+              },
+              {
+                "id": "expirationDate",
+                "displayName": "expirationDate",
+                "type": "string",
+                "description": "Expiration date",
+                "required": false
+              },
+              {
+                "id": "introduction",
+                "displayName": "introduction",
+                "type": "string",
+                "description": "Introduction text",
+                "required": false
+              },
+              {
+                "id": "remark",
+                "displayName": "remark",
+                "type": "string",
+                "description": "Closing remark",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -300,11 +610,18 @@
         "name": "list_invoices",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 900],
+        "position": [
+          0,
+          900
+        ],
         "parameters": {
           "name": "list_invoices",
           "description": "List invoices (Rechnungen). Parameters: page (page number, optional, default 0), status (filter by status: 'draft', 'open', 'paidoff', 'voided', optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -314,11 +631,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "page", "displayName": "page", "type": "string", "description": "Page number", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Invoice status", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Invoice status",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -327,11 +663,18 @@
         "name": "get_invoice",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 900],
+        "position": [
+          250,
+          900
+        ],
         "parameters": {
           "name": "get_invoice",
           "description": "Get details of a specific invoice by ID, including line items, totals, and payment conditions. Parameters: id (invoice UUID, required)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -340,10 +683,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Invoice UUID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Invoice UUID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -352,11 +708,18 @@
         "name": "create_invoice",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 900],
+        "position": [
+          500,
+          900
+        ],
         "parameters": {
           "name": "create_invoice",
           "description": "Create a new invoice. Parameters: lineItems (JSON array of items, required, e.g. [{\"name\":\"Beratung\",\"quantity\":2,\"unitPrice\":150,\"taxRate\":19}]), contactId (Lexware contact UUID, optional), voucherDate (YYYY-MM-DD, optional, default today), finalize ('true' to finalize immediately, optional, default draft), introduction (intro text, optional), remark (closing text, optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -370,15 +733,58 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "lineItems", "displayName": "lineItems", "type": "string", "description": "JSON array of line items", "required": true },
-              { "id": "contactId", "displayName": "contactId", "type": "string", "description": "Contact UUID", "required": false },
-              { "id": "voucherDate", "displayName": "voucherDate", "type": "string", "description": "Voucher date", "required": false },
-              { "id": "finalize", "displayName": "finalize", "type": "string", "description": "Finalize immediately", "required": false },
-              { "id": "introduction", "displayName": "introduction", "type": "string", "description": "Introduction text", "required": false },
-              { "id": "remark", "displayName": "remark", "type": "string", "description": "Closing remark", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "lineItems",
+                "displayName": "lineItems",
+                "type": "string",
+                "description": "JSON array of line items",
+                "required": true
+              },
+              {
+                "id": "contactId",
+                "displayName": "contactId",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": false
+              },
+              {
+                "id": "voucherDate",
+                "displayName": "voucherDate",
+                "type": "string",
+                "description": "Voucher date",
+                "required": false
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "Finalize immediately",
+                "required": false
+              },
+              {
+                "id": "introduction",
+                "displayName": "introduction",
+                "type": "string",
+                "description": "Introduction text",
+                "required": false
+              },
+              {
+                "id": "remark",
+                "displayName": "remark",
+                "type": "string",
+                "description": "Closing remark",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -387,11 +793,18 @@
         "name": "create_invoice_from_quotation",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 900],
+        "position": [
+          750,
+          900
+        ],
         "parameters": {
           "name": "create_invoice_from_quotation",
           "description": "Create an invoice from an existing quotation. Parameters: quotation_id (quotation UUID, required), finalize ('true' to finalize immediately, optional, default draft)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -401,11 +814,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "quotation_id", "displayName": "quotation_id", "type": "string", "description": "Quotation UUID", "required": true },
-              { "id": "finalize", "displayName": "finalize", "type": "string", "description": "Finalize immediately", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "quotation_id",
+                "displayName": "quotation_id",
+                "type": "string",
+                "description": "Quotation UUID",
+                "required": true
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "Finalize immediately",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -414,11 +846,18 @@
         "name": "upload_file",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 1200],
+        "position": [
+          0,
+          1200
+        ],
         "parameters": {
           "name": "upload_file",
           "description": "Upload a voucher file (receipt/document) to Lexware. Parameters: file_base64 (file content as base64 string, required), file_name (filename with extension like 'receipt.pdf', optional, default 'document.pdf')",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -428,11 +867,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "file_base64", "displayName": "file_base64", "type": "string", "description": "Base64 encoded file", "required": true },
-              { "id": "file_name", "displayName": "file_name", "type": "string", "description": "Filename", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "file_base64",
+                "displayName": "file_base64",
+                "type": "string",
+                "description": "Base64 encoded file",
+                "required": true
+              },
+              {
+                "id": "file_name",
+                "displayName": "file_name",
+                "type": "string",
+                "description": "Filename",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -441,11 +899,18 @@
         "name": "list_vouchers",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 1200],
+        "position": [
+          250,
+          1200
+        ],
         "parameters": {
           "name": "list_vouchers",
           "description": "List all vouchers (invoices, quotations, credit notes, etc.) with optional filters. Parameters: page (page number, optional, default 0), voucherType (filter by type: 'invoice', 'quotation', 'creditnote', 'deliverynote', optional), status (filter by status, optional)",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -456,31 +921,620 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "page", "displayName": "page", "type": "string", "description": "Page number", "required": false },
-              { "id": "voucherType", "displayName": "voucherType", "type": "string", "description": "Voucher type filter", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status filter", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "voucherType",
+                "displayName": "voucherType",
+                "type": "string",
+                "description": "Voucher type filter",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status filter",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-contacts",
+        "name": "list_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          1200
+        ],
+        "parameters": {
+          "name": "list_contacts",
+          "description": "List contacts (customers and vendors). Parameters: page (page number, optional, default 0), name (search by name, min 3 chars, optional), email (search by email, min 3 chars, optional), customer ('true' to show only customers, optional), vendor ('true' to show only vendors, optional)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_contacts",
+              "page": "={{ $fromAI('page', 'Page number (default: 0)', 'string') }}",
+              "name": "={{ $fromAI('name', 'Search by name (min 3 chars, optional)', 'string') }}",
+              "email": "={{ $fromAI('email', 'Search by email (min 3 chars, optional)', 'string') }}",
+              "customer": "={{ $fromAI('customer', 'true to filter customers only (optional)', 'string') }}",
+              "vendor": "={{ $fromAI('vendor', 'true to filter vendors only (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Name search",
+                "required": false
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email search",
+                "required": false
+              },
+              {
+                "id": "customer",
+                "displayName": "customer",
+                "type": "string",
+                "description": "Customer filter",
+                "required": false
+              },
+              {
+                "id": "vendor",
+                "displayName": "vendor",
+                "type": "string",
+                "description": "Vendor filter",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-contact",
+        "name": "get_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          1200
+        ],
+        "parameters": {
+          "name": "get_contact",
+          "description": "Get details of a specific contact by ID, including address, email, phone, and roles. Parameters: id (contact UUID, required)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_contact",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-contact",
+        "name": "create_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1500
+        ],
+        "parameters": {
+          "name": "create_contact",
+          "description": "Create a new contact. Parameters: contact_type ('company' or 'person', optional, default 'company'), role ('customer', 'vendor', or 'both', optional, default 'customer'), companyName (required for company), lastName (required for person), firstName (optional for person), salutation (optional), email (optional), phone (optional), street (optional), city (optional), zip (optional), countryCode (optional, default 'DE'), note (optional), contactPersonName (full name for company contact person, optional), contactPersonEmail (optional), contactPersonPhone (optional), taxNumber (optional), vatId (optional)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_contact",
+              "contact_type": "={{ $fromAI('contact_type', 'company or person (default: company)', 'string') }}",
+              "role": "={{ $fromAI('role', 'customer, vendor, or both (default: customer)', 'string') }}",
+              "companyName": "={{ $fromAI('companyName', 'Company name (required for company)', 'string') }}",
+              "lastName": "={{ $fromAI('lastName', 'Last name (required for person)', 'string') }}",
+              "firstName": "={{ $fromAI('firstName', 'First name (optional)', 'string') }}",
+              "email": "={{ $fromAI('email', 'Email address (optional)', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'Phone number (optional)', 'string') }}",
+              "street": "={{ $fromAI('street', 'Street address (optional)', 'string') }}",
+              "city": "={{ $fromAI('city', 'City (optional)', 'string') }}",
+              "zip": "={{ $fromAI('zip', 'ZIP/postal code (optional)', 'string') }}",
+              "countryCode": "={{ $fromAI('countryCode', 'Country code ISO 3166 (default: DE)', 'string') }}",
+              "note": "={{ $fromAI('note', 'Note (optional, max 1000 chars)', 'string') }}",
+              "contactPersonName": "={{ $fromAI('contactPersonName', 'Contact person full name (optional)', 'string') }}",
+              "contactPersonEmail": "={{ $fromAI('contactPersonEmail', 'Contact person email (optional)', 'string') }}",
+              "contactPersonPhone": "={{ $fromAI('contactPersonPhone', 'Contact person phone (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "contact_type",
+                "displayName": "contact_type",
+                "type": "string",
+                "description": "company or person",
+                "required": false
+              },
+              {
+                "id": "role",
+                "displayName": "role",
+                "type": "string",
+                "description": "customer, vendor, or both",
+                "required": false
+              },
+              {
+                "id": "companyName",
+                "displayName": "companyName",
+                "type": "string",
+                "description": "Company name",
+                "required": false
+              },
+              {
+                "id": "lastName",
+                "displayName": "lastName",
+                "type": "string",
+                "description": "Last name",
+                "required": false
+              },
+              {
+                "id": "firstName",
+                "displayName": "firstName",
+                "type": "string",
+                "description": "First name",
+                "required": false
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "street",
+                "displayName": "street",
+                "type": "string",
+                "description": "Street",
+                "required": false
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City",
+                "required": false
+              },
+              {
+                "id": "zip",
+                "displayName": "zip",
+                "type": "string",
+                "description": "ZIP code",
+                "required": false
+              },
+              {
+                "id": "countryCode",
+                "displayName": "countryCode",
+                "type": "string",
+                "description": "Country code",
+                "required": false
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "type": "string",
+                "description": "Note",
+                "required": false
+              },
+              {
+                "id": "contactPersonName",
+                "displayName": "contactPersonName",
+                "type": "string",
+                "description": "Contact person name",
+                "required": false
+              },
+              {
+                "id": "contactPersonEmail",
+                "displayName": "contactPersonEmail",
+                "type": "string",
+                "description": "Contact person email",
+                "required": false
+              },
+              {
+                "id": "contactPersonPhone",
+                "displayName": "contactPersonPhone",
+                "type": "string",
+                "description": "Contact person phone",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-update-contact",
+        "name": "update_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          1500
+        ],
+        "parameters": {
+          "name": "update_contact",
+          "description": "Update an existing contact. IMPORTANT: Use get_contact first to get the current version. Parameters: id (contact UUID, required), version (current version number, required), companyName (optional), firstName (optional), lastName (optional), email (optional), phone (optional), note (optional)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_contact",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version (from get_contact)', 'string') }}",
+              "companyName": "={{ $fromAI('companyName', 'New company name (optional)', 'string') }}",
+              "firstName": "={{ $fromAI('firstName', 'New first name (optional)', 'string') }}",
+              "lastName": "={{ $fromAI('lastName', 'New last name (optional)', 'string') }}",
+              "email": "={{ $fromAI('email', 'New email (optional)', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'New phone (optional)', 'string') }}",
+              "note": "={{ $fromAI('note', 'New note (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Version number",
+                "required": true
+              },
+              {
+                "id": "companyName",
+                "displayName": "companyName",
+                "type": "string",
+                "description": "Company name",
+                "required": false
+              },
+              {
+                "id": "firstName",
+                "displayName": "firstName",
+                "type": "string",
+                "description": "First name",
+                "required": false
+              },
+              {
+                "id": "lastName",
+                "displayName": "lastName",
+                "type": "string",
+                "description": "Last name",
+                "required": false
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "type": "string",
+                "description": "Note",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       }
     ],
     "connections": {
-      "list_articles": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_article": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_article": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "update_article": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "delete_article": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_quotations": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_quotation": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_quotation": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_invoices": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_invoice": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_invoice": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_invoice_from_quotation": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "upload_file": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_vouchers": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+      "list_articles": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_quotations": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_invoices": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_invoice": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_invoice": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_invoice_from_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "upload_file": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_vouchers": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
     }
   }
 }

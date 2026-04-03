@@ -70,6 +70,22 @@
     {
       "name": "list_vouchers",
       "description": "List vouchers with optional type and status filters"
+    },
+    {
+      "name": "list_contacts",
+      "description": "List contacts (customers and vendors) with optional filters"
+    },
+    {
+      "name": "get_contact",
+      "description": "Get details of a specific contact by ID"
+    },
+    {
+      "name": "create_contact",
+      "description": "Create a new contact (company or person)"
+    },
+    {
+      "name": "update_contact",
+      "description": "Update an existing contact by ID"
     }
   ],
   "author": "Bastian Hiller",
