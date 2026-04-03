@@ -393,7 +393,7 @@
       "name": "Seafile",
       "type": "native",
       "category": "productivity",
-      "description": "Manage files on a Seafile library: browse directories, read files, download, rename, move, copy, and delete",
+      "description": "Manage files on a Seafile library: browse, read, download, upload (binary via file_ref), rename, move, copy, and delete",
       "credentials_required": [
         { "key": "seafile_url", "label": "Seafile URL" },
         { "key": "seafile_token", "label": "Seafile API Token" }
