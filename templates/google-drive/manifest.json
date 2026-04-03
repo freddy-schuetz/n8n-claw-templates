@@ -5,7 +5,7 @@
   "updated": "2026-04-02",
   "type": "native",
   "category": "productivity",
-  "description": "List, search, read, create, and share files in Google Drive",
+  "description": "List, search, read, create, upload (binary via file_ref), and share files in Google Drive",
   "credential_type": "oauth2",
   "oauth_config": {
     "provider": "google",
@@ -36,7 +36,8 @@
     { "name": "create_file", "description": "Create a text file or Google Doc with content. Parameters: name (required), content (required), folder_id (optional), mime_type ('doc' for Google Doc, default plain text)" },
     { "name": "create_folder", "description": "Create a new folder. Parameters: name (required), parent_folder_id (optional)" },
     { "name": "delete_file", "description": "Delete a file or folder. Parameters: file_id (required)" },
-    { "name": "share_file", "description": "Share a file or folder. Parameters: file_id (required), email (optional), role ('reader'/'writer'/'commenter', default 'reader'), type ('user'/'anyone', default 'user')" }
+    { "name": "share_file", "description": "Share a file or folder. Parameters: file_id (required), email (optional), role ('reader'/'writer'/'commenter', default 'reader'), type ('user'/'anyone', default 'user')" },
+    { "name": "upload_file", "description": "Upload a binary file (PDF, image, etc.) to Google Drive from a file_ref or external URL" }
   ],
   "author": "freddy-schuetz",
   "license": "MIT",

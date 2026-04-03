@@ -5,7 +5,7 @@
   "updated": "2026-03-15",
   "type": "native",
   "category": "productivity",
-  "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload, move, and delete files and folders",
+  "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload (binary via file_ref), move, and delete files and folders",
   "credentials_required": [
     {
       "key": "nextcloud_url",
@@ -33,6 +33,10 @@
     {
       "name": "write_file",
       "description": "Create or overwrite a file with text content"
+    },
+    {
+      "name": "upload_file",
+      "description": "Upload a binary file (PDF, image, etc.) to Nextcloud from a file_ref or external URL"
     },
     {
       "name": "upload_from_url",

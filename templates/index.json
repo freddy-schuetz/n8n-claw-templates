@@ -380,7 +380,7 @@
       "name": "Nextcloud Files",
       "type": "native",
       "category": "productivity",
-      "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload, move, and delete files and folders",
+      "description": "Manage files on a Nextcloud instance via WebDAV — list, read, write, upload (binary via file_ref), move, and delete files and folders",
       "credentials_required": [
         { "key": "nextcloud_url", "label": "Nextcloud URL" },
         { "key": "nextcloud_username", "label": "Username" },
@@ -431,7 +431,7 @@
       "name": "Google Drive",
       "type": "native",
       "category": "productivity",
-      "description": "List, search, read, create, and share files in Google Drive (Google OAuth2)",
+      "description": "List, search, read, create, upload (binary via file_ref), and share files in Google Drive (Google OAuth2)",
       "credential_type": "oauth2",
       "credentials_required": [
         { "key": "client_id", "label": "Google OAuth Client ID", "shared_id": "google-oauth" },
