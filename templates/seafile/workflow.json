@@ -157,7 +157,7 @@
         "position": [750, 600],
         "parameters": {
           "name": "upload_file",
-          "description": "Upload a binary file (PDF, image, etc.) to Seafile. Use this when the user sent a file via Telegram (file_ref) or wants to upload from an external URL. Parameters: path (destination path in Seafile, required, e.g. /invoices/receipt.pdf), file_ref (File Bridge ID from the user's message, e.g. file-a3f8b2c1), file_url (external download URL — use file_ref OR file_url, not both)",
+          "description": "Upload a binary file to Seafile. IMPORTANT: For files the user sent via Telegram, use file_ref (the ID from the message, e.g. file-abc12345) — do NOT use file_url for stored files. file_url is ONLY for external URLs not from File Bridge. Parameters: path (destination path, required), file_ref (File Bridge ID — preferred for user-sent files), file_url (external URL only)",
           "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
           "workflowInputs": {
             "mappingMode": "defineBelow",
