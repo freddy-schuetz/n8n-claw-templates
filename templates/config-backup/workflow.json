@@ -115,7 +115,7 @@
         "position": [500, 300],
         "parameters": {
           "name": "restore_backup",
-          "description": "Restore configuration from a backup file URL. Parameters: url (URL to the backup JSON file, required), tables (comma-separated list of tables to restore or empty string for all), mode (upsert=merge with existing data, replace=delete existing then insert — default upsert), include_credentials (true to include template_credentials in restore or empty string to skip them for security)",
+          "description": "Restore configuration from a backup file URL. IMPORTANT: By default, template_credentials and tools_config are SKIPPED because they contain API keys. Use include_credentials=true to restore them too. Parameters: url (URL to the backup JSON file, required), tables (comma-separated list of tables to restore or empty string for all), mode (upsert=merge with existing data, replace=delete existing then insert — default upsert), include_credentials (true to also restore template_credentials and tools_config which contain API keys, or empty string to skip them for security)",
           "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
           "workflowInputs": {
             "mappingMode": "defineBelow",
