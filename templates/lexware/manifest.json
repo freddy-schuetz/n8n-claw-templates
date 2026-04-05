@@ -1,0 +1,114 @@
+{
+  "id": "lexware",
+  "name": "Lexware Office",
+  "version": "2.0.0",
+  "updated": "2026-04-05",
+  "type": "native",
+  "category": "finance",
+  "description": "Full Lexware Office integration: contacts (company/person), articles (products/services), quotations, invoices, voucher upload, and PDF download",
+  "credentials_required": [
+    {
+      "key": "lexware_api_token",
+      "label": "Lexware API Token",
+      "hint": "Create at app.lexware.de/addons/public-api — needs 'Public API' permission"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_contacts",
+      "description": "List contacts with optional search by name, email, or role"
+    },
+    {
+      "name": "get_contact",
+      "description": "Get full details of a contact including address, email, phone"
+    },
+    {
+      "name": "create_company",
+      "description": "Create a company contact with address, email, phone"
+    },
+    {
+      "name": "create_person",
+      "description": "Create a person contact with address, email, phone"
+    },
+    {
+      "name": "update_contact_address",
+      "description": "Update the address of a contact"
+    },
+    {
+      "name": "update_contact_email",
+      "description": "Update the email of a contact"
+    },
+    {
+      "name": "update_contact_phone",
+      "description": "Update the phone number of a contact"
+    },
+    {
+      "name": "update_contact_name",
+      "description": "Update the name of a contact"
+    },
+    {
+      "name": "list_articles",
+      "description": "List articles (products and services) with optional type filter"
+    },
+    {
+      "name": "get_article",
+      "description": "Get details of a specific article"
+    },
+    {
+      "name": "create_article",
+      "description": "Create a new article (product or service) with price"
+    },
+    {
+      "name": "update_article",
+      "description": "Update an existing article"
+    },
+    {
+      "name": "delete_article",
+      "description": "Delete an article"
+    },
+    {
+      "name": "list_quotations",
+      "description": "List quotations with optional status filter"
+    },
+    {
+      "name": "get_quotation",
+      "description": "Get details of a quotation including line items"
+    },
+    {
+      "name": "create_quotation",
+      "description": "Create a quotation with line items for a contact"
+    },
+    {
+      "name": "list_invoices",
+      "description": "List invoices with optional status filter"
+    },
+    {
+      "name": "get_invoice",
+      "description": "Get details of an invoice including line items"
+    },
+    {
+      "name": "create_invoice",
+      "description": "Create an invoice with line items for a contact"
+    },
+    {
+      "name": "create_invoice_from_quotation",
+      "description": "Create an invoice from an existing quotation"
+    },
+    {
+      "name": "upload_voucher",
+      "description": "Upload a voucher/receipt file via File Bridge"
+    },
+    {
+      "name": "download_invoice",
+      "description": "Download an invoice as PDF and send to user"
+    },
+    {
+      "name": "download_quotation",
+      "description": "Download a quotation as PDF and send to user"
+    }
+  ],
+  "author": "Bastian Hiller",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

@@ -1,0 +1,1812 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Lexware Office",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Lexware Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_contacts';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.lexware&cred_key=eq.lexware_api_token&select=cred_value',\n  headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }\n});\nif (!creds || !creds[0] || !creds[0].cred_value) return [{ json: { error: 'Lexware API token not configured.' } }];\n\nconst token = creds[0].cred_value;\nconst baseUrl = 'https://api.lexware.io/v1';\nconst headers = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' };\nconst jsonHeaders = { ...headers, 'Content-Type': 'application/json' };\n\nfunction parseAddress(addr) {\n  if (!addr) return null;\n  const a = { countryCode: 'DE' };\n  const m = addr.match(/(\\d{5})\\s+(.+?)$/);\n  if (m) {\n    a.zip = m[1];\n    a.city = m[2].trim();\n    const st = addr.substring(0, m.index).replace(/,\\s*$/, '').trim();\n    if (st) a.street = st;\n  } else {\n    a.street = addr;\n  }\n  return a;\n}\n\n// === list_contacts ===\nif (action === 'list_contacts') {\n  try {\n    let url = baseUrl + '/contacts?page=' + (input.page || '0') + '&size=25';\n    const name = (input.name || '').trim();\n    const email = (input.email || '').trim();\n    if (name && name.length >= 3) url += '&name=' + encodeURIComponent(name);\n    if (email && email.length >= 3) url += '&email=' + encodeURIComponent(email);\n    if (input.customer === 'true') url += '&customer=true';\n    if (input.vendor === 'true') url += '&vendor=true';\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) return [{ json: { result: 'No contacts found.' } }];\n    let r = 'Contacts (page ' + data.number + '/' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const c of data.content) {\n      let cn = c.company ? c.company.name : ((c.person?.firstName||'') + ' ' + (c.person?.lastName||'')).trim();\n      r += '**' + cn + '**';\n      const roles = [];\n      if (c.roles?.customer) roles.push('Customer #' + (c.roles.customer.number||''));\n      if (c.roles?.vendor) roles.push('Vendor #' + (c.roles.vendor.number||''));\n      if (roles.length) r += ' (' + roles.join(', ') + ')';\n      r += '\\n';\n      if (c.addresses?.billing?.[0]?.street) { const a=c.addresses.billing[0]; r+='  Addr: '+a.street+', '+(a.zip||'')+' '+(a.city||'')+'\\n'; }\n      const em = c.emailAddresses?.business?.[0] || c.emailAddresses?.office?.[0] || '';\n      if (em) r += '  Email: ' + em + '\\n';\n      const ph = c.phoneNumbers?.business?.[0] || c.phoneNumbers?.mobile?.[0] || '';\n      if (ph) r += '  Phone: ' + ph + '\\n';\n      r += '  ID: ' + c.id + '\\n\\n';\n    }\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'list_contacts: ' + e.message } }]; }\n\n// === get_contact ===\n} else if (action === 'get_contact') {\n  if (!input.id) return [{ json: { error: 'id is required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + input.id, headers });\n    let r = '';\n    if (c.company) {\n      r += '**' + c.company.name + '** (Company)\\n';\n      if (c.company.contactPersons?.length) { r+='Contacts: '; for (const cp of c.company.contactPersons) r+=(cp.firstName?cp.firstName+' ':'')+cp.lastName+(cp.primary?' [primary]':'')+' '; r+='\\n'; }\n    } else if (c.person) {\n      r += '**' + (c.person.firstName?c.person.firstName+' ':'') + c.person.lastName + '** (Person)\\n';\n    }\n    const roles = [];\n    if (c.roles?.customer) roles.push('Customer #'+(c.roles.customer.number||''));\n    if (c.roles?.vendor) roles.push('Vendor #'+(c.roles.vendor.number||''));\n    if (roles.length) r += 'Roles: ' + roles.join(', ') + '\\n';\n    if (c.addresses?.billing?.[0]) { const a=c.addresses.billing[0]; r+='Address: '+(a.street||'')+', '+(a.zip||'')+' '+(a.city||'')+', '+(a.countryCode||'')+'\\n'; }\n    for (const [cat,vals] of Object.entries(c.emailAddresses||{})) { if (Array.isArray(vals)&&vals.length) r+='Email: '+vals[0]+' ('+cat+')\\n'; }\n    for (const [cat,vals] of Object.entries(c.phoneNumbers||{})) { if (Array.isArray(vals)&&vals.length) r+='Phone: '+vals[0]+' ('+cat+')\\n'; }\n    if (c.note) r += 'Note: ' + c.note + '\\n';\n    r += '\\nVersion: ' + c.version + '\\nID: ' + c.id;\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'get_contact: ' + e.message } }]; }\n\n// === create_company ===\n} else if (action === 'create_company') {\n  const cn = (input.companyName || '').trim();\n  if (!cn) return [{ json: { error: 'companyName is required.' } }];\n  try {\n    const body = { version: 0, roles: { customer: {} }, company: { name: cn } };\n    const cpn = (input.contactPersonName || '').trim();\n    if (cpn) { const p=cpn.split(' '); body.company.contactPersons=[{lastName:p.pop(),primary:true}]; if(p.length) body.company.contactPersons[0].firstName=p.join(' '); }\n    const em = (input.email || '').trim();\n    if (em && em.includes('@')) body.emailAddresses = { business: [em] };\n    const ph = (input.phone || '').trim();\n    if (ph && ph.length >= 6) body.phoneNumbers = { business: [ph] };\n    const street = (input.street || '').trim();\n    const zip = (input.zip || '').trim();\n    const city = (input.city || '').trim();\n    if (street && zip && city) body.addresses = { billing: [{ street, zip, city, countryCode: 'DE' }] };\n    const note = (input.note || '').trim();\n    if (note) body.note = note;\n    const d = await helpers.httpRequest({ method: 'POST', url: baseUrl + '/contacts', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Company contact created. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'create_company: ' + e.message } }]; }\n\n// === create_person ===\n} else if (action === 'create_person') {\n  const ln = (input.lastName || '').trim();\n  if (!ln) return [{ json: { error: 'lastName is required.' } }];\n  try {\n    const body = { version: 0, roles: { customer: {} }, person: { lastName: ln } };\n    const fn = (input.firstName || '').trim();\n    if (fn) body.person.firstName = fn;\n    const em = (input.email || '').trim();\n    if (em && em.includes('@')) body.emailAddresses = { business: [em] };\n    const ph = (input.phone || '').trim();\n    if (ph && ph.length >= 6) body.phoneNumbers = { business: [ph] };\n    const street = (input.street || '').trim();\n    const zip = (input.zip || '').trim();\n    const city = (input.city || '').trim();\n    if (street && zip && city) body.addresses = { billing: [{ street, zip, city, countryCode: 'DE' }] };\n    const note = (input.note || '').trim();\n    if (note) body.note = note;\n    const d = await helpers.httpRequest({ method: 'POST', url: baseUrl + '/contacts', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Person contact created. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'create_person: ' + e.message } }]; }\n\n// === update_address ===\n} else if (action === 'update_address') {\n  const id = (input.id||'').trim();\n  const version = (input.version||'').trim();\n  const street = (input.street||'').trim();\n  const zip = (input.zip||'').trim();\n  const city = (input.city||'').trim();\n  if (!id||!version||!street||!zip||!city) return [{ json: { error: 'id, version, street, zip, and city are ALL required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    const body = JSON.parse(JSON.stringify({ version: parseInt(version), roles: c.roles }));\n    if (c.company) body.company = JSON.parse(JSON.stringify(c.company));\n    if (c.person) body.person = JSON.parse(JSON.stringify(c.person));\n    if (c.emailAddresses) body.emailAddresses = JSON.parse(JSON.stringify(c.emailAddresses));\n    if (c.phoneNumbers) body.phoneNumbers = JSON.parse(JSON.stringify(c.phoneNumbers));\n    if (c.note) body.note = c.note;\n    body.addresses = { billing: [{ street: street, zip: zip, city: city, countryCode: 'DE' }] };\n    await new Promise(r => setTimeout(r, 600));\n    const d = await helpers.httpRequest({ method: 'PUT', url: baseUrl + '/contacts/' + id, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Address updated. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'update_address: ' + e.message } }]; }\n\n// === update_email ===\n} else if (action === 'update_email') {\n  const id = (input.id||'').trim();\n  const version = (input.version||'').trim();\n  const email = (input.email||'').trim();\n  if (!id||!version||!email) return [{ json: { error: 'id, version, and email are ALL required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    const body = JSON.parse(JSON.stringify({ version: parseInt(version), roles: c.roles }));\n    if (c.company) body.company = JSON.parse(JSON.stringify(c.company));\n    if (c.person) body.person = JSON.parse(JSON.stringify(c.person));\n    if (c.phoneNumbers) body.phoneNumbers = JSON.parse(JSON.stringify(c.phoneNumbers));\n    if (c.addresses) body.addresses = JSON.parse(JSON.stringify(c.addresses));\n    if (c.note) body.note = c.note;\n    body.emailAddresses = { business: [email] };\n    await new Promise(r => setTimeout(r, 600));\n    const d = await helpers.httpRequest({ method: 'PUT', url: baseUrl + '/contacts/' + id, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Email updated. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'update_email: ' + e.message } }]; }\n\n// === update_phone ===\n} else if (action === 'update_phone') {\n  const id = (input.id||'').trim();\n  const version = (input.version||'').trim();\n  const phone = (input.phone||'').trim();\n  if (!id||!version||!phone) return [{ json: { error: 'id, version, and phone are ALL required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    const body = JSON.parse(JSON.stringify({ version: parseInt(version), roles: c.roles }));\n    if (c.company) body.company = JSON.parse(JSON.stringify(c.company));\n    if (c.person) body.person = JSON.parse(JSON.stringify(c.person));\n    if (c.emailAddresses) body.emailAddresses = JSON.parse(JSON.stringify(c.emailAddresses));\n    if (c.addresses) body.addresses = JSON.parse(JSON.stringify(c.addresses));\n    if (c.note) body.note = c.note;\n    body.phoneNumbers = { business: [phone] };\n    await new Promise(r => setTimeout(r, 600));\n    const d = await helpers.httpRequest({ method: 'PUT', url: baseUrl + '/contacts/' + id, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Phone updated. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'update_phone: ' + e.message } }]; }\n\n// === update_name ===\n} else if (action === 'update_name') {\n  const id = (input.id||'').trim();\n  const version = (input.version||'').trim();\n  const name = (input.name||'').trim();\n  if (!id||!version||!name) return [{ json: { error: 'id, version, and name are ALL required.' } }];\n  try {\n    const c = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/contacts/' + id, headers });\n    const body = JSON.parse(JSON.stringify({ version: parseInt(version), roles: c.roles }));\n    if (c.company) { body.company = JSON.parse(JSON.stringify(c.company)); body.company.name = name; }\n    if (c.person) { body.person = JSON.parse(JSON.stringify(c.person)); body.person.lastName = name; }\n    if (c.emailAddresses) body.emailAddresses = JSON.parse(JSON.stringify(c.emailAddresses));\n    if (c.phoneNumbers) body.phoneNumbers = JSON.parse(JSON.stringify(c.phoneNumbers));\n    if (c.addresses) body.addresses = JSON.parse(JSON.stringify(c.addresses));\n    if (c.note) body.note = c.note;\n    await new Promise(r => setTimeout(r, 600));\n    const d = await helpers.httpRequest({ method: 'PUT', url: baseUrl + '/contacts/' + id, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Name updated. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'update_name: ' + e.message } }]; }\n\n\n\n// === list_articles ===\n} else if (action === 'list_articles') {\n  try {\n    let url = baseUrl + '/articles?page=' + (input.page || '0') + '&size=25';\n    const type = (input.type || '').trim();\n    if (type) url += '&type=' + type;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) return [{ json: { result: 'No articles found.' } }];\n    let r = 'Articles (page ' + data.number + '/' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const a of data.content) {\n      r += '**' + a.title + '**';\n      if (a.articleNumber) r += ' (#' + a.articleNumber + ')';\n      r += '\\n  Type: ' + a.type;\n      if (a.unitName) r += ' | Unit: ' + a.unitName;\n      if (a.price) r += ' | Price: ' + Number(a.price.netPrice||0).toFixed(2) + ' net (' + (a.price.taxRate||0) + '% tax)';\n      r += '\\n  ID: ' + a.id + '\\n\\n';\n    }\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'list_articles: ' + e.message } }]; }\n\n// === get_article ===\n} else if (action === 'get_article') {\n  if (!input.id) return [{ json: { error: 'id is required.' } }];\n  try {\n    const a = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/articles/' + input.id, headers });\n    let r = '**' + a.title + '**';\n    if (a.articleNumber) r += ' (#' + a.articleNumber + ')';\n    r += '\\nType: ' + a.type;\n    if (a.description) r += '\\nDescription: ' + a.description;\n    if (a.unitName) r += '\\nUnit: ' + a.unitName;\n    if (a.price) {\n      r += '\\nNet Price: ' + Number(a.price.netPrice||0).toFixed(2);\n      r += '\\nGross Price: ' + Number(a.price.grossPrice||0).toFixed(2);\n      r += '\\nTax Rate: ' + (a.price.taxRate||0) + '%';\n      r += '\\nLeading Price: ' + (a.price.leadingPrice||'net');\n    }\n    r += '\\nVersion: ' + a.version + '\\nID: ' + a.id;\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'get_article: ' + e.message } }]; }\n\n// === create_article ===\n} else if (action === 'create_article') {\n  const title = (input.title || '').trim();\n  if (!title) return [{ json: { error: 'title is required.' } }];\n  try {\n    const netPriceRaw = (input.netPrice || '').trim();\n    if (!netPriceRaw) return [{ json: { error: 'netPrice is required. Provide the net price as a number, e.g. 120 or 1600.50' } }];\n    const netPrice = parseFloat(netPriceRaw);\n    if (isNaN(netPrice)) return [{ json: { error: 'netPrice must be a number. Got: ' + netPriceRaw } }];\n    const taxRate = (input.taxRate && input.taxRate.trim()) ? parseFloat(input.taxRate) : 19;\n    const body = {\n      title: title,\n      type: (input.type || '').trim() || 'SERVICE',\n      unitName: (input.unitName || '').trim() || 'St\u00fcck',\n      price: {\n        netPrice: isNaN(netPrice) ? 0 : netPrice,\n        taxRate: isNaN(taxRate) ? 19 : taxRate,\n        leadingPrice: 'NET'\n      }\n    };\n    const desc = (input.description || '').trim();\n    if (desc) body.description = desc;\n    const artNr = (input.articleNumber || '').trim();\n    if (artNr) body.articleNumber = artNr;\n    const d = await helpers.httpRequest({ method: 'POST', url: baseUrl + '/articles', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Article created. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) {\n    const detail = e.response ? JSON.stringify(e.response.data || e.response.body || '').substring(0,300) : '';\n    return [{ json: { error: 'create_article: ' + e.message + (detail ? ' Detail: ' + detail : '') } }];\n  }\n\n// === update_article ===\n} else if (action === 'update_article') {\n  const id = (input.id || '').trim();\n  const version = (input.version || '').trim();\n  const title = (input.title || '').trim();\n  if (!id || !version || !title) return [{ json: { error: 'id, version, and title are ALL required. Use get_article first.' } }];\n  try {\n    // Aktuellen Artikel laden um fehlende Felder zu behalten\n    const current = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/articles/' + id, headers });\n    const body = {\n      version: parseInt(version),\n      title: title,\n      type: (input.type || '').trim() || current.type || 'SERVICE',\n      unitName: (input.unitName || '').trim() || current.unitName || 'St\u00fcck',\n      price: {\n        netPrice: (input.netPrice && input.netPrice.trim()) ? parseFloat(input.netPrice) : (current.price?.netPrice || 0),\n        taxRate: (input.taxRate && input.taxRate.trim()) ? parseFloat(input.taxRate) : (current.price?.taxRate || 19),\n        leadingPrice: current.price?.leadingPrice || 'net'\n      }\n    };\n    const desc = (input.description || '').trim();\n    if (desc) body.description = desc;\n    else if (current.description) body.description = current.description;\n    const artNr = (input.articleNumber || '').trim();\n    if (artNr) body.articleNumber = artNr;\n    else if (current.articleNumber) body.articleNumber = current.articleNumber;\n    await new Promise(r => setTimeout(r, 600));\n    const d = await helpers.httpRequest({ method: 'PUT', url: baseUrl + '/articles/' + id, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Article updated. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'update_article: ' + e.message } }]; }\n\n// === delete_article ===\n} else if (action === 'delete_article') {\n  const id = (input.id || '').trim();\n  if (!id) return [{ json: { error: 'id is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: baseUrl + '/articles/' + id, headers });\n    return [{ json: { result: 'Article deleted. ID: ' + id } }];\n  } catch(e) { return [{ json: { error: 'delete_article: ' + e.message } }]; }\n\n\n\n// === upload_voucher ===\n} else if (action === 'upload_voucher') {\n  const fileRef = (input.file_ref || '').trim();\n  if (!fileRef) return [{ json: { error: 'file_ref is required. This is the file reference ID from the File Bridge.' } }];\n  try {\n    // File Bridge /forward Endpoint nutzen \u2014 der baut korrektes Multipart\n    const d = await helpers.httpRequest({\n      method: 'POST',\n      url: 'http://file-bridge:3200/files/' + fileRef + '/forward',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        url: baseUrl + '/files',\n        headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json' },\n        file_field: 'file',\n        form_fields: { type: 'voucher' }\n      })\n    });\n    const result = d.response || d;\n    const fileId = result.id || (typeof result === 'string' ? result : JSON.stringify(result));\n    return [{ json: { result: 'Voucher uploaded to Lexware. Response: ' + JSON.stringify(result).substring(0,300) } }];\n  } catch(e) { return [{ json: { error: 'upload_voucher: ' + e.message } }]; }\n\n\n\n// === list_quotations ===\n} else if (action === 'list_quotations') {\n  try {\n    const pg = (input.page || '').trim() || '0';\n    let url = baseUrl + '/voucherlist?voucherType=quotation&page=' + pg + '&size=25&sort=voucherDate,DESC';\n    const status = (input.status || '').trim();\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) return [{ json: { result: 'No quotations found.' } }];\n    let r = 'Quotations (page ' + data.number + '/' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const q of data.content) {\n      r += '**' + (q.voucherNumber || 'Draft') + '** \u2014 ' + (q.contactName || '?') + '\\n';\n      r += '  Date: ' + (q.voucherDate || '').split('T')[0] + ' | Status: ' + q.voucherStatus + ' | Total: ' + Number(q.totalAmount || 0).toFixed(2) + '\\n';\n      r += '  ID: ' + q.id + '\\n\\n';\n    }\n    return [{ json: { result: r } }];\n  } catch(e) { const detail = e.response?.data ? JSON.stringify(e.response.data).substring(0,300) : ''; return [{ json: { error: 'list_quotations: ' + e.message + (detail ? ' | ' + detail : '') } }]; }\n\n// === get_quotation ===\n} else if (action === 'get_quotation') {\n  if (!input.id) return [{ json: { error: 'id is required.' } }];\n  try {\n    const q = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/quotations/' + input.id, headers });\n    let r = '**Quotation ' + (q.voucherNumber || 'Draft') + '**\\n';\n    if (q.address?.name) r += 'To: ' + q.address.name + '\\n';\n    if (q.address?.street) r += '  ' + q.address.street + ', ' + (q.address.zip||'') + ' ' + (q.address.city||'') + '\\n';\n    r += 'Date: ' + (q.voucherDate || '').split('T')[0] + '\\n';\n    if (q.expirationDate) r += 'Expires: ' + q.expirationDate.split('T')[0] + '\\n';\n    if (q.lineItems) {\n      r += '\\nLine Items:\\n';\n      for (const item of q.lineItems) {\n        if (item.type === 'custom') {\n          r += '  - ' + item.name + ' (x' + (item.quantity||1) + ')';\n          if (item.unitPrice?.netAmount !== undefined) r += ' @ ' + Number(item.unitPrice.netAmount).toFixed(2);\n          r += '\\n';\n        }\n      }\n    }\n    if (q.totalPrice) {\n      r += '\\nTotal Net: ' + Number(q.totalPrice.totalNetAmount||0).toFixed(2);\n      r += ' | Total Gross: ' + Number(q.totalPrice.totalGrossAmount||0).toFixed(2) + '\\n';\n    }\n    r += '\\nID: ' + q.id;\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'get_quotation: ' + e.message } }]; }\n\n// === create_quotation ===\n} else if (action === 'create_quotation') {\n  const contactId = (input.contactId || '').trim();\n  const lineItemsStr = (input.lineItems || '').trim();\n  if (!contactId || !lineItemsStr) return [{ json: { error: 'contactId and lineItems are required.' } }];\n  try {\n    let items;\n    try { items = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON array: ' + e.message } }]; }\n    const lineItems = items.map(i => ({\n      type: 'custom',\n      name: i.name || i.title || 'Position',\n      quantity: i.quantity || 1,\n      unitName: i.unitName || i.unit || 'St\u00fcck',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: i.unitPrice || i.netAmount || i.price || 0,\n        taxRatePercentage: i.taxRate || i.taxRatePercentage || 19\n      }\n    }));\n    // Datum als ISO-DateTime formatieren\n    const vDateRaw = (input.voucherDate || '').trim() || new Date().toISOString().split('T')[0];\n    const vDate = vDateRaw.includes('T') ? vDateRaw : vDateRaw + 'T00:00:00.000+02:00';\n    // expirationDate: 30 Tage nach voucherDate\n    const expDate = new Date(new Date(vDateRaw).getTime() + 30*24*60*60*1000).toISOString().split('T')[0] + 'T00:00:00.000+02:00';\n    const body = {\n      voucherDate: vDate,\n      expirationDate: expDate,\n      address: { contactId },\n      lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' }\n    };\n    const intro = (input.introduction || '').trim();\n    if (intro) body.introduction = intro;\n    const remark = (input.remark || '').trim();\n    if (remark) body.remark = remark;\n    const finalize = (input.finalize || '').trim();\n    const doFinalize = finalize !== 'false';\n    let url = baseUrl + '/quotations';\n    if (doFinalize) url += '?finalize=true';\n    const d = await helpers.httpRequest({ method: 'POST', url, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Quotation created. ID: ' + d.id + ', Version: ' + d.version + (doFinalize ? ' (finalized)' : ' (draft)') } }];\n  } catch(e) { const detail = e.response?.data ? JSON.stringify(e.response.data).substring(0,300) : ''; return [{ json: { error: 'create_quotation: ' + e.message + (detail ? ' | ' + detail : '') } }]; }\n\n// === list_invoices ===\n} else if (action === 'list_invoices') {\n  try {\n    const pgI = (input.page || '').trim() || '0';\n    let url = baseUrl + '/voucherlist?voucherType=invoice&page=' + pgI + '&size=25&sort=voucherDate,DESC';\n    const status = (input.status || '').trim();\n    if (status) url += '&voucherStatus=' + status;\n    const data = await helpers.httpRequest({ method: 'GET', url, headers });\n    if (!data.content || data.content.length === 0) return [{ json: { result: 'No invoices found.' } }];\n    let r = 'Invoices (page ' + data.number + '/' + data.totalPages + ', ' + data.totalElements + ' total):\\n\\n';\n    for (const inv of data.content) {\n      r += '**' + (inv.voucherNumber || 'Draft') + '** \u2014 ' + (inv.contactName || '?') + '\\n';\n      r += '  Date: ' + (inv.voucherDate || '').split('T')[0] + ' | Status: ' + inv.voucherStatus + ' | Total: ' + Number(inv.totalAmount || 0).toFixed(2) + '\\n';\n      if (inv.dueDate) r += '  Due: ' + inv.dueDate.split('T')[0] + '\\n';\n      r += '  ID: ' + inv.id + '\\n\\n';\n    }\n    return [{ json: { result: r } }];\n  } catch(e) { const detail = e.response?.data ? JSON.stringify(e.response.data).substring(0,300) : ''; return [{ json: { error: 'list_invoices: ' + e.message + (detail ? ' | ' + detail : '') } }]; }\n\n// === get_invoice ===\n} else if (action === 'get_invoice') {\n  if (!input.id) return [{ json: { error: 'id is required.' } }];\n  try {\n    const inv = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/invoices/' + input.id, headers });\n    let r = '**Invoice ' + (inv.voucherNumber || 'Draft') + '**\\n';\n    if (inv.address?.name) r += 'To: ' + inv.address.name + '\\n';\n    if (inv.address?.street) r += '  ' + inv.address.street + ', ' + (inv.address.zip||'') + ' ' + (inv.address.city||'') + '\\n';\n    r += 'Date: ' + (inv.voucherDate || '').split('T')[0] + '\\n';\n    if (inv.dueDate) r += 'Due: ' + inv.dueDate.split('T')[0] + '\\n';\n    if (inv.lineItems) {\n      r += '\\nLine Items:\\n';\n      for (const item of inv.lineItems) {\n        if (item.type === 'custom') {\n          r += '  - ' + item.name + ' (x' + (item.quantity||1) + ')';\n          if (item.unitPrice?.netAmount !== undefined) r += ' @ ' + Number(item.unitPrice.netAmount).toFixed(2);\n          r += '\\n';\n        }\n      }\n    }\n    if (inv.totalPrice) {\n      r += '\\nTotal Net: ' + Number(inv.totalPrice.totalNetAmount||0).toFixed(2);\n      r += ' | Total Gross: ' + Number(inv.totalPrice.totalGrossAmount||0).toFixed(2) + '\\n';\n    }\n    r += '\\nID: ' + inv.id;\n    return [{ json: { result: r } }];\n  } catch(e) { return [{ json: { error: 'get_invoice: ' + e.message } }]; }\n\n// === create_invoice ===\n} else if (action === 'create_invoice') {\n  const contactId = (input.contactId || '').trim();\n  const lineItemsStr = (input.lineItems || '').trim();\n  if (!contactId || !lineItemsStr) return [{ json: { error: 'contactId and lineItems are required.' } }];\n  try {\n    let items;\n    try { items = JSON.parse(lineItemsStr); } catch(e) { return [{ json: { error: 'lineItems must be valid JSON array: ' + e.message } }]; }\n    const lineItems = items.map(i => ({\n      type: 'custom',\n      name: i.name || i.title || 'Position',\n      quantity: i.quantity || 1,\n      unitName: i.unitName || i.unit || 'St\u00fcck',\n      unitPrice: {\n        currency: 'EUR',\n        netAmount: i.unitPrice || i.netAmount || i.price || 0,\n        taxRatePercentage: i.taxRate || i.taxRatePercentage || 19\n      }\n    }));\n    const vDateRawI = (input.voucherDate || '').trim() || new Date().toISOString().split('T')[0];\n    const vDateI = vDateRawI.includes('T') ? vDateRawI : vDateRawI + 'T00:00:00.000+02:00';\n    const body = {\n      voucherDate: vDateI,\n      address: { contactId },\n      lineItems,\n      totalPrice: { currency: 'EUR' },\n      taxConditions: { taxType: 'net' },\n      shippingConditions: { shippingType: 'none' }\n    };\n    const intro = (input.introduction || '').trim();\n    if (intro) body.introduction = intro;\n    const remark = (input.remark || '').trim();\n    if (remark) body.remark = remark;\n    const finalize = (input.finalize || '').trim();\n    const doFinalize = finalize !== 'false';\n    let url = baseUrl + '/invoices';\n    if (doFinalize) url += '?finalize=true';\n    const d = await helpers.httpRequest({ method: 'POST', url, headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Invoice created. ID: ' + d.id + ', Version: ' + d.version + (doFinalize ? ' (finalized)' : ' (draft)') } }];\n  } catch(e) { const detail = e.response?.data ? JSON.stringify(e.response.data).substring(0,300) : ''; return [{ json: { error: 'create_invoice: ' + e.message + (detail ? ' | ' + detail : '') } }]; }\n\n// === create_invoice_from_quotation ===\n} else if (action === 'create_invoice_from_quotation') {\n  const quotationId = (input.quotationId || '').trim();\n  if (!quotationId) return [{ json: { error: 'quotationId is required.' } }];\n  try {\n    const finalize = (input.finalize || '').trim();\n    let url = baseUrl + '/invoices?precedingSalesVoucherId=' + quotationId;\n    if (finalize === 'true') url += '&finalize=true';\n    const d = await helpers.httpRequest({ method: 'POST', url, headers: jsonHeaders, body: '{}' });\n    return [{ json: { result: 'Invoice from quotation created. ID: ' + d.id + ', Version: ' + d.version } }];\n  } catch(e) { return [{ json: { error: 'create_invoice_from_quotation: ' + e.message } }]; }\n\n\n\n// === download_invoice ===\n} else if (action === 'download_invoice') {\n  const id = (input.id || '').trim();\n  if (!id) return [{ json: { error: 'id is required.' } }];\n  try {\n    // 0. Pr\u00fcfen ob finalisiert\n    const inv = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/invoices/' + id, headers });\n    if (!inv.voucherNumber) return [{ json: { error: 'This invoice is still a draft. Finalize it first before downloading as PDF. Use create_invoice with finalize=true or finalize it manually in Lexware.' } }];\n    // 1. PDF von Lexware holen\n    const pdfResp = await helpers.httpRequest({\n      method: 'GET',\n      url: baseUrl + '/invoices/' + id + '/file',\n      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/pdf' },\n      encoding: 'arraybuffer',\n      returnFullResponse: true\n    });\n    const pdfBuffer = Buffer.from(pdfResp.body);\n    const base64 = pdfBuffer.toString('base64');\n\n    // 2. In File Bridge speichern\n    const bridge = await helpers.httpRequest({\n      method: 'POST',\n      url: 'http://file-bridge:3200/upload/base64',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        content_base64: base64,\n        file_name: 'Rechnung-' + id.substring(0,8) + '.pdf',\n        mime_type: 'application/pdf'\n      })\n    });\n\n    // 3. send_file Marker zur\u00fcckgeben\n    return [{ json: { result: 'Invoice PDF ready. [send_file: http://file-bridge:3200/files/' + bridge.id + ']' } }];\n  } catch(e) { return [{ json: { error: 'download_invoice: ' + e.message } }]; }\n\n// === download_quotation ===\n} else if (action === 'download_quotation') {\n  const id = (input.id || '').trim();\n  if (!id) return [{ json: { error: 'id is required.' } }];\n  try {\n    // 0. Pr\u00fcfen ob finalisiert\n    const quot = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/quotations/' + id, headers });\n    if (!quot.voucherNumber) return [{ json: { error: 'This quotation is still a draft. Finalize it first before downloading as PDF. Finalize it manually in Lexware or create a new one with finalize=true.' } }];\n    await new Promise(r => setTimeout(r, 600));\n    // 1. PDF von Lexware holen\n    const pdfResp = await helpers.httpRequest({\n      method: 'GET',\n      url: baseUrl + '/quotations/' + id + '/file',\n      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/pdf' },\n      encoding: 'arraybuffer',\n      returnFullResponse: true\n    });\n    const pdfBuffer = Buffer.from(pdfResp.body);\n    const base64 = pdfBuffer.toString('base64');\n\n    // 2. In File Bridge speichern\n    const bridge = await helpers.httpRequest({\n      method: 'POST',\n      url: 'http://file-bridge:3200/upload/base64',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        content_base64: base64,\n        file_name: 'Angebot-' + id.substring(0,8) + '.pdf',\n        mime_type: 'application/pdf'\n      })\n    });\n\n    // 3. send_file Marker zur\u00fcckgeben\n    return [{ json: { result: 'Quotation PDF ready. [send_file: http://file-bridge:3200/files/' + bridge.id + ']' } }];\n  } catch(e) { return [{ json: { error: 'download_quotation: ' + e.message } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: list_contacts, get_contact, create_company, create_person, update_address, update_email, update_phone, update_name, list_articles, get_article, create_article, update_article, delete_article.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Lexware Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Lexware Office",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "lexware"
+        },
+        "webhookId": "3b628fc6-14b5-41aa-b9dd-4013584ba022"
+      },
+      {
+        "id": "t1",
+        "name": "list_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "list_contacts",
+          "description": "List Lexware contacts. Optional: name (search, min 3 chars), customer (true/false), vendor (true/false), page (number).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_contacts",
+              "page": "={{ $fromAI('page', 'Page number, default 0', 'string') }}",
+              "name": "={{ $fromAI('name', 'Search name, min 3 chars', 'string') }}",
+              "email": "={{ $fromAI('email', 'Search email', 'string') }}",
+              "customer": "={{ $fromAI('customer', 'true for customers only', 'string') }}",
+              "vendor": "={{ $fromAI('vendor', 'true for vendors only', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number, default 0",
+                "required": false
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Search name, min 3 chars",
+                "required": false
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Search email",
+                "required": false
+              },
+              {
+                "id": "customer",
+                "displayName": "customer",
+                "type": "string",
+                "description": "true for customers only",
+                "required": false
+              },
+              {
+                "id": "vendor",
+                "displayName": "vendor",
+                "type": "string",
+                "description": "true for vendors only",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t2",
+        "name": "get_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          300
+        ],
+        "parameters": {
+          "name": "get_contact",
+          "description": "Get full details of a contact. Returns name, address, email, phone, version. Parameter: id (UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_contact",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t3",
+        "name": "create_company",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          300
+        ],
+        "parameters": {
+          "name": "create_company",
+          "description": "Create a company contact. Example: companyName=ACME GmbH, street=Hauptstr. 1, zip=80331, city=M\u00fcnchen, email=info@acme.de, phone=+4989123456",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_company",
+              "companyName": "={{ $fromAI('companyName', 'Company name', 'string') }}",
+              "email": "={{ $fromAI('email', 'Email address', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'Phone number', 'string') }}",
+              "note": "={{ $fromAI('note', 'Note text', 'string') }}",
+              "contactPersonName": "={{ $fromAI('contactPersonName', 'Contact person full name', 'string') }}",
+              "street": "={{ $fromAI('street', 'Street and house number', 'string') }}",
+              "zip": "={{ $fromAI('zip', 'Postal code', 'string') }}",
+              "city": "={{ $fromAI('city', 'City name', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "companyName",
+                "displayName": "companyName",
+                "type": "string",
+                "description": "Company name",
+                "required": true
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email address",
+                "required": true
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone number",
+                "required": true
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "type": "string",
+                "description": "Note text",
+                "required": false
+              },
+              {
+                "id": "contactPersonName",
+                "displayName": "contactPersonName",
+                "type": "string",
+                "description": "Contact person full name",
+                "required": false
+              },
+              {
+                "id": "street",
+                "displayName": "street",
+                "type": "string",
+                "description": "Street and house number",
+                "required": true
+              },
+              {
+                "id": "zip",
+                "displayName": "zip",
+                "type": "string",
+                "description": "Postal code",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t4",
+        "name": "create_person",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          300
+        ],
+        "parameters": {
+          "name": "create_person",
+          "description": "Create a person contact. Example: lastName=M\u00fcller, firstName=Hans, street=Hauptstr. 1, zip=80331, city=M\u00fcnchen, email=hans@example.de, phone=+4989123456",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_person",
+              "lastName": "={{ $fromAI('lastName', 'Last name', 'string') }}",
+              "firstName": "={{ $fromAI('firstName', 'First name', 'string') }}",
+              "email": "={{ $fromAI('email', 'Email address', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'Phone number', 'string') }}",
+              "note": "={{ $fromAI('note', 'Note text', 'string') }}",
+              "street": "={{ $fromAI('street', 'Street and house number', 'string') }}",
+              "zip": "={{ $fromAI('zip', 'Postal code', 'string') }}",
+              "city": "={{ $fromAI('city', 'City name', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "lastName",
+                "displayName": "lastName",
+                "type": "string",
+                "description": "Last name",
+                "required": true
+              },
+              {
+                "id": "firstName",
+                "displayName": "firstName",
+                "type": "string",
+                "description": "First name",
+                "required": true
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email address",
+                "required": true
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone number",
+                "required": true
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "type": "string",
+                "description": "Note text",
+                "required": false
+              },
+              {
+                "id": "street",
+                "displayName": "street",
+                "type": "string",
+                "description": "Street and house number",
+                "required": true
+              },
+              {
+                "id": "zip",
+                "displayName": "zip",
+                "type": "string",
+                "description": "Postal code",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t5",
+        "name": "update_contact_address",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          600
+        ],
+        "parameters": {
+          "name": "update_contact_address",
+          "description": "Update the address of a contact. Call get_contact first for id+version. Example: id=abc, version=3, street=Strandallee 61, zip=26969, city=Butjadingen",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_address",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version from get_contact', 'string') }}",
+              "street": "={{ $fromAI('street', 'Street name and house number, e.g. Strandallee 61', 'string') }}",
+              "zip": "={{ $fromAI('zip', 'Postal code, e.g. 26969', 'string') }}",
+              "city": "={{ $fromAI('city', 'City name, e.g. Butjadingen', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Version number",
+                "required": true
+              },
+              {
+                "id": "street",
+                "displayName": "street",
+                "type": "string",
+                "description": "Street and house number",
+                "required": true
+              },
+              {
+                "id": "zip",
+                "displayName": "zip",
+                "type": "string",
+                "description": "Postal code",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t6",
+        "name": "update_contact_email",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          600
+        ],
+        "parameters": {
+          "name": "update_contact_email",
+          "description": "Update ONLY the email of a contact. Call get_contact first for id and version. Example: id=abc-123, version=3, email=neu@firma.de",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_email",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version from get_contact', 'string') }}",
+              "email": "={{ $fromAI('email', 'New email address', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Current version from get_contact",
+                "required": true
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "New email address",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t7",
+        "name": "update_contact_phone",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          600
+        ],
+        "parameters": {
+          "name": "update_contact_phone",
+          "description": "Update ONLY the phone of a contact. Call get_contact first for id and version. Example: id=abc-123, version=3, phone=+4930999888",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_phone",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version from get_contact', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'New phone number', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Current version from get_contact",
+                "required": true
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "New phone number",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t8",
+        "name": "update_contact_name",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          600
+        ],
+        "parameters": {
+          "name": "update_contact_name",
+          "description": "Update ONLY the name of a contact. Call get_contact first for id and version. Example: id=abc-123, version=3, name=Neuer Firmenname GmbH",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_name",
+              "id": "={{ $fromAI('id', 'Contact UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version from get_contact', 'string') }}",
+              "name": "={{ $fromAI('name', 'New company name or person last name', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Contact UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Current version from get_contact",
+                "required": true
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "New company name or person last name",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "a1",
+        "name": "list_articles",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          900
+        ],
+        "parameters": {
+          "name": "list_articles",
+          "description": "List Lexware articles (products and services). Optional: type (PRODUCT or SERVICE), page (number).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_articles",
+              "page": "={{ $fromAI('page', 'Page number, default 0', 'string') }}",
+              "type": "={{ $fromAI('type', 'PRODUCT or SERVICE filter', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number, default 0",
+                "required": false
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "PRODUCT or SERVICE filter",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "a2",
+        "name": "get_article",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          900
+        ],
+        "parameters": {
+          "name": "get_article",
+          "description": "Get details of an article. Returns title, type, price, version. Parameter: id (UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_article",
+              "id": "={{ $fromAI('id', 'Article UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "a3",
+        "name": "create_article",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          900
+        ],
+        "parameters": {
+          "name": "create_article",
+          "description": "Create an article. Example: title=Beratung, type=SERVICE, unitName=Stunde, netPrice=120, taxRate=19",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_article",
+              "title": "={{ $fromAI('title', 'Article title/name', 'string') }}",
+              "type": "={{ $fromAI('type', 'SERVICE or PRODUCT', 'string') }}",
+              "unitName": "={{ $fromAI('unitName', 'Unit like Stunde or St\u00fcck', 'string') }}",
+              "netPrice": "={{ $fromAI('netPrice', 'Net price as number', 'string') }}",
+              "taxRate": "={{ $fromAI('taxRate', 'Tax rate percentage, e.g. 19', 'string') }}",
+              "description": "={{ $fromAI('description', 'Description text', 'string') }}",
+              "articleNumber": "={{ $fromAI('articleNumber', 'Article number', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Article title/name",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "SERVICE or PRODUCT",
+                "required": true
+              },
+              {
+                "id": "unitName",
+                "displayName": "unitName",
+                "type": "string",
+                "description": "Unit like Stunde or St\u00fcck",
+                "required": true
+              },
+              {
+                "id": "netPrice",
+                "displayName": "netPrice",
+                "type": "string",
+                "description": "Net price as number",
+                "required": true
+              },
+              {
+                "id": "taxRate",
+                "displayName": "taxRate",
+                "type": "string",
+                "description": "Tax rate percentage, e.g. 19",
+                "required": true
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description text",
+                "required": false
+              },
+              {
+                "id": "articleNumber",
+                "displayName": "articleNumber",
+                "type": "string",
+                "description": "Article number",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "a4",
+        "name": "update_article",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          900
+        ],
+        "parameters": {
+          "name": "update_article",
+          "description": "Update an article. Call get_article first for id+version. Example: id=abc, version=1, title=Neuer Name, netPrice=150, taxRate=19",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_article",
+              "id": "={{ $fromAI('id', 'Article UUID', 'string') }}",
+              "version": "={{ $fromAI('version', 'Current version from get_article', 'string') }}",
+              "title": "={{ $fromAI('title', 'Article title', 'string') }}",
+              "type": "={{ $fromAI('type', 'SERVICE or PRODUCT', 'string') }}",
+              "unitName": "={{ $fromAI('unitName', 'Unit like Stunde or St\u00fcck', 'string') }}",
+              "netPrice": "={{ $fromAI('netPrice', 'Net price as number', 'string') }}",
+              "taxRate": "={{ $fromAI('taxRate', 'Tax rate, e.g. 19', 'string') }}",
+              "description": "={{ $fromAI('description', 'Description text', 'string') }}",
+              "articleNumber": "={{ $fromAI('articleNumber', 'Article number', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID",
+                "required": true
+              },
+              {
+                "id": "version",
+                "displayName": "version",
+                "type": "string",
+                "description": "Current version from get_article",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Article title",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "SERVICE or PRODUCT",
+                "required": false
+              },
+              {
+                "id": "unitName",
+                "displayName": "unitName",
+                "type": "string",
+                "description": "Unit like Stunde or St\u00fcck",
+                "required": false
+              },
+              {
+                "id": "netPrice",
+                "displayName": "netPrice",
+                "type": "string",
+                "description": "Net price as number",
+                "required": false
+              },
+              {
+                "id": "taxRate",
+                "displayName": "taxRate",
+                "type": "string",
+                "description": "Tax rate, e.g. 19",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description text",
+                "required": false
+              },
+              {
+                "id": "articleNumber",
+                "displayName": "articleNumber",
+                "type": "string",
+                "description": "Article number",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "a5",
+        "name": "delete_article",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1200
+        ],
+        "parameters": {
+          "name": "delete_article",
+          "description": "Delete an article by ID. Parameter: id (UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_article",
+              "id": "={{ $fromAI('id', 'Article UUID to delete', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Article UUID to delete",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "v1",
+        "name": "upload_voucher",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          1200
+        ],
+        "parameters": {
+          "name": "upload_voucher",
+          "description": "Upload a voucher/receipt to Lexware. When the user sends a file (photo/PDF), use the file_ref from the attachment. Parameter: file_ref (REQUIRED, the File Bridge reference ID)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "upload_voucher",
+              "file_ref": "={{ $fromAI('file_ref', 'File Bridge reference ID from the uploaded attachment', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "file_ref",
+                "displayName": "file_ref",
+                "type": "string",
+                "description": "File Bridge reference ID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "q1",
+        "name": "list_quotations",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1500
+        ],
+        "parameters": {
+          "name": "list_quotations",
+          "description": "List Lexware quotations (Angebote). Optional: status (draft/open/accepted/rejected), page.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_quotations",
+              "page": "={{ $fromAI('page', 'Page number', 'string') }}",
+              "status": "={{ $fromAI('status', 'Filter: draft, open, accepted, rejected', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Filter: draft, open, accepted, rejected",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "q2",
+        "name": "get_quotation",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          1500
+        ],
+        "parameters": {
+          "name": "get_quotation",
+          "description": "Get details of a quotation including line items and totals. Parameter: id (UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_quotation",
+              "id": "={{ $fromAI('id', 'Quotation UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Quotation UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "q3",
+        "name": "create_quotation",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          1500
+        ],
+        "parameters": {
+          "name": "create_quotation",
+          "description": "Create a quotation. Example: contactId=abc-123, lineItems=[{\"name\":\"Beratung\",\"quantity\":5,\"unitPrice\":120,\"taxRate\":19}], finalize=false",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_quotation",
+              "contactId": "={{ $fromAI('contactId', 'Contact UUID from list_contacts/get_contact', 'string') }}",
+              "lineItems": "={{ $fromAI('lineItems', 'JSON array: [{\"name\":\"...\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]', 'string') }}",
+              "finalize": "={{ $fromAI('finalize', 'true to finalize, false for draft', 'string') }}",
+              "voucherDate": "={{ $fromAI('voucherDate', 'Date YYYY-MM-DD, default today', 'string') }}",
+              "introduction": "={{ $fromAI('introduction', 'Intro text', 'string') }}",
+              "remark": "={{ $fromAI('remark', 'Closing text', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "contactId",
+                "displayName": "contactId",
+                "type": "string",
+                "description": "Contact UUID from list_contacts/get_contact",
+                "required": true
+              },
+              {
+                "id": "lineItems",
+                "displayName": "lineItems",
+                "type": "string",
+                "description": "JSON array: [{\"name\":\"...\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]",
+                "required": true
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "true to finalize, false for draft",
+                "required": true
+              },
+              {
+                "id": "voucherDate",
+                "displayName": "voucherDate",
+                "type": "string",
+                "description": "Date YYYY-MM-DD, default today",
+                "required": false
+              },
+              {
+                "id": "introduction",
+                "displayName": "introduction",
+                "type": "string",
+                "description": "Intro/greeting text for the document",
+                "required": true
+              },
+              {
+                "id": "remark",
+                "displayName": "remark",
+                "type": "string",
+                "description": "Closing text",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "i1",
+        "name": "list_invoices",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          1500
+        ],
+        "parameters": {
+          "name": "list_invoices",
+          "description": "List Lexware invoices (Rechnungen). Optional: status (draft/open/paidoff/voided), page.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_invoices",
+              "page": "={{ $fromAI('page', 'Page number', 'string') }}",
+              "status": "={{ $fromAI('status', 'Filter: draft, open, paidoff, voided', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Filter: draft, open, paidoff, voided",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "i2",
+        "name": "get_invoice",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1800
+        ],
+        "parameters": {
+          "name": "get_invoice",
+          "description": "Get details of an invoice including line items and totals. Parameter: id (UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_invoice",
+              "id": "={{ $fromAI('id', 'Invoice UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Invoice UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "i3",
+        "name": "create_invoice",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          1800
+        ],
+        "parameters": {
+          "name": "create_invoice",
+          "description": "Create an invoice. Example: contactId=abc-123, lineItems=[{\"name\":\"Beratung\",\"quantity\":5,\"unitPrice\":120,\"taxRate\":19}], finalize=true",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_invoice",
+              "contactId": "={{ $fromAI('contactId', 'Contact UUID from list_contacts/get_contact', 'string') }}",
+              "lineItems": "={{ $fromAI('lineItems', 'JSON array: [{\"name\":\"...\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]', 'string') }}",
+              "finalize": "={{ $fromAI('finalize', 'true to finalize, false for draft', 'string') }}",
+              "voucherDate": "={{ $fromAI('voucherDate', 'Date YYYY-MM-DD, default today', 'string') }}",
+              "introduction": "={{ $fromAI('introduction', 'Intro text', 'string') }}",
+              "remark": "={{ $fromAI('remark', 'Closing text', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "contactId",
+                "displayName": "contactId",
+                "type": "string",
+                "description": "Contact UUID from list_contacts/get_contact",
+                "required": true
+              },
+              {
+                "id": "lineItems",
+                "displayName": "lineItems",
+                "type": "string",
+                "description": "JSON array: [{\"name\":\"...\",\"quantity\":1,\"unitPrice\":100,\"taxRate\":19}]",
+                "required": true
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "true to finalize, false for draft",
+                "required": true
+              },
+              {
+                "id": "voucherDate",
+                "displayName": "voucherDate",
+                "type": "string",
+                "description": "Date YYYY-MM-DD, default today",
+                "required": false
+              },
+              {
+                "id": "introduction",
+                "displayName": "introduction",
+                "type": "string",
+                "description": "Intro/greeting text for the document",
+                "required": true
+              },
+              {
+                "id": "remark",
+                "displayName": "remark",
+                "type": "string",
+                "description": "Closing text",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "i4",
+        "name": "create_invoice_from_quotation",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          1800
+        ],
+        "parameters": {
+          "name": "create_invoice_from_quotation",
+          "description": "Create an invoice from an existing quotation. Copies all line items. Example: quotationId=abc-123, finalize=true",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_invoice_from_quotation",
+              "quotationId": "={{ $fromAI('quotationId', 'Quotation UUID to convert', 'string') }}",
+              "finalize": "={{ $fromAI('finalize', 'true to finalize, false for draft', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "quotationId",
+                "displayName": "quotationId",
+                "type": "string",
+                "description": "Quotation UUID to convert",
+                "required": true
+              },
+              {
+                "id": "finalize",
+                "displayName": "finalize",
+                "type": "string",
+                "description": "true to finalize, false for draft",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "d1",
+        "name": "download_invoice",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2100
+        ],
+        "parameters": {
+          "name": "download_invoice",
+          "description": "Download an invoice as PDF and send it to the user. Use get_invoice or list_invoices first to find the ID. The PDF will be sent as a file in Telegram. Parameter: id (Invoice UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "download_invoice",
+              "id": "={{ $fromAI('id', 'Invoice UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Invoice UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "d2",
+        "name": "download_quotation",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          2100
+        ],
+        "parameters": {
+          "name": "download_quotation",
+          "description": "Download a quotation as PDF and send it to the user. Use get_quotation or list_quotations first to find the ID. The PDF will be sent as a file in Telegram. Parameter: id (Quotation UUID, REQUIRED).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "download_quotation",
+              "id": "={{ $fromAI('id', 'Quotation UUID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "action",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Quotation UUID",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_company": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_person": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact_address": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact_email": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact_phone": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact_name": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_articles": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_article": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "upload_voucher": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_quotations": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_invoices": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_invoice": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_invoice": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_invoice_from_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "download_invoice": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "download_quotation": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

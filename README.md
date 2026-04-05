@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (36)
+## Available Skills (37)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -14,7 +14,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Communication](#communication) | 3 | Email, Gmail, OpenClaw |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
-| [Finance](#finance) | 3 | Crypto, currencies, banking |
+| [Finance](#finance) | 4 | Crypto, currencies, banking, Lexware |
 | [Knowledge](#knowledge) | 3 | Food facts, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Marketing](#marketing) | 1 | Google Ads |
@@ -78,6 +78,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Crypto Prices](https://www.coingecko.com/) | Get cryptocurrency prices, market cap, and 24h changes | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Exchange Rates](https://www.frankfurter.app/) | Convert currencies using live exchange rates | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [KontoFlux](https://kontoflux.io/) | Access German bank accounts and transactions via KontoFlux Open-Banking API (5000+ banks, read-only) | KontoFlux API Key, Workspace ID | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Lexware Office](https://www.lexware.de/office/) | Full Lexware Office integration: contacts, articles, quotations, invoices, voucher upload, PDF download | Lexware API Token | [@Ranji1908](https://github.com/Ranji1908) |
 
 ### Knowledge
 
