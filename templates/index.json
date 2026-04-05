@@ -581,14 +581,14 @@
       "name": "Lexware Office",
       "type": "native",
       "category": "finance",
-      "description": "Lexware Office integration: manage articles, quotations, invoices, contacts, and vouchers via the Lexware API",
+      "description": "Full Lexware Office integration: contacts, articles, quotations, invoices, voucher upload, PDF download",
       "credentials_required": [
         {
           "key": "lexware_api_token",
           "label": "Lexware API Token"
         }
       ],
-      "version": "1.1.0"
+      "version": "2.0.0"
     }
   ]
 }
