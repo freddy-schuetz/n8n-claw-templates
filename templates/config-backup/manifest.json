@@ -1,0 +1,28 @@
+{
+  "id": "config-backup",
+  "name": "Config Backup & Restore",
+  "version": "1.0.0",
+  "updated": "2026-04-05",
+  "type": "native",
+  "category": "utilities",
+  "description": "Back up and restore n8n-claw config as downloadable JSON files",
+  "credentials_required": [],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "create_backup",
+      "description": "Create a JSON backup of n8n-claw configuration and return a download link"
+    },
+    {
+      "name": "show_backup",
+      "description": "View contents of a backup file without restoring"
+    },
+    {
+      "name": "restore_backup",
+      "description": "Restore configuration from a backup file URL"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
