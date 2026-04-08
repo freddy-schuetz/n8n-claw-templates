@@ -6,8 +6,6 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ## Available Skills (43)
 
-> **Tested column** — A ✓ in the *Tested* column means the skill has been verified end-to-end on at least one live n8n-claw instance (install + tool call working as expected). An empty cell means the skill is published but has not been hands-on verified yet.
-
 | Category | Skills | Focus |
 |----------|:------:|-------|
 | [Analytics](#analytics) | 1 | Google Analytics |
@@ -30,6 +28,8 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
 | [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
 | [Weather](#weather) | 1 | Open-Meteo forecasts |
+
+> **Tested column** — A ✓ in the *Tested* column means the skill has been verified end-to-end on at least one live n8n-claw instance (install + tool call working as expected). An empty cell means the skill is published but has not been hands-on verified yet.
 
 ### Analytics
 
