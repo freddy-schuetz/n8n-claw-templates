@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (38)
+## Available Skills (39)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -25,7 +25,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Tasks](#tasks) | 2 | Todoist, Vikunja |
 | [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
-| [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
+| [Utilities](#utilities) | 4 | Backup, PDF tools, QR codes, AI media generation |
 | [Weather](#weather) | 1 | Open-Meteo forecasts |
 
 ### Analytics
@@ -156,6 +156,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | Config Backup & Restore | Back up and restore n8n-claw config as downloadable JSON files | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+| [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image) and generate videos with Veo 3.1 | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [PDF Tools](https://pdf-mcp.io/) | Generate PDFs from HTML, extract text, merge PDFs | pdf-mcp.io API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [QR Code](https://goqr.me/) | Generate QR codes from text or URLs | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 

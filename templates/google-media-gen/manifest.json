@@ -1,0 +1,26 @@
+{
+  "id": "google-media-gen",
+  "name": "Google Media Generation",
+  "version": "1.0.0",
+  "updated": "2026-04-08",
+  "type": "native",
+  "category": "utilities",
+  "description": "Generate and edit images with Google Nano Banana Pro (Gemini 3 Pro Image) and generate videos with Google Veo 3.1 via the Gemini API",
+  "credentials_required": [
+    {
+      "key": "gemini_api_key",
+      "label": "Google Gemini API Key",
+      "hint": "Free key at https://aistudio.google.com/app/apikey — works for both Nano Banana Pro and Veo 3.1"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "generate_image", "description": "Generate an image from a text prompt with Google Nano Banana Pro" },
+    { "name": "edit_image", "description": "Edit a user-supplied image with a text prompt (Nano Banana Pro)" },
+    { "name": "generate_video", "description": "Generate a video from a text prompt with Google Veo 3.1 (polls up to 3 min, returns ready video or operation id)" },
+    { "name": "check_video_status", "description": "Check status of a previously started Veo video generation by operation id, returns finished video when ready" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
