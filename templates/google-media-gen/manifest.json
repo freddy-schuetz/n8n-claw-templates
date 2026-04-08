@@ -5,7 +5,7 @@
   "updated": "2026-04-08",
   "type": "native",
   "category": "creativity",
-  "description": "Generate and edit images with Google Nano Banana Pro (Gemini 3 Pro Image) and generate videos with Google Veo 3.1 via the Gemini API",
+  "description": "Generate and edit images with Google Nano Banana Pro (Gemini 3 Pro Image), generate videos from text with Google Veo 3.1, and animate user-supplied images into videos (image-to-video) — all via the Gemini API",
   "credentials_required": [
     {
       "key": "gemini_api_key",
