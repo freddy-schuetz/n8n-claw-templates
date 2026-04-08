@@ -491,7 +491,7 @@
       "id": "google-media-gen",
       "name": "Google Media Generation",
       "type": "native",
-      "category": "utilities",
+      "category": "creativity",
       "description": "Generate images (Nano Banana Pro) and videos (Veo 3.1) via Gemini API",
       "credentials_required": [
         { "key": "gemini_api_key", "label": "Google Gemini API Key" }

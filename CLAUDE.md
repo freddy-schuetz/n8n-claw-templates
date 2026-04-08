@@ -35,7 +35,7 @@ The Library Manager imports `sub` first, gets its ID, patches `REPLACE_SUB_WORKF
 
 Use one of these existing categories. If none fit, open an issue to propose a new one.
 
-`analytics` · `communication` · `entertainment` · `finance` · `knowledge` · `language` · `marketing` · `meetings` · `network` · `news` · `productivity` · `reference` · `transport` · `utilities` · `weather`
+`analytics` · `communication` · `creativity` · `entertainment` · `finance` · `knowledge` · `language` · `marketing` · `meetings` · `network` · `news` · `productivity` · `reference` · `transport` · `utilities` · `weather`
 
 ---
 

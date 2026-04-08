@@ -12,6 +12,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Calendar](#calendar) | 2 | CalDAV, Google Calendar |
 | [Cloud Storage](#cloud-storage) | 3 | Google Drive, Nextcloud, Seafile |
 | [Communication](#communication) | 3 | Email, Gmail, OpenClaw |
+| [Creativity](#creativity) | 1 | AI image & video generation |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
 | [Finance](#finance) | 4 | Crypto, currencies, banking, Lexware |
@@ -25,7 +26,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Tasks](#tasks) | 2 | Todoist, Vikunja |
 | [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
-| [Utilities](#utilities) | 4 | Backup, PDF tools, QR codes, AI media generation |
+| [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
 | [Weather](#weather) | 1 | Open-Meteo forecasts |
 
 ### Analytics
@@ -56,6 +57,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Email (IMAP/SMTP) | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [Gmail](https://mail.google.com/) | Search, read, send emails and manage drafts via Gmail API | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [OpenClaw](https://openclaw.ai/) | Connect to an OpenClaw autonomous AI agent via Gateway API | Gateway URL, Gateway Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |
+
+### Creativity
+
+| Skill | Description | Credentials | Author |
+|-------|-------------|-------------|--------|
+| [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image) and generate videos with Veo 3.1 | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
 ### Developer Tools
 
@@ -156,7 +163,6 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author |
 |-------|-------------|-------------|--------|
 | Config Backup & Restore | Back up and restore n8n-claw config as downloadable JSON files | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
-| [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image) and generate videos with Veo 3.1 | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [PDF Tools](https://pdf-mcp.io/) | Generate PDFs from HTML, extract text, merge PDFs | pdf-mcp.io API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 | [QR Code](https://goqr.me/) | Generate QR codes from text or URLs | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |
 
