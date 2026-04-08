@@ -485,7 +485,7 @@
       "category": "utilities",
       "description": "Back up and restore n8n-claw config as downloadable JSON files",
       "credentials_required": [],
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "id": "google-media-gen",
