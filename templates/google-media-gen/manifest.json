@@ -1,7 +1,7 @@
 {
   "id": "google-media-gen",
   "name": "Google Media Generation",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "updated": "2026-04-08",
   "type": "native",
   "category": "creativity",
@@ -17,7 +17,8 @@
   "tools": [
     { "name": "generate_image", "description": "Generate an image from a text prompt with Google Nano Banana Pro" },
     { "name": "edit_image", "description": "Edit a user-supplied image with a text prompt (Nano Banana Pro)" },
-    { "name": "generate_video", "description": "Start video generation with Google Veo 3.1 — returns an operation_id immediately (does not wait)" },
+    { "name": "generate_video", "description": "Start text-to-video generation with Google Veo 3.1 — returns an operation_id immediately (does not wait)" },
+    { "name": "animate_image", "description": "Start image-to-video generation with Google Veo 3.1: animate a user-supplied image into a video. Returns an operation_id immediately" },
     { "name": "wait_for_video", "description": "Wait up to ~25s for a Veo video to finish — call repeatedly with the same operation_id until it returns the MP4" }
   ],
   "author": "freddy-schuetz",
