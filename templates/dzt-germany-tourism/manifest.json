@@ -1,0 +1,32 @@
+{
+  "id": "dzt-germany-tourism",
+  "name": "DZT Germany Tourism",
+  "version": "1.0.0",
+  "updated": "2026-04-10",
+  "type": "native",
+  "category": "tourism",
+  "description": "Search German tourism data: POIs, events, trails, and entity details (Deutsche Zentrale fuer Tourismus via One.Intelligence, free)",
+  "credentials_required": [],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "get_pois_by_criteria",
+      "description": "Search permanent Points of Interest in Germany (museums, castles, restaurants, landmarks)"
+    },
+    {
+      "name": "get_events_by_criteria",
+      "description": "Search upcoming tourist events in Germany (festivals, tours, wine tastings, markets)"
+    },
+    {
+      "name": "get_trails_by_criteria",
+      "description": "Search hiking trails, cycling routes and walking tours in Germany"
+    },
+    {
+      "name": "get_entity_details",
+      "description": "Get full details for a tourism entity by URI (from previous search results)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

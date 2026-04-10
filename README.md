@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (43)
+## Available Skills (44)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -25,6 +25,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Notes & CRM](#notes--crm) | 2 | NocoDB, Notion |
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Tasks](#tasks) | 2 | Todoist, Vikunja |
+| [Tourism](#tourism) | 1 | DZT Germany Tourism |
 | [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
 | [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
 | [Weather](#weather) | 1 | Open-Meteo forecasts |
@@ -151,6 +152,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|:------:|
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+
+### Tourism
+
+| Skill | Description | Credentials | Author | Tested |
+|-------|-------------|-------------|--------|:------:|
+| [DZT Germany Tourism](https://www.germany.travel/) | Search German tourism data: POIs, events, trails, and entity details (via One.Intelligence) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
 
 ### Transport
 

@@ -351,6 +351,15 @@
       "version": "1.0.0"
     },
     {
+      "id": "dzt-germany-tourism",
+      "name": "DZT Germany Tourism",
+      "type": "native",
+      "category": "tourism",
+      "description": "Search German tourism data: POIs, events, trails, and entity details (Deutsche Zentrale fuer Tourismus via One.Intelligence, free)",
+      "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
       "id": "caldav-calendar",
       "name": "CalDAV Calendar",
       "type": "native",

@@ -1,0 +1,206 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: DZT Germany Tourism",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "DZT Tourism Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action;\n\nconst MCP_URL = 'https://n8n.oi.destination.one/mcp/eb8571ff-96cf-4707-ad99-3c0fbe9b938f';\nconst MCP_HEADERS = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };\n\n// Build args from input, skip empty values\nfunction buildArgs(keys) {\n  const args = {};\n  for (const k of keys) {\n    if (input[k] !== undefined && input[k] !== '' && input[k] !== null) {\n      args[k] = input[k];\n    }\n  }\n  return args;\n}\n\n// Determine tool name and arguments\nlet toolName, toolArgs;\nif (action === 'get_pois_by_criteria') {\n  toolName = 'get_pois_by_criteria';\n  toolArgs = buildArgs(['name', 'keywords', 'type', 'locality', 'region', 'postal_code', 'near_point']);\n} else if (action === 'get_events_by_criteria') {\n  toolName = 'get_events_by_criteria';\n  toolArgs = buildArgs(['keywords', 'name', 'locality', 'dateRangeStart', 'dateRangeEnd', 'region']);\n  if (!toolArgs.keywords) return [{ json: { error: 'Parameter \"keywords\" is required for event search (e.g. \"Musik,Konzert\", \"Wein,Weinprobe\").' } }];\n  if (!toolArgs.dateRangeStart) return [{ json: { error: 'Parameter \"dateRangeStart\" is required for event search (YYYY-MM-DD, today or future).' } }];\n} else if (action === 'get_trails_by_criteria') {\n  toolName = 'get_trails_by_criteria';\n  toolArgs = buildArgs(['name', 'keywords', 'difficulty', 'max_length_km', 'region', 'is_circular', 'near_point']);\n  if (toolArgs.max_length_km) toolArgs.max_length_km = Number(toolArgs.max_length_km);\n  if (toolArgs.is_circular !== undefined) toolArgs.is_circular = toolArgs.is_circular === 'true' || toolArgs.is_circular === true;\n} else if (action === 'get_entity_details') {\n  toolName = 'get_entity_details';\n  toolArgs = buildArgs(['uri', 'language']);\n  if (!toolArgs.uri) return [{ json: { error: 'Parameter \"uri\" is required. Use a URI from a previous search result.' } }];\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: get_pois_by_criteria, get_events_by_criteria, get_trails_by_criteria, get_entity_details.' } }];\n}\n\ntry {\n  // Step 1: Initialize MCP session\n  const initResp = await helpers.httpRequest({\n    method: 'POST',\n    url: MCP_URL,\n    headers: MCP_HEADERS,\n    body: JSON.stringify({\n      jsonrpc: '2.0', id: 1, method: 'initialize',\n      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'n8n-claw', version: '1.0' } }\n    }),\n    returnFullResponse: true,\n    json: false,\n    timeout: 15000\n  });\n\n  const sid = initResp.headers['mcp-session-id'];\n  if (!sid) return [{ json: { error: 'DZT MCP server did not return session ID.' } }];\n\n  // Step 2: Send initialized notification\n  try {\n    await helpers.httpRequest({\n      method: 'POST', url: MCP_URL,\n      headers: { ...MCP_HEADERS, 'mcp-session-id': sid },\n      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),\n      json: false, timeout: 10000\n    });\n  } catch (e) { /* non-fatal */ }\n\n  // Step 3: Call the tool\n  const toolResp = await helpers.httpRequest({\n    method: 'POST', url: MCP_URL,\n    headers: { ...MCP_HEADERS, 'mcp-session-id': sid },\n    body: JSON.stringify({\n      jsonrpc: '2.0', id: 2, method: 'tools/call',\n      params: { name: toolName, arguments: toolArgs }\n    }),\n    returnFullResponse: true,\n    json: false,\n    timeout: 30000\n  });\n\n  // Step 4: Parse SSE response\n  const body = typeof toolResp.body === 'string' ? toolResp.body : JSON.stringify(toolResp.body);\n  let rpcResult;\n  if (body.includes('data: ')) {\n    const lines = body.split('\\n');\n    for (const line of lines) {\n      if (line.startsWith('data: ')) {\n        try { rpcResult = JSON.parse(line.substring(6)); } catch (e) {}\n      }\n    }\n  } else {\n    try { rpcResult = typeof toolResp.body === 'object' ? toolResp.body : JSON.parse(body); } catch (e) {}\n  }\n\n  if (!rpcResult || !rpcResult.result) {\n    return [{ json: { error: 'No result from DZT MCP server.', raw: body.substring(0, 500) } }];\n  }\n\n  // Step 5: Unwrap nested JSON-LD content\n  // Structure: result.content[0].text -> JSON string -> [{type, text}] -> text is JSON-LD string\n  const contentArr = rpcResult.result.content || [];\n  if (contentArr.length === 0) return [{ json: { result: 'No results found.' } }];\n\n  let rawText = contentArr[0].text || '';\n  let jsonLd;\n  try {\n    let inner = JSON.parse(rawText);\n    // inner is an array like [{type: 'text', text: '{...json-ld...}'}]\n    if (Array.isArray(inner) && inner.length > 0 && inner[0].text) {\n      jsonLd = JSON.parse(inner[0].text);\n    } else if (typeof inner === 'object') {\n      jsonLd = inner;\n    }\n  } catch (e) {\n    // Try direct parse\n    try { jsonLd = JSON.parse(rawText); } catch (e2) {\n      return [{ json: { result: rawText.substring(0, 5000) } }];\n    }\n  }\n\n  // Step 6: Extract entities from @graph\n  const graph = jsonLd && jsonLd['@graph'] ? jsonLd['@graph'] : null;\n  if (!graph || graph.length === 0) {\n    return [{ json: { result: 'No results found for this query. Try broader search terms or a different region.' } }];\n  }\n\n  // Step 7: Format entities into readable text\n  function cleanHtml(str) {\n    if (!str) return '';\n    return str.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/\\\\n/g, ' ').replace(/\\s+/g, ' ').trim();\n  }\n\n  // Resolve JSON-LD value: handles plain strings, @value objects, and full URI keys\n  function val(obj, ...keys) {\n    for (const k of keys) {\n      const v = obj[k];\n      if (v === undefined || v === null) continue;\n      if (typeof v === 'string') return v;\n      if (typeof v === 'object' && v['@value']) return String(v['@value']);\n      if (typeof v === 'object') return v;\n    }\n    return '';\n  }\n\n  function getType(entity) {\n    const t = entity['@type'];\n    if (!t) return '';\n    const types = Array.isArray(t) ? t : [t];\n    return types.map(x => x.replace('https://schema.org/', '').replace('https://odta.io/voc/', '')).filter(x => x !== 'Place' && x !== 'Thing').join(', ');\n  }\n\n  function fmtEntity(e) {\n    const name = val(e, 'schema:name', 'https://schema.org/name', 'name') || '(unnamed)';\n    const rawDesc = val(e, 'schema:description', 'https://schema.org/description', 'description') || '';\n    const desc = cleanHtml(typeof rawDesc === 'string' ? rawDesc : '');\n    const typeStr = getType(e);\n    const addr = val(e, 'schema:address', 'https://schema.org/address', 'address') || {};\n    const street = typeof addr === 'object' ? val(addr, 'schema:streetAddress', 'https://schema.org/streetAddress', 'streetAddress') : '';\n    const locality = typeof addr === 'object' ? val(addr, 'schema:addressLocality', 'schema:adressLocality', 'https://schema.org/addressLocality', 'addressLocality') : '';\n    const region = typeof addr === 'object' ? val(addr, 'schema:addressRegion', 'https://schema.org/addressRegion', 'addressRegion') : '';\n    const postal = typeof addr === 'object' ? val(addr, 'schema:postalCode', 'https://schema.org/postalCode', 'postalCode') : '';\n    const uri = e['@id'] || '';\n    const startDate = val(e, 'schema:startDate', 'https://schema.org/startDate', 'startDate');\n    const img = val(e, 'schema:image', 'https://schema.org/image');\n    const imgUrl = (typeof img === 'object' && img) ? val(img, 'schema:contentUrl', 'https://schema.org/contentUrl', 'contentUrl') : '';\n    const loc = val(e, 'schema:location', 'https://schema.org/location', 'location');\n    let eventLocality = '', eventRegion = '';\n    if (loc && typeof loc === 'object') {\n      const locAddr = val(loc, 'schema:address', 'https://schema.org/address') || {};\n      if (typeof locAddr === 'object') {\n        eventLocality = val(locAddr, 'schema:addressLocality', 'https://schema.org/addressLocality') || '';\n        eventRegion = val(locAddr, 'schema:addressRegion', 'https://schema.org/addressRegion') || '';\n      }\n    }\n\n    let out = '## ' + name;\n    if (typeStr) out += ' (' + typeStr + ')';\n    out += '\\n';\n    if (desc) out += desc.substring(0, 300) + (desc.length > 300 ? '...' : '') + '\\n';\n    const addrParts = [street, postal, locality || eventLocality, region || eventRegion].filter(Boolean);\n    if (addrParts.length > 0) out += 'Adresse: ' + addrParts.join(', ') + '\\n';\n    if (startDate) out += 'Datum: ' + startDate + '\\n';\n    if (imgUrl) out += 'Bild: ' + imgUrl + '\\n';\n    if (uri) out += 'URI: ' + uri + '\\n';\n    return out;\n  }\n\n  const total = graph.length;\n  const shown = Math.min(total, 10);\n  let result = total + ' Ergebnis' + (total !== 1 ? 'se' : '') + ' gefunden';\n  if (total > shown) result += ' (zeige ' + shown + ')';\n  result += ':\\n\\n';\n\n  for (let i = 0; i < shown; i++) {\n    result += fmtEntity(graph[i]) + '\\n';\n  }\n\n  if (result.length > 5000) {\n    result = result.substring(0, 5000) + '\\n\\n... (truncated, ' + result.length + ' chars total)';\n  }\n\n  return [{ json: { result } }];\n\n} catch (err) {\n  return [{ json: { error: 'DZT MCP call failed: ' + err.message } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "DZT Tourism Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: DZT Germany Tourism",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "dzt-germany-tourism"
+        }
+      },
+      {
+        "id": "tool-pois",
+        "name": "get_pois_by_criteria",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "get_pois_by_criteria",
+          "description": "Search permanent Points of Interest in Germany: restaurants, museums, castles, wineries, landmarks, parks etc. Use for places that exist year-round. Do NOT use for time-bound events. Note: Restaurant data sparse for major cities — use postal_code or near_point instead of locality. Parameters: name (POI name), keywords (comma-separated, e.g. 'art,history'), type (schema.org type e.g. Museum, Restaurant, TouristAttraction, LandmarksOrHistoricalBuildings, FoodEstablishment), locality (city — unreliable for major cities), region (e.g. Schwarzwald, Bayern), postal_code, near_point (format: 'km,lat,lon' e.g. '10km,48.137,11.576')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_pois_by_criteria",
+              "name": "={{ $fromAI('name', 'Specific POI name to search for', 'string') }}",
+              "keywords": "={{ $fromAI('keywords', 'Comma-separated keywords like art, history, modern', 'string') }}",
+              "type": "={{ $fromAI('type', 'Schema.org type: Museum, Restaurant, TouristAttraction, LandmarksOrHistoricalBuildings, FoodEstablishment, Winery, Park', 'string') }}",
+              "locality": "={{ $fromAI('locality', 'City or town name (unreliable for major cities, use postal_code instead)', 'string') }}",
+              "region": "={{ $fromAI('region', 'Tourism region or German federal state', 'string') }}",
+              "postal_code": "={{ $fromAI('postal_code', 'German postal code', 'string') }}",
+              "near_point": "={{ $fromAI('near_point', 'Proximity search: km,lat,lon e.g. 10km,48.137,11.576', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "description": "POI name", "required": false },
+              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Comma-separated keywords", "required": false },
+              { "id": "type", "displayName": "type", "type": "string", "description": "Schema.org type", "required": false },
+              { "id": "locality", "displayName": "locality", "type": "string", "description": "City name", "required": false },
+              { "id": "region", "displayName": "region", "type": "string", "description": "Region or state", "required": false },
+              { "id": "postal_code", "displayName": "postal_code", "type": "string", "description": "Postal code", "required": false },
+              { "id": "near_point", "displayName": "near_point", "type": "string", "description": "Proximity search", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-events",
+        "name": "get_events_by_criteria",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "get_events_by_criteria",
+          "description": "Search upcoming tourist events and cultural activities in Germany (festivals, food markets, guided tours, wine tastings). Use for time-bound events. Do NOT use for permanent POIs. Note: locality filter unreliable for major cities — omit and use region instead. Parameters: keywords (REQUIRED, comma-separated German or English, e.g. 'Kulinarik,Food', 'Wein,Weinprobe', 'Musik,Konzert'), dateRangeStart (REQUIRED, YYYY-MM-DD, today or future), name (event name), locality (city), dateRangeEnd (YYYY-MM-DD), region (e.g. Bayern, Pfalz)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_events_by_criteria",
+              "keywords": "={{ $fromAI('keywords', 'Comma-separated event keywords (REQUIRED), e.g. Kulinarik,Food or Musik,Konzert', 'string') }}",
+              "dateRangeStart": "={{ $fromAI('dateRangeStart', 'Start date YYYY-MM-DD (REQUIRED, today or future)', 'string') }}",
+              "name": "={{ $fromAI('name', 'Event name to search for', 'string') }}",
+              "locality": "={{ $fromAI('locality', 'City (unreliable for major cities)', 'string') }}",
+              "dateRangeEnd": "={{ $fromAI('dateRangeEnd', 'End date YYYY-MM-DD', 'string') }}",
+              "region": "={{ $fromAI('region', 'Region or federal state', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Comma-separated event keywords", "required": true },
+              { "id": "dateRangeStart", "displayName": "dateRangeStart", "type": "string", "description": "Start date YYYY-MM-DD", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "description": "Event name", "required": false },
+              { "id": "locality", "displayName": "locality", "type": "string", "description": "City name", "required": false },
+              { "id": "dateRangeEnd", "displayName": "dateRangeEnd", "type": "string", "description": "End date YYYY-MM-DD", "required": false },
+              { "id": "region", "displayName": "region", "type": "string", "description": "Region or state", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-trails",
+        "name": "get_trails_by_criteria",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "get_trails_by_criteria",
+          "description": "Search hiking trails, cycling routes and walking tours in Germany. Returns routes with distance, difficulty and waypoints. By default only circular routes are returned. Set is_circular to false for all trail types. Parameters: name (trail name), keywords (e.g. 'downhill,lake view'), difficulty (exactly: Leicht, Mittel, or Schwer), max_length_km (number), region (e.g. Schwarzwald, Eifel), is_circular (true/false, default true), near_point (format: 'km,lat,lon')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_trails_by_criteria",
+              "name": "={{ $fromAI('name', 'Trail name to search for', 'string') }}",
+              "keywords": "={{ $fromAI('keywords', 'Keywords like hiking, lake, panorama', 'string') }}",
+              "difficulty": "={{ $fromAI('difficulty', 'Trail difficulty: Leicht, Mittel, or Schwer', 'string') }}",
+              "max_length_km": "={{ $fromAI('max_length_km', 'Maximum trail length in km', 'string') }}",
+              "region": "={{ $fromAI('region', 'Region like Schwarzwald, Eifel, Harz', 'string') }}",
+              "is_circular": "={{ $fromAI('is_circular', 'Circular trail: true or false (default true)', 'string') }}",
+              "near_point": "={{ $fromAI('near_point', 'Proximity: km,lat,lon', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "description": "Trail name", "required": false },
+              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Keywords", "required": false },
+              { "id": "difficulty", "displayName": "difficulty", "type": "string", "description": "Leicht, Mittel, or Schwer", "required": false },
+              { "id": "max_length_km", "displayName": "max_length_km", "type": "string", "description": "Max length in km", "required": false },
+              { "id": "region", "displayName": "region", "type": "string", "description": "Region", "required": false },
+              { "id": "is_circular", "displayName": "is_circular", "type": "string", "description": "Circular trail: true/false", "required": false },
+              { "id": "near_point", "displayName": "near_point", "type": "string", "description": "Proximity search", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-entity",
+        "name": "get_entity_details",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [900, 300],
+        "parameters": {
+          "name": "get_entity_details",
+          "description": "Get full details for a tourism entity by URI. Use a URI from a previous get_pois_by_criteria, get_events_by_criteria, or get_trails_by_criteria result. Parameters: uri (REQUIRED, the entity URI), language (two-letter code, default 'de')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_entity_details",
+              "uri": "={{ $fromAI('uri', 'Entity URI from a previous search result (REQUIRED)', 'string') }}",
+              "language": "={{ $fromAI('language', 'Two-letter language code, default de', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "uri", "displayName": "uri", "type": "string", "description": "Entity URI", "required": true },
+              { "id": "language", "displayName": "language", "type": "string", "description": "Language code", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "get_pois_by_criteria": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_events_by_criteria": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_trails_by_criteria": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_entity_details": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}
