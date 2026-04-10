@@ -157,7 +157,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [DZT Germany Tourism](https://www.germany.travel/) | Search German tourism data: POIs, events, trails, and entity details (via One.Intelligence) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [DZT Germany Tourism](https://www.germany.travel/) | Search German tourism data: POIs, events, trails, and entity details (via One.Intelligence) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Transport
 
