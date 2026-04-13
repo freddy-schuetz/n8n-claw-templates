@@ -506,6 +506,33 @@
         { "key": "gemini_api_key", "label": "Google Gemini API Key" }
       ],
       "version": "1.2.0"
+    },
+    {
+      "id": "oebb",
+      "name": "ÖBB",
+      "type": "native",
+      "category": "transport",
+      "description": "Search train connections, departures, and stations across Austria (ÖBB, via v6.oebb.transport.rest, free)",
+      "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
+      "id": "sbb",
+      "name": "SBB",
+      "type": "native",
+      "category": "transport",
+      "description": "Search train connections, departures, and stations across Switzerland (SBB/CFF/FFS, via transport.opendata.ch, free)",
+      "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
+      "id": "oepnv",
+      "name": "ÖPNV Deutschland",
+      "type": "native",
+      "category": "transport",
+      "description": "Nationwide German public transit (S-Bahn, U-Bahn, Tram, Bus, regional): stations, departures, arrivals, journey planning via EFA/DELFI (openservice-test.vrr.de test endpoint, free, no key)",
+      "credentials_required": [],
+      "version": "1.0.0"
     }
   ]
 }

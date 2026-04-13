@@ -1,0 +1,32 @@
+{
+  "id": "oepnv",
+  "name": "ÖPNV Deutschland",
+  "version": "1.0.0",
+  "updated": "2026-04-13",
+  "type": "native",
+  "category": "transport",
+  "description": "Nationwide German public transit (S-Bahn, U-Bahn, Tram, Bus, regional): stations, departures, arrivals, journey planning via EFA/DELFI (openservice-test.vrr.de test endpoint, free, no key)",
+  "credentials_required": [],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "search_station",
+      "description": "Search for a public transit stop by name"
+    },
+    {
+      "name": "get_departures",
+      "description": "Get upcoming departures from a public transit stop"
+    },
+    {
+      "name": "get_arrivals",
+      "description": "Get upcoming arrivals at a public transit stop"
+    },
+    {
+      "name": "search_journey",
+      "description": "Search for journeys between two stops"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (44)
+## Available Skills (47)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -26,7 +26,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Tasks](#tasks) | 2 | Todoist, Vikunja |
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
-| [Transport](#transport) | 3 | Deutsche Bahn, routing, Wiener Linien |
+| [Transport](#transport) | 6 | Deutsche Bahn, ÖBB, SBB, ÖPNV Deutschland, routing, Wiener Linien |
 | [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
 | [Weather](#weather) | 1 | Open-Meteo forecasts |
 
@@ -164,7 +164,10 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Deutsche Bahn](https://v6.db.transport.rest/) | Search train connections, departures, and stations across Germany | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [ÖBB](https://v6.oebb.transport.rest/api/) | Search train connections, departures, and stations across Austria (ÖBB) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [ÖPNV Deutschland](https://www.opendata-oepnv.de/) | Nationwide German public transit (S-Bahn, U-Bahn, Tram, Bus, regional) via EFA/DELFI | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Route Planner](https://openrouteservice.org/) | Plan hiking, cycling, and walking routes with GPX output, POI search, elevation profiles, isochrones (ORS + BRouter) | ORS API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [SBB](https://transport.opendata.ch/) | Search train connections, departures, and stations across Switzerland (SBB/CFF/FFS) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Wiener Linien](https://www.wienerlinien.at/) | Plan routes with Vienna public transport, get your station ID from [this CSV File](https://data.wien.gv.at/csv/wienerlinien-ogd-haltestellen.csv) (yes, a CSV file, don't ask), more details on the [Routingservice Wien](https://www.data.gv.at/datasets/9c203fec-dc0d-412c-a7a3-7fd77d0346f1?locale=de) page | - | [@lcx](https://github.com/lcx) | ✓ |
 
 ### Utilities

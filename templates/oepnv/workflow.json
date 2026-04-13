@@ -1,0 +1,180 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: ÖPNV",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "ÖPNV Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'search_station';\nconst BASE = 'https://openservice-test.vrr.de/openservice';\nconst EFA_VERSION = '10.4.18.18';\nconst HEADERS = { 'Accept': 'application/json', 'User-Agent': 'n8n-claw-oepnv/1.0' };\n\nfunction buildQs(params) {\n  const parts = [];\n  for (const k of Object.keys(params)) {\n    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));\n  }\n  return parts.join('&');\n}\n\nasync function efaGet(path, params) {\n  const qs = buildQs(Object.assign({ outputFormat: 'rapidJSON', version: EFA_VERSION }, params));\n  return await helpers.httpRequest({\n    method: 'GET',\n    url: BASE + path + '?' + qs,\n    headers: HEADERS,\n    timeout: 20000\n  });\n}\n\nasync function resolveStation(nameOrId) {\n  if (!nameOrId) return null;\n  if (/^de:[^:]+:[^:]+$/.test(nameOrId)) return nameOrId;\n  const res = await efaGet('/XML_STOPFINDER_REQUEST', {\n    type_sf: 'any',\n    name_sf: nameOrId,\n    stateless: '1'\n  });\n  const locs = (res && res.locations) || [];\n  const stops = locs.filter(l => l.type === 'stop');\n  if (stops.length === 0) return null;\n  const best = stops.find(s => s.isBest) || stops[0];\n  return best.id;\n}\n\nfunction fmtTime(iso) {\n  if (!iso) return '?';\n  // EFA rapidJSON timestamps: \"2026-04-13T14:23:00Z\"\n  const d = new Date(iso);\n  if (isNaN(d.getTime())) return '?';\n  const h = String(d.getHours()).padStart(2, '0');\n  const m = String(d.getMinutes()).padStart(2, '0');\n  return h + ':' + m;\n}\n\nfunction fmtEfaDelay(planned, estimated) {\n  if (!planned || !estimated) return '';\n  const diffMs = new Date(estimated) - new Date(planned);\n  if (isNaN(diffMs)) return '';\n  const min = Math.round(diffMs / 60000);\n  if (min <= 0) return '';\n  return ' +' + min + 'min';\n}\n\nfunction fmtEfaDuration(seconds) {\n  if (!seconds && seconds !== 0) return '?';\n  const m = Math.round(seconds / 60);\n  const h = Math.floor(m / 60);\n  const mm = m % 60;\n  return h > 0 ? h + 'h' + (mm > 0 ? mm + 'min' : '') : mm + 'min';\n}\n\nfunction productTypes(productClasses) {\n  if (!Array.isArray(productClasses)) return [];\n  const MAP = {\n    0: 'Zug', 1: 'S', 2: 'U', 3: 'Tram',\n    4: 'Bus', 5: 'RegBus', 6: 'ExpBus',\n    7: 'Seilbahn', 8: 'Schiff', 9: 'AST', 10: 'Sonst'\n  };\n  const out = [];\n  for (const c of productClasses) {\n    if (MAP[c]) out.push(MAP[c]);\n  }\n  return out;\n}\n\n// === search_station ===\nif (action === 'search_station') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required.' } }];\n\n  try {\n    const res = await efaGet('/XML_STOPFINDER_REQUEST', {\n      type_sf: 'any',\n      name_sf: query,\n      stateless: '1'\n    });\n    const locs = (res && res.locations) || [];\n    const stops = locs.filter(l => l.type === 'stop');\n    if (stops.length === 0) {\n      return [{ json: { result: 'No stops found for: ' + query } }];\n    }\n    let result = 'Stops for \"' + query + '\":\\n\\n';\n    for (const s of stops.slice(0, 5)) {\n      result += '- ' + s.name + ' (ID: ' + s.id + ')';\n      const types = productTypes(s.productClasses);\n      if (types.length > 0) result += ' [' + types.join(', ') + ']';\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Stop search failed: ' + err.message } }];\n  }\n\n// === get_departures ===\n} else if (action === 'get_departures') {\n  const station = input.station;\n  if (!station) return [{ json: { error: 'Parameter \"station\" is required (name or ID).' } }];\n\n  try {\n    const stopId = await resolveStation(station);\n    if (!stopId) return [{ json: { error: 'Stop not found: ' + station } }];\n\n    const limit = parseInt(input.results) || 10;\n    const res = await efaGet('/XML_DM_REQUEST', {\n      type_dm: 'stop',\n      name_dm: stopId,\n      useRealtime: '1',\n      mode: 'direct',\n      limit: String(limit)\n    });\n    const events = (res && res.stopEvents) || [];\n    if (events.length === 0) {\n      return [{ json: { result: 'No departures found.' } }];\n    }\n\n    const stName = events[0].location?.parent?.name || events[0].location?.name || station;\n    let result = 'Departures from ' + stName + ':\\n\\n';\n    for (const e of events) {\n      const planned = e.departureTimePlanned;\n      const estimated = e.departureTimeEstimated;\n      const time = fmtTime(estimated || planned);\n      const delay = fmtEfaDelay(planned, estimated);\n      const t = e.transportation || {};\n      const line = t.disassembledName || t.name || '?';\n      const dir = t.destination?.name || '?';\n      const pl = e.location?.properties?.platformName || e.location?.properties?.platform || '?';\n      result += time + delay + ' | ' + line + ' → ' + dir + ' | Gl.' + pl + '\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Departures failed: ' + err.message } }];\n  }\n\n// === get_arrivals ===\n} else if (action === 'get_arrivals') {\n  const station = input.station;\n  if (!station) return [{ json: { error: 'Parameter \"station\" is required (name or ID).' } }];\n\n  try {\n    const stopId = await resolveStation(station);\n    if (!stopId) return [{ json: { error: 'Stop not found: ' + station } }];\n\n    const limit = parseInt(input.results) || 10;\n    const res = await efaGet('/XML_DM_REQUEST', {\n      type_dm: 'stop',\n      name_dm: stopId,\n      useRealtime: '1',\n      mode: 'direct',\n      itdDateTimeDepArr: 'arr',\n      limit: String(limit)\n    });\n    const events = (res && res.stopEvents) || [];\n    if (events.length === 0) {\n      return [{ json: { result: 'No arrivals found.' } }];\n    }\n\n    const stName = events[0].location?.parent?.name || events[0].location?.name || station;\n    let result = 'Arrivals at ' + stName + ':\\n\\n';\n    for (const e of events) {\n      const planned = e.arrivalTimePlanned || e.departureTimePlanned;\n      const estimated = e.arrivalTimeEstimated || e.departureTimeEstimated;\n      const time = fmtTime(estimated || planned);\n      const delay = fmtEfaDelay(planned, estimated);\n      const t = e.transportation || {};\n      const line = t.disassembledName || t.name || '?';\n      const from = t.origin?.name || '?';\n      const pl = e.location?.properties?.platformName || e.location?.properties?.platform || '?';\n      result += time + delay + ' | ' + line + ' from ' + from + ' | Gl.' + pl + '\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Arrivals failed: ' + err.message } }];\n  }\n\n// === search_journey ===\n} else if (action === 'search_journey') {\n  const from = input.from;\n  const to = input.to;\n  if (!from || !to) return [{ json: { error: 'Parameters \"from\" and \"to\" are required (stop name or ID).' } }];\n\n  try {\n    const fromId = await resolveStation(from);\n    const toId = await resolveStation(to);\n    if (!fromId) return [{ json: { error: 'Origin stop not found: ' + from } }];\n    if (!toId) return [{ json: { error: 'Destination stop not found: ' + to } }];\n\n    const results = parseInt(input.results) || 3;\n    const params = {\n      type_origin: 'stop',\n      name_origin: fromId,\n      type_destination: 'stop',\n      name_destination: toId,\n      calcNumberOfTrips: String(results),\n      useRealtime: '1'\n    };\n    if (input.departure) {\n      const d = new Date(input.departure);\n      if (!isNaN(d.getTime())) {\n        const yyyy = d.getFullYear();\n        const mm = String(d.getMonth() + 1).padStart(2, '0');\n        const dd = String(d.getDate()).padStart(2, '0');\n        const hh = String(d.getHours()).padStart(2, '0');\n        const mi = String(d.getMinutes()).padStart(2, '0');\n        params.itdDate = yyyy + mm + dd;\n        params.itdTime = hh + mi;\n        params.itdTripDateTimeDepArr = 'dep';\n      }\n    }\n\n    const res = await efaGet('/XML_TRIP_REQUEST2', params);\n    const journeys = (res && res.journeys) || [];\n    if (journeys.length === 0) {\n      return [{ json: { result: 'No connections found.' } }];\n    }\n\n    let result = 'Connections ' + from + ' → ' + to + ':\\n\\n';\n    for (let i = 0; i < journeys.length; i++) {\n      const j = journeys[i];\n      const legs = j.legs || [];\n      if (legs.length === 0) continue;\n      const firstLeg = legs[0];\n      const lastLeg = legs[legs.length - 1];\n\n      const depPlanned = firstLeg.origin?.departureTimePlanned;\n      const depEst = firstLeg.origin?.departureTimeEstimated;\n      const arrPlanned = lastLeg.destination?.arrivalTimePlanned;\n      const arrEst = lastLeg.destination?.arrivalTimeEstimated;\n\n      const dep = fmtTime(depEst || depPlanned);\n      const arr = fmtTime(arrEst || arrPlanned);\n      const depDelay = fmtEfaDelay(depPlanned, depEst);\n      const totalSeconds = legs.reduce((s, l) => s + (l.duration || 0), 0);\n      const dur = fmtEfaDuration(totalSeconds);\n      const transfers = (typeof j.interchanges === 'number') ? j.interchanges : Math.max(0, legs.filter(l => l.transportation && !l.footPathInfo).length - 1);\n\n      result += (i + 1) + ') ' + dep + depDelay + ' → ' + arr + ' | ' + dur;\n      if (transfers > 0) result += ' | ' + transfers + 'x umsteigen';\n      result += '\\n';\n\n      for (const leg of legs) {\n        const isWalk = !!leg.footPathInfo || !leg.transportation;\n        if (isWalk) {\n          result += '   🚶 Walk';\n          if (leg.duration) result += ' (' + Math.round(leg.duration / 60) + 'min)';\n          result += '\\n';\n          continue;\n        }\n        const lDepP = leg.origin?.departureTimePlanned;\n        const lDepE = leg.origin?.departureTimeEstimated;\n        const lArrP = leg.destination?.arrivalTimePlanned;\n        const lArrE = leg.destination?.arrivalTimeEstimated;\n        const lDep = fmtTime(lDepE || lDepP);\n        const lArr = fmtTime(lArrE || lArrP);\n        const lDelay = fmtEfaDelay(lDepP, lDepE);\n        const t = leg.transportation || {};\n        const line = t.disassembledName || t.name || '?';\n        const orig = leg.origin?.name || '?';\n        const dest = leg.destination?.name || '?';\n        const plDep = leg.origin?.properties?.platformName || leg.origin?.properties?.platform || '?';\n        const plArr = leg.destination?.properties?.platformName || leg.destination?.properties?.platform || '?';\n        result += '   ' + lDep + lDelay + ' ' + orig + ' Gl.' + plDep + ' → ' + lArr + ' ' + dest + ' Gl.' + plArr + ' | ' + line + '\\n';\n      }\n      result += '\\n';\n    }\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Journey search failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: ' + action + '. Use search_station, get_departures, get_arrivals, or search_journey.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "ÖPNV Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: ÖPNV",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "oepnv"
+        }
+      },
+      {
+        "id": "tool-search-station",
+        "name": "search_station",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "search_station",
+          "description": "Search for a German public transit stop by name (nationwide ÖPNV: S-Bahn, U-Bahn, Tram, Bus, regional). Returns stop names and IDs. Parameter: query (stop name to search for, e.g. 'München Hauptbahnhof')",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_station",
+              "query": "={{ $fromAI('query', 'Stop name to search for', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "description": "Stop name to search for", "required": true }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-departures",
+        "name": "get_departures",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "get_departures",
+          "description": "Get upcoming departures from a German public transit stop (nationwide ÖPNV). Accepts stop name (auto-resolved) or EFA ID. Parameters: station (stop name or ID, e.g. 'Essen Hbf'), results (optional, number of departures, default 10)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_departures",
+              "station": "={{ $fromAI('station', 'Stop name or ID', 'string') }}",
+              "results": "={{ $fromAI('results', 'Number of departures (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "station", "displayName": "station", "type": "string", "description": "Stop name or ID", "required": true },
+              { "id": "results", "displayName": "results", "type": "string", "description": "Number of departures", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-arrivals",
+        "name": "get_arrivals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "get_arrivals",
+          "description": "Get upcoming arrivals at a German public transit stop (nationwide ÖPNV). Accepts stop name (auto-resolved) or EFA ID. Parameters: station (stop name or ID, e.g. 'Hamburg Hbf'), results (optional, number of arrivals, default 10)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_arrivals",
+              "station": "={{ $fromAI('station', 'Stop name or ID', 'string') }}",
+              "results": "={{ $fromAI('results', 'Number of arrivals (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "station", "displayName": "station", "type": "string", "description": "Stop name or ID", "required": true },
+              { "id": "results", "displayName": "results", "type": "string", "description": "Number of arrivals", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-journey",
+        "name": "search_journey",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [900, 300],
+        "parameters": {
+          "name": "search_journey",
+          "description": "Search for German public transit connections between two stops (nationwide ÖPNV: includes S/U/Tram/Bus/regional). Accepts stop names (auto-resolved) or EFA IDs. Parameters: from (origin, e.g. 'Essen Hbf'), to (destination, e.g. 'Köln Hbf'), departure (optional, ISO 8601 datetime), results (optional, number of connections, default 3)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_journey",
+              "from": "={{ $fromAI('from', 'Origin stop name or ID', 'string') }}",
+              "to": "={{ $fromAI('to', 'Destination stop name or ID', 'string') }}",
+              "departure": "={{ $fromAI('departure', 'Departure datetime in ISO 8601 format', 'string') }}",
+              "results": "={{ $fromAI('results', 'Number of connections to return (default 3)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "from", "displayName": "from", "type": "string", "description": "Origin stop name or ID", "required": true },
+              { "id": "to", "displayName": "to", "type": "string", "description": "Destination stop name or ID", "required": true },
+              { "id": "departure", "displayName": "departure", "type": "string", "description": "Departure datetime ISO 8601", "required": false },
+              { "id": "results", "displayName": "results", "type": "string", "description": "Number of connections", "required": false }
+            ],
+            "attemptToConvertTypes": false, "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "search_station": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_departures": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_arrivals": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "search_journey": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}

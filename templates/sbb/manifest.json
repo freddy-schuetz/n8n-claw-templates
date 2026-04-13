@@ -1,0 +1,32 @@
+{
+  "id": "sbb",
+  "name": "SBB",
+  "version": "1.0.0",
+  "updated": "2026-04-13",
+  "type": "native",
+  "category": "transport",
+  "description": "Search train connections, departures, and stations across Switzerland (SBB/CFF/FFS, via transport.opendata.ch, free)",
+  "credentials_required": [],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "search_station",
+      "description": "Search for a train station by name"
+    },
+    {
+      "name": "get_departures",
+      "description": "Get upcoming departures from a station"
+    },
+    {
+      "name": "get_arrivals",
+      "description": "Get upcoming arrivals at a station"
+    },
+    {
+      "name": "search_journey",
+      "description": "Search for train connections between two stations"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
