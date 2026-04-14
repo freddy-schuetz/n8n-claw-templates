@@ -8,19 +8,25 @@ A template catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw). E
 
 ## Template Structure
 
-Every template consists of 3 files:
+Templates come in two shapes — `native` and `bridge`.
+
+**Native** (`type: "native"`) — n8n implements the tool logic itself. 3 files:
 
 ```
 templates/
   index.json                    <- catalog (one entry per template)
   {template-id}/
     manifest.json               <- metadata (name, tools, credentials)
-    workflow.json               <- n8n workflow bundle
+    workflow.json               <- n8n workflow bundle (sub + server)
 ```
+
+**Bridge** (`type: "bridge"`) — registers an existing external MCP server (Streamable HTTP) into `mcp_registry`. **No `workflow.json`** — just `manifest.json` + `index.json` entry. Supported since n8n-claw v1.3.0. See [templates/TEMPLATE_EXAMPLE.md#bridge-templates](templates/TEMPLATE_EXAMPLE.md#bridge-templates) for the manifest schema (`bridge.mcp_url`, `auth_type`, `auth_token_required`, …) and [templates/deepwiki/](templates/deepwiki/) as a working no-auth example.
+
+The rest of this document covers the **native** path. If you are shipping a bridge template, stop here and follow the `TEMPLATE_EXAMPLE.md` section above.
 
 ## Two-Workflow Pattern
 
-Every template contains **two workflows** in `workflow.json`:
+Every **native** template contains **two workflows** in `workflow.json`:
 
 1. **`sub`** — Sub-workflow with actual tool logic (`executeWorkflowTrigger` -> `Code` node)
 2. **`server`** — MCP server that exposes the tool (`mcpTrigger` -> `toolWorkflow`)

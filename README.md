@@ -235,7 +235,7 @@ Some skills need additional services running alongside n8n:
 | Type | Description |
 |------|-------------|
 | `native` | n8n implements the tool logic directly (HTTP requests, Code nodes) |
-| `bridge` | n8n proxies requests to an external MCP server (not yet supported) |
+| `bridge` | Registers an existing external MCP server (Streamable HTTP) with optional bearer/header auth. No workflows are imported. See the [Bridge Templates](templates/TEMPLATE_EXAMPLE.md#bridge-templates) section in `TEMPLATE_EXAMPLE.md`. Supported since n8n-claw v1.3.0. |
 
 ---
 
