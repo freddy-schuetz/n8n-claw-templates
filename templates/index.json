@@ -533,6 +533,15 @@
       "description": "Nationwide German public transit (S-Bahn, U-Bahn, Tram, Bus, regional): stations, departures, arrivals, journey planning via EFA/DELFI (openservice-test.vrr.de test endpoint, free, no key)",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "deepwiki",
+      "name": "DeepWiki",
+      "type": "bridge",
+      "category": "knowledge",
+      "description": "AI-powered documentation search for any public GitHub repository via Devin DeepWiki (external MCP server, free, no auth)",
+      "credentials_required": [],
+      "version": "1.0.0"
     }
   ]
 }

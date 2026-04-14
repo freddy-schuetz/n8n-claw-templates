@@ -187,3 +187,63 @@ The workflow bundle uses the `n8n-claw-template` format with two workflows:
 - Use `helpers.httpRequest()` for HTTP calls in Code nodes (NOT `$helpers`)
 - The `path` in mcpTrigger should match your template ID
 - Tool parameters arrive via `$input.first().json.paramName`
+
+---
+
+## Bridge Templates
+
+`type: "bridge"` templates do **not** import any workflows. They register an external MCP server (one that already speaks the MCP Streamable HTTP protocol — e.g. DeepWiki, Zapier, a self-hosted Claude Code MCP, Knotie) directly into `mcp_registry`, and the n8n-claw agent's inline MCP client calls it over the network.
+
+Use `bridge` when:
+- The target service **already runs its own MCP endpoint** and you just want to wire it up with `mcp_url` (+ optional bearer token).
+- You do not need to wrap a REST API in n8n Code nodes.
+
+Use `native` (the two-workflow pattern above) when:
+- You are wrapping a normal REST API into an MCP skill.
+- You need custom logic, file bridge, or action routing inside n8n.
+
+### manifest.json (bridge)
+
+A bridge template has **no `workflow.json`** — just a manifest:
+
+```json
+{
+  "id": "deepwiki",
+  "name": "DeepWiki",
+  "version": "1.0.0",
+  "updated": "2026-04-14",
+  "type": "bridge",
+  "category": "knowledge",
+  "description": "AI-powered documentation for any public GitHub repository (external MCP server, free, no auth).",
+  "tools": [
+    { "name": "read_wiki_structure", "description": "List the doc topics for a repo." },
+    { "name": "read_wiki_contents",  "description": "Fetch the full wiki for a repo." },
+    { "name": "ask_question",        "description": "Ask a natural-language question about a repo." }
+  ],
+  "bridge": {
+    "mcp_url": "https://mcp.deepwiki.com/mcp",
+    "auth_type": "none",
+    "auth_token_required": false
+  },
+  "author": "your-github-username",
+  "license": "MIT"
+}
+```
+
+### `bridge` block fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `mcp_url` | yes | Full URL of the external MCP endpoint (Streamable HTTP). |
+| `auth_type` | no | `none` (default) · `bearer` (send `Authorization: Bearer <token>`) · `header` (send raw token as-is in `Authorization`). |
+| `auth_token_required` | no | `true` to prompt the user for a token on install via the credential form. |
+| `auth_label` | no | Label shown on the credential form (default: `Bearer Token`). |
+| `auth_hint` | no | Hint text shown on the credential form. |
+
+### How it works
+
+1. User: *"Installiere das Skill deepwiki"*
+2. Library Manager fetches the manifest, sees `type: "bridge"`, and **inserts a row into `mcp_registry`** with `template_type='bridge'`, `mcp_url`, and the tool list from the manifest. No n8n workflow is imported.
+3. If `auth_token_required: true`, the Library Manager returns a one-time credential-form link. When the user submits a token, it is stored in `template_credentials` **and** mirrored into `mcp_registry.auth_token` for the same template.
+4. When the agent calls a tool on this skill, the inline MCP client (in `n8n-claw-agent.json`, `sub-agent-runner.json`, `background-checker.json`) looks up `auth_type` + `auth_token` for the target `mcp_url` and adds the `Authorization` header automatically.
+5. `remove_template` just deletes the `mcp_registry` row — no workflow cleanup needed.

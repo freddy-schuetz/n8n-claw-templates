@@ -1,0 +1,30 @@
+{
+  "id": "deepwiki",
+  "name": "DeepWiki",
+  "version": "1.0.0",
+  "updated": "2026-04-14",
+  "type": "bridge",
+  "category": "knowledge",
+  "description": "AI-powered documentation search for any public GitHub repository. Ask questions about a codebase in plain English (DeepWiki by Devin, free, no auth).",
+  "tools": [
+    {
+      "name": "read_wiki_structure",
+      "description": "List the documentation topics that exist for a GitHub repository."
+    },
+    {
+      "name": "read_wiki_contents",
+      "description": "Fetch the full generated wiki for a GitHub repository."
+    },
+    {
+      "name": "ask_question",
+      "description": "Ask a natural-language question about a GitHub repository and get an AI-grounded answer."
+    }
+  ],
+  "bridge": {
+    "mcp_url": "https://mcp.deepwiki.com/mcp",
+    "auth_type": "none",
+    "auth_token_required": false
+  },
+  "author": "freddy-schuetz",
+  "license": "MIT"
+}
