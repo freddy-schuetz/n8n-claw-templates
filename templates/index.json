@@ -561,7 +561,7 @@
       "credentials_required": [
         { "key": "ntfy_topic", "label": "ntfy Topic Name" }
       ],
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     {
       "id": "home-assistant",
