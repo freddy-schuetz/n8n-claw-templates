@@ -1,0 +1,61 @@
+{
+  "id": "asana",
+  "name": "Asana",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "productivity",
+  "description": "Asana project management: manage workspaces, projects, tasks, sections and comments via Personal Access Token.",
+  "credentials_required": [
+    {
+      "key": "asana_pat",
+      "label": "Asana Personal Access Token",
+      "hint": "Create at app.asana.com/0/my-apps -> 'Personal access tokens' section -> Create new token. NOT the OAuth developer apps section."
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_workspaces",
+      "description": "List all Asana workspaces the token has access to"
+    },
+    {
+      "name": "list_projects",
+      "description": "List projects in a workspace (filter: archived, limit)"
+    },
+    {
+      "name": "get_project",
+      "description": "Get project details by project gid"
+    },
+    {
+      "name": "list_sections",
+      "description": "List sections (columns) of a project"
+    },
+    {
+      "name": "list_tasks",
+      "description": "List tasks filtered by project, assignee (use 'me' for current user), or section"
+    },
+    {
+      "name": "get_task",
+      "description": "Get full task details by task gid (name, notes, assignee, due_on, subtasks, tags)"
+    },
+    {
+      "name": "create_task",
+      "description": "Create a new task with workspace/project, name, notes, assignee, due date"
+    },
+    {
+      "name": "update_task",
+      "description": "Update an existing task (name, notes, assignee, due_on)"
+    },
+    {
+      "name": "complete_task",
+      "description": "Mark a task as completed"
+    },
+    {
+      "name": "add_comment_to_task",
+      "description": "Add a comment (story) to a task"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

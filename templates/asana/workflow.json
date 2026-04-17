@@ -1,0 +1,360 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Asana",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Asana Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.asana&cred_key=eq.asana_pat&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || !creds[0] || !creds[0].cred_value) {\n  return [{ json: { error: 'Asana PAT not configured. Use add_credential to set it up.' } }];\n}\nconst pat = creds[0].cred_value;\nconst API = 'https://app.asana.com/api/1.0';\nconst authHeaders = { 'Authorization': 'Bearer ' + pat, 'Accept': 'application/json' };\n\nfunction fmtDate(iso) {\n  if (!iso) return '';\n  return iso.substring(0, 10);\n}\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\n// === list_workspaces ===\nif (action === 'list_workspaces') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/workspaces?opt_fields=name,is_organization', headers: authHeaders });\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No workspaces found.' } }];\n    let out = 'Workspaces (' + items.length + '):\\n';\n    for (const w of items) {\n      out += '  ' + w.name + ' (gid: ' + w.gid + (w.is_organization ? ', organization' : '') + ')\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana list_workspaces failed: ' + err.message } }];\n  }\n\n// === list_projects ===\n} else if (action === 'list_projects') {\n  const workspace = input.workspace;\n  if (!workspace) return [{ json: { error: 'Parameter \"workspace\" is required (workspace gid). Use list_workspaces first.' } }];\n  const limit = Math.min(parseInt(input.limit) || 20, 100);\n  const archived = input.archived === 'true' ? 'true' : 'false';\n  try {\n    const url = API + '/projects?workspace=' + encodeURIComponent(workspace) + '&archived=' + archived + '&limit=' + limit + '&opt_fields=name,archived,created_at,owner.name,current_status.title';\n    const r = await helpers.httpRequest({ method: 'GET', url, headers: authHeaders });\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No projects in workspace.' } }];\n    let out = 'Projects (' + items.length + '):\\n';\n    for (const p of items) {\n      out += '  ' + p.name + ' (gid: ' + p.gid + ')';\n      if (p.archived) out += ' [ARCHIVED]';\n      if (p.owner && p.owner.name) out += ' - owner: ' + p.owner.name;\n      out += '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana list_projects failed: ' + err.message } }];\n  }\n\n// === get_project ===\n} else if (action === 'get_project') {\n  const project = input.project;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project gid).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/projects/' + encodeURIComponent(project) + '?opt_fields=name,notes,archived,created_at,modified_at,owner.name,current_status.title,current_status.text,due_date,start_on,members.name,permalink_url', headers: authHeaders });\n    const p = r.data;\n    if (!p) return [{ json: { error: 'Project not found.' } }];\n    let out = '**' + p.name + '** (gid: ' + p.gid + ')\\n';\n    if (p.archived) out += 'Status: ARCHIVED\\n';\n    if (p.owner && p.owner.name) out += 'Owner: ' + p.owner.name + '\\n';\n    if (p.due_date) out += 'Due: ' + p.due_date + '\\n';\n    if (p.start_on) out += 'Start: ' + p.start_on + '\\n';\n    if (p.current_status && p.current_status.title) out += 'Current status: ' + p.current_status.title + (p.current_status.text ? ' \u2014 ' + p.current_status.text : '') + '\\n';\n    if (p.members && p.members.length) out += 'Members: ' + p.members.map(m => m.name).join(', ') + '\\n';\n    if (p.notes) out += '\\nNotes:\\n' + p.notes + '\\n';\n    if (p.permalink_url) out += '\\n' + p.permalink_url + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana get_project failed: ' + err.message } }];\n  }\n\n// === list_sections ===\n} else if (action === 'list_sections') {\n  const project = input.project;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project gid).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/projects/' + encodeURIComponent(project) + '/sections?opt_fields=name,created_at', headers: authHeaders });\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No sections in project.' } }];\n    let out = 'Sections (' + items.length + '):\\n';\n    for (const s of items) out += '  ' + s.name + ' (gid: ' + s.gid + ')\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana list_sections failed: ' + err.message } }];\n  }\n\n// === list_tasks ===\n} else if (action === 'list_tasks') {\n  const project = input.project;\n  const assignee = input.assignee;\n  const section = input.section;\n  const workspace = input.workspace;\n  const limit = Math.min(parseInt(input.limit) || 20, 100);\n  const completedSince = input.completed_since;\n\n  const params = ['limit=' + limit, 'opt_fields=name,assignee.name,due_on,completed,completed_at,notes'];\n  if (project) params.push('project=' + encodeURIComponent(project));\n  else if (section) params.push('section=' + encodeURIComponent(section));\n  else if (assignee) {\n    if (!workspace) return [{ json: { error: 'When filtering by assignee, parameter \"workspace\" is also required. Use list_workspaces first.' } }];\n    params.push('assignee=' + encodeURIComponent(assignee));\n    params.push('workspace=' + encodeURIComponent(workspace));\n  } else {\n    return [{ json: { error: 'At least one filter is required: project, section, or assignee (with workspace).' } }];\n  }\n  if (completedSince) params.push('completed_since=' + encodeURIComponent(completedSince));\n\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/tasks?' + params.join('&'), headers: authHeaders });\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No tasks matched.' } }];\n    let out = 'Tasks (' + items.length + '):\\n';\n    for (const t of items) {\n      const mark = t.completed ? '[x]' : '[ ]';\n      out += mark + ' ' + t.name + ' (gid: ' + t.gid + ')';\n      if (t.assignee && t.assignee.name) out += ' @' + t.assignee.name;\n      if (t.due_on) out += ' due:' + t.due_on;\n      out += '\\n';\n    }\n    if (r.next_page && r.next_page.offset) out += '\\n(more results available \u2014 increase limit or request next page)\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana list_tasks failed: ' + err.message } }];\n  }\n\n// === get_task ===\n} else if (action === 'get_task') {\n  const task = input.task;\n  if (!task) return [{ json: { error: 'Parameter \"task\" is required (task gid).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/tasks/' + encodeURIComponent(task) + '?opt_fields=name,notes,assignee.name,due_on,due_at,start_on,completed,completed_at,projects.name,num_subtasks,tags.name,permalink_url,created_at,modified_at,parent.name', headers: authHeaders });\n    const t = r.data;\n    if (!t) return [{ json: { error: 'Task not found.' } }];\n    let out = (t.completed ? '[x] ' : '[ ] ') + '**' + t.name + '** (gid: ' + t.gid + ')\\n';\n    if (t.assignee && t.assignee.name) out += 'Assignee: ' + t.assignee.name + '\\n';\n    if (t.due_on) out += 'Due: ' + t.due_on + (t.due_at ? ' (' + t.due_at + ')' : '') + '\\n';\n    if (t.start_on) out += 'Start: ' + t.start_on + '\\n';\n    if (t.completed_at) out += 'Completed: ' + fmtDate(t.completed_at) + '\\n';\n    if (t.projects && t.projects.length) out += 'Projects: ' + t.projects.map(p => p.name).join(', ') + '\\n';\n    if (t.tags && t.tags.length) out += 'Tags: ' + t.tags.map(x => x.name).join(', ') + '\\n';\n    if (t.parent && t.parent.name) out += 'Parent task: ' + t.parent.name + '\\n';\n    if (t.num_subtasks) out += 'Subtasks: ' + t.num_subtasks + '\\n';\n    if (t.notes) out += '\\nNotes:\\n' + t.notes + '\\n';\n    if (t.permalink_url) out += '\\n' + t.permalink_url + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana get_task failed: ' + err.message } }];\n  }\n\n// === create_task ===\n} else if (action === 'create_task') {\n  const name = input.name;\n  if (!name) return [{ json: { error: 'Parameter \"name\" is required.' } }];\n  const workspace = input.workspace;\n  const project = input.project;\n  if (!workspace && !project) return [{ json: { error: 'Either \"workspace\" or \"project\" is required to know where to create the task.' } }];\n  const body = { data: { name } };\n  if (workspace) body.data.workspace = workspace;\n  if (project) body.data.projects = [project];\n  if (input.notes) body.data.notes = input.notes;\n  if (input.assignee) body.data.assignee = input.assignee;\n  if (input.due_on) body.data.due_on = input.due_on;\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/tasks?opt_fields=name,permalink_url,gid', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });\n    const t = r.data;\n    let out = 'Task created: ' + t.name + ' (gid: ' + t.gid + ')';\n    if (t.permalink_url) out += '\\n' + t.permalink_url;\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana create_task failed: ' + err.message } }];\n  }\n\n// === update_task ===\n} else if (action === 'update_task') {\n  const task = input.task;\n  if (!task) return [{ json: { error: 'Parameter \"task\" is required (task gid).' } }];\n  const body = { data: {} };\n  if (input.name) body.data.name = input.name;\n  if (input.notes) body.data.notes = input.notes;\n  if (input.assignee) body.data.assignee = input.assignee;\n  if (input.due_on) body.data.due_on = input.due_on;\n  if (Object.keys(body.data).length === 0) return [{ json: { error: 'Provide at least one field to update: name, notes, assignee, due_on.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'PUT', url: API + '/tasks/' + encodeURIComponent(task) + '?opt_fields=name,permalink_url,gid', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });\n    const t = r.data;\n    let out = 'Task updated: ' + t.name + ' (gid: ' + t.gid + ')';\n    if (t.permalink_url) out += '\\n' + t.permalink_url;\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana update_task failed: ' + err.message } }];\n  }\n\n// === complete_task ===\n} else if (action === 'complete_task') {\n  const task = input.task;\n  if (!task) return [{ json: { error: 'Parameter \"task\" is required (task gid).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'PUT', url: API + '/tasks/' + encodeURIComponent(task) + '?opt_fields=name,completed,gid', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { completed: true } }) });\n    const t = r.data;\n    return [{ json: { result: 'Task completed: ' + t.name + ' (gid: ' + t.gid + ')' } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana complete_task failed: ' + err.message } }];\n  }\n\n// === add_comment_to_task ===\n} else if (action === 'add_comment_to_task') {\n  const task = input.task;\n  const text = input.text;\n  if (!task) return [{ json: { error: 'Parameter \"task\" is required (task gid).' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required (comment body).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/tasks/' + encodeURIComponent(task) + '/stories?opt_fields=gid,created_at,created_by.name', headers: { ...authHeaders, 'Content-Type': 'application/json' }, body: JSON.stringify({ data: { text } }) });\n    const s = r.data;\n    return [{ json: { result: 'Comment added (gid: ' + s.gid + ')' + (s.created_by && s.created_by.name ? ' by ' + s.created_by.name : '') } }];\n  } catch (err) {\n    return [{ json: { error: 'Asana add_comment_to_task failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_workspaces, list_projects, get_project, list_sections, list_tasks, get_task, create_task, update_task, complete_task, add_comment_to_task.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Asana Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Asana",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "asana"
+        }
+      },
+      {
+        "id": "tool-list-workspaces",
+        "name": "list_workspaces",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "list_workspaces",
+          "description": "List all Asana workspaces the token has access to. No parameters. Use this first when you need a workspace gid for other calls.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_workspaces"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-projects",
+        "name": "list_projects",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "list_projects",
+          "description": "List projects in a workspace. Parameters: workspace (required, workspace gid), archived (optional 'true'/'false', default 'false'), limit (optional, default 20, max 100).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_projects",
+              "workspace": "={{ $fromAI('workspace', 'Workspace gid', 'string') }}",
+              "archived": "={{ $fromAI('archived', 'Include archived projects: true or false (default false)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max projects (default 20)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "workspace", "displayName": "workspace", "type": "string", "description": "Workspace gid", "required": true },
+              { "id": "archived", "displayName": "archived", "type": "string", "description": "Include archived", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Result limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-project",
+        "name": "get_project",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "get_project",
+          "description": "Get full details of a project including notes, owner, due date, members. Parameters: project (required, project gid).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_project",
+              "project": "={{ $fromAI('project', 'Project gid', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "project", "displayName": "project", "type": "string", "description": "Project gid", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-sections",
+        "name": "list_sections",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "list_sections",
+          "description": "List sections (columns) of a project. Parameters: project (required, project gid).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_sections",
+              "project": "={{ $fromAI('project', 'Project gid', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "project", "displayName": "project", "type": "string", "description": "Project gid", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-tasks",
+        "name": "list_tasks",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "list_tasks",
+          "description": "List tasks with ONE of these filters: project (by project gid), section (by section gid), OR assignee+workspace (use 'me' for the current user). Parameters: project, section, assignee, workspace, limit (default 20), completed_since (ISO 8601, e.g. 'now' for only open tasks).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_tasks",
+              "project": "={{ $fromAI('project', 'Project gid to filter by', 'string') }}",
+              "section": "={{ $fromAI('section', 'Section gid to filter by', 'string') }}",
+              "assignee": "={{ $fromAI('assignee', \"Assignee gid or 'me' for current user\", 'string') }}",
+              "workspace": "={{ $fromAI('workspace', 'Workspace gid (required when filtering by assignee)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max tasks (default 20)', 'string') }}",
+              "completed_since": "={{ $fromAI('completed_since', \"ISO date or 'now' for only incomplete tasks\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "project", "displayName": "project", "type": "string", "description": "Project gid", "required": false },
+              { "id": "section", "displayName": "section", "type": "string", "description": "Section gid", "required": false },
+              { "id": "assignee", "displayName": "assignee", "type": "string", "description": "Assignee gid or 'me'", "required": false },
+              { "id": "workspace", "displayName": "workspace", "type": "string", "description": "Workspace gid", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Result limit", "required": false },
+              { "id": "completed_since", "displayName": "completed_since", "type": "string", "description": "ISO date filter", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-task",
+        "name": "get_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 600],
+        "parameters": {
+          "name": "get_task",
+          "description": "Get full task details: name, notes, assignee, due date, projects, tags, subtasks. Parameters: task (required, task gid).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_task",
+              "task": "={{ $fromAI('task', 'Task gid', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task", "displayName": "task", "type": "string", "description": "Task gid", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-task",
+        "name": "create_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 600],
+        "parameters": {
+          "name": "create_task",
+          "description": "Create a new task. Parameters: name (required), workspace OR project (at least one required), notes (optional), assignee (optional, gid or 'me'), due_on (optional, YYYY-MM-DD).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_task",
+              "name": "={{ $fromAI('name', 'Task name', 'string') }}",
+              "workspace": "={{ $fromAI('workspace', 'Workspace gid', 'string') }}",
+              "project": "={{ $fromAI('project', 'Project gid (alternative to workspace)', 'string') }}",
+              "notes": "={{ $fromAI('notes', 'Task description / notes', 'string') }}",
+              "assignee": "={{ $fromAI('assignee', \"Assignee gid or 'me'\", 'string') }}",
+              "due_on": "={{ $fromAI('due_on', 'Due date YYYY-MM-DD', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "description": "Task name", "required": true },
+              { "id": "workspace", "displayName": "workspace", "type": "string", "description": "Workspace gid", "required": false },
+              { "id": "project", "displayName": "project", "type": "string", "description": "Project gid", "required": false },
+              { "id": "notes", "displayName": "notes", "type": "string", "description": "Notes", "required": false },
+              { "id": "assignee", "displayName": "assignee", "type": "string", "description": "Assignee", "required": false },
+              { "id": "due_on", "displayName": "due_on", "type": "string", "description": "Due date", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-update-task",
+        "name": "update_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 600],
+        "parameters": {
+          "name": "update_task",
+          "description": "Update an existing task. Parameters: task (required, task gid), plus at least one of: name, notes, assignee, due_on (YYYY-MM-DD).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_task",
+              "task": "={{ $fromAI('task', 'Task gid', 'string') }}",
+              "name": "={{ $fromAI('name', 'New task name', 'string') }}",
+              "notes": "={{ $fromAI('notes', 'New notes', 'string') }}",
+              "assignee": "={{ $fromAI('assignee', \"Assignee gid or 'me'\", 'string') }}",
+              "due_on": "={{ $fromAI('due_on', 'Due date YYYY-MM-DD', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task", "displayName": "task", "type": "string", "description": "Task gid", "required": true },
+              { "id": "name", "displayName": "name", "type": "string", "description": "Name", "required": false },
+              { "id": "notes", "displayName": "notes", "type": "string", "description": "Notes", "required": false },
+              { "id": "assignee", "displayName": "assignee", "type": "string", "description": "Assignee", "required": false },
+              { "id": "due_on", "displayName": "due_on", "type": "string", "description": "Due date", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-complete-task",
+        "name": "complete_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 600],
+        "parameters": {
+          "name": "complete_task",
+          "description": "Mark a task as completed. Parameters: task (required, task gid).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "complete_task",
+              "task": "={{ $fromAI('task', 'Task gid', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task", "displayName": "task", "type": "string", "description": "Task gid", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-add-comment",
+        "name": "add_comment_to_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 600],
+        "parameters": {
+          "name": "add_comment_to_task",
+          "description": "Add a comment (story) to a task. Parameters: task (required, task gid), text (required, comment body).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "add_comment_to_task",
+              "task": "={{ $fromAI('task', 'Task gid', 'string') }}",
+              "text": "={{ $fromAI('text', 'Comment body', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "task", "displayName": "task", "type": "string", "description": "Task gid", "required": true },
+              { "id": "text", "displayName": "text", "type": "string", "description": "Comment text", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_workspaces": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_projects": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_project": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_sections": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_tasks": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "update_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "complete_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "add_comment_to_task": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

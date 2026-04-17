@@ -638,6 +638,17 @@
         { "key": "youtube_api_key", "label": "YouTube Data API v3 Key" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "type": "native",
+      "category": "productivity",
+      "description": "Asana project management: list workspaces/projects/sections, create/update/complete tasks, add comments. Personal Access Token auth.",
+      "credentials_required": [
+        { "key": "asana_pat", "label": "Asana Personal Access Token" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

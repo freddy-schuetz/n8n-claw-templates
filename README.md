@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (57)
+## Available Skills (58)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -26,7 +26,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Notes & CRM](#notes--crm) | 3 | Airtable, NocoDB, Notion |
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Smart Home](#smart-home) | 1 | Home Assistant |
-| [Tasks](#tasks) | 2 | Todoist, Vikunja |
+| [Tasks](#tasks) | 3 | Asana, Todoist, Vikunja |
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
 | [Transport](#transport) | 5 | Deutsche Bahn, ÖBB, SBB, ÖPNV Deutschland, Wiener Linien |
 | [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
@@ -172,6 +172,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
+| [Asana](https://asana.com/) | Manage Asana projects and tasks: list workspaces/projects/sections, create/update/complete tasks, add comments | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
