@@ -548,9 +548,9 @@
       "name": "Overpass (OpenStreetMap)",
       "type": "native",
       "category": "maps",
-      "description": "Search places and POIs on OpenStreetMap: restaurants, hotels, hiking huts, drinking water, EV charging, 28 preset categories. Forward + reverse geocoding via Nominatim, free, no auth. Auto mirror fallback (overpass-api.de -> private.coffee -> kumi.systems) on rate-limit.",
+      "description": "Search places and POIs on OpenStreetMap: restaurants, hotels, hiking huts, drinking water, EV charging, 28 preset categories. Forward + reverse geocoding via Nominatim, free, no auth. Auto mirror fallback (overpass-api.de -> private.coffee -> kumi.systems) on rate-limit. find_nearby auto-reverse-geocodes unnamed results so you get street names instead of raw coords.",
       "credentials_required": [],
-      "version": "1.2.0"
+      "version": "1.3.0"
     },
     {
       "id": "ntfy",

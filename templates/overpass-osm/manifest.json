@@ -1,7 +1,7 @@
 {
   "id": "overpass-osm",
   "name": "Overpass (OpenStreetMap)",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "maps",
@@ -21,7 +21,7 @@
     },
     {
       "name": "find_nearby",
-      "description": "Find points of interest near a location by preset category (28 categories: food, accommodation, shopping, tourism, transport, outdoor/hiking, utilities)"
+      "description": "Find points of interest near a location by preset category (28 categories: food, accommodation, shopping, tourism, transport, outdoor/hiking, utilities). Auto-enriches the top 3 unnamed/addressless results with a reverse-geocoded street/district so drinking water, benches, peaks etc. don't come back as raw coordinates"
     },
     {
       "name": "reverse_geocode",
