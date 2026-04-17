@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (53)
+## Available Skills (54)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -12,7 +12,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Calendar](#calendar) | 2 | CalDAV, Google Calendar |
 | [Cloud Storage](#cloud-storage) | 3 | Google Drive, Nextcloud, Seafile |
 | [Communication](#communication) | 4 | Email, Gmail, ntfy, OpenClaw |
-| [Creativity](#creativity) | 1 | AI image & video generation |
+| [Creativity](#creativity) | 2 | AI image & video generation, Unsplash photos |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
 | [Finance](#finance) | 4 | Crypto, currencies, banking, Lexware |
@@ -69,6 +69,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image), generate videos from text with Veo 3.1, and animate user-supplied images into videos (image-to-video) | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Unsplash](https://unsplash.com/) | Search 3M+ free high-quality photos by keyword, get random or specific photos with required photographer attribution | Unsplash Access Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 
 ### Developer Tools
 

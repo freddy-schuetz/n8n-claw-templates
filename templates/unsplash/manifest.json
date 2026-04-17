@@ -1,0 +1,33 @@
+{
+  "id": "unsplash",
+  "name": "Unsplash",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "creativity",
+  "description": "Search and fetch free high-quality photos from Unsplash (3M+ photos). Returns direct image URLs with required photographer attribution.",
+  "credentials_required": [
+    {
+      "key": "unsplash_access_key",
+      "label": "Unsplash Access Key",
+      "hint": "Get from https://unsplash.com/oauth/applications \u2014 \"New Application\", accept developer terms, copy the Access Key (not the Secret Key). Demo tier: 50 requests/hour."
+    }
+  ],
+  "tools": [
+    {
+      "name": "search_photos",
+      "description": "Search photos by keyword with optional orientation filter"
+    },
+    {
+      "name": "get_random_photo",
+      "description": "Get a random photo, optionally filtered by query or orientation"
+    },
+    {
+      "name": "get_photo",
+      "description": "Get detailed info for a specific photo by ID"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

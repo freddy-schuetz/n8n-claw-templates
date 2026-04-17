@@ -594,6 +594,17 @@
       "description": "Search 40M+ books by title, author or ISBN and fetch book/author details (Open Library, free, no auth)",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "unsplash",
+      "name": "Unsplash",
+      "type": "native",
+      "category": "creativity",
+      "description": "Search and fetch free high-quality photos from Unsplash (3M+ photos). Returns direct image URLs with required photographer attribution.",
+      "credentials_required": [
+        { "key": "unsplash_access_key", "label": "Unsplash Access Key" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
