@@ -649,6 +649,19 @@
         { "key": "asana_pat", "label": "Asana Personal Access Token" }
       ],
       "version": "1.1.0"
+    },
+    {
+      "id": "jira",
+      "name": "Jira Cloud",
+      "type": "native",
+      "category": "productivity",
+      "description": "Jira Cloud issue tracking (12 tools): JQL search, CRUD issues, comments, transitions, issue links, user search. Shares Atlassian credentials with Confluence.",
+      "credentials_required": [
+        { "key": "atlassian_email", "label": "Atlassian Email", "shared_id": "atlassian-api-token" },
+        { "key": "atlassian_api_token", "label": "Atlassian API Token", "shared_id": "atlassian-api-token" },
+        { "key": "atlassian_site", "label": "Atlassian Site URL", "shared_id": "atlassian-api-token" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

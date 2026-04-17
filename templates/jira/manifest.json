@@ -1,0 +1,82 @@
+{
+  "id": "jira",
+  "name": "Jira Cloud",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "productivity",
+  "description": "Jira Cloud issue tracking: JQL search, CRUD issues, comments, status transitions. Shares Atlassian credentials with Confluence skill.",
+  "credentials_required": [
+    {
+      "key": "atlassian_email",
+      "label": "Atlassian Email",
+      "shared_id": "atlassian-api-token",
+      "hint": "Your Atlassian account email (same across Jira + Confluence)."
+    },
+    {
+      "key": "atlassian_api_token",
+      "label": "Atlassian API Token",
+      "shared_id": "atlassian-api-token",
+      "hint": "Create at id.atlassian.com/manage-profile/security/api-tokens. NOTE: Atlassian enforces token expiry (1-365 days) \u2014 you will need to rotate it manually."
+    },
+    {
+      "key": "atlassian_site",
+      "label": "Atlassian Site URL",
+      "shared_id": "atlassian-api-token",
+      "hint": "Your site subdomain, e.g. 'your-org.atlassian.net' (without https:// prefix)."
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_projects",
+      "description": "List Jira projects (key, name, type, lead)"
+    },
+    {
+      "name": "search_issues",
+      "description": "Search issues with JQL (e.g. 'assignee = currentUser() AND status != Done')"
+    },
+    {
+      "name": "get_issue",
+      "description": "Get full issue detail by key (KAN-1), including description and comments"
+    },
+    {
+      "name": "create_issue",
+      "description": "Create a new issue with project, summary, description, issuetype, assignee, priority, labels"
+    },
+    {
+      "name": "update_issue",
+      "description": "Update issue fields (summary, description, assignee, priority, labels)"
+    },
+    {
+      "name": "add_comment",
+      "description": "Add a comment to an issue"
+    },
+    {
+      "name": "transition_issue",
+      "description": "Change issue status by transition name (e.g. 'Done', 'In Progress')"
+    },
+    {
+      "name": "list_users",
+      "description": "Search Atlassian users by name or email fragment (returns accountId needed for assignee fields)"
+    },
+    {
+      "name": "list_comments",
+      "description": "List comments on an issue"
+    },
+    {
+      "name": "list_transitions",
+      "description": "List available status transitions for an issue (use before transition_issue)"
+    },
+    {
+      "name": "list_issue_types",
+      "description": "List valid issue types for a project (Task, Bug, Epic, Subtask, ...)"
+    },
+    {
+      "name": "link_issues",
+      "description": "Link two issues with a relationship (Blocks, Duplicate, Relates, Cloners)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
