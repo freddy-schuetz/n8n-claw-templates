@@ -1,0 +1,41 @@
+{
+  "id": "finnhub",
+  "name": "Finnhub Stocks",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "finance",
+  "description": "Real-time stock quotes, company profiles, news and symbol search via Finnhub (free tier: 60 calls/min).",
+  "credentials_required": [
+    {
+      "key": "finnhub_api_key",
+      "label": "Finnhub API Key",
+      "hint": "Get your free API key at https://finnhub.io/register \u2014 copied from the dashboard after signup. Free tier: 60 calls/minute."
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_quote",
+      "description": "Current price, daily change, high/low for a stock symbol"
+    },
+    {
+      "name": "get_company_profile",
+      "description": "Company profile (industry, market cap, exchange, logo) for a symbol"
+    },
+    {
+      "name": "get_company_news",
+      "description": "Recent news headlines for a stock symbol"
+    },
+    {
+      "name": "search_symbol",
+      "description": "Find ticker symbols by company name"
+    },
+    {
+      "name": "get_market_status",
+      "description": "Whether a stock exchange is currently open"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

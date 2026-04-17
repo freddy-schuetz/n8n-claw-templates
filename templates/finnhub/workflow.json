@@ -1,0 +1,207 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Finnhub Stocks",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Finnhub Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.finnhub&cred_key=eq.finnhub_api_key&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || !creds[0] || !creds[0].cred_value) {\n  return [{ json: { error: 'Finnhub API key not configured. Use add_credential to set it up.' } }];\n}\nconst token = creds[0].cred_value;\nconst API = 'https://finnhub.io/api/v1';\n\nfunction formatCap(millions) {\n  if (millions == null) return '';\n  if (millions >= 1000000) return (millions / 1000000).toFixed(2) + 'T';\n  if (millions >= 1000) return (millions / 1000).toFixed(2) + 'B';\n  return millions.toFixed(2) + 'M';\n}\n\nfunction formatTs(unix) {\n  if (!unix) return '';\n  return new Date(unix * 1000).toISOString().replace('T', ' ').substring(0, 19) + ' UTC';\n}\n\nfunction isoDate(d) {\n  return d.toISOString().substring(0, 10);\n}\n\n// === get_quote ===\nif (action === 'get_quote') {\n  const symbol = (input.symbol || '').toUpperCase().trim();\n  if (!symbol) return [{ json: { error: 'Parameter \"symbol\" is required (e.g. AAPL, MSFT, TSLA). Use search_symbol if you only know the company name.' } }];\n\n  try {\n    const q = await helpers.httpRequest({ method: 'GET', url: API + '/quote?symbol=' + encodeURIComponent(symbol) + '&token=' + token });\n    if (q.c === 0 && q.pc === 0) {\n      return [{ json: { error: 'No quote data for symbol \"' + symbol + '\". Symbol may be invalid. Try search_symbol.' } }];\n    }\n    let out = 'Quote for ' + symbol + ':\\n';\n    out += '  Current: ' + q.c + '\\n';\n    const dir = q.d > 0 ? '+' : '';\n    out += '  Change: ' + dir + (q.d != null ? q.d.toFixed(2) : '') + ' (' + dir + (q.dp != null ? q.dp.toFixed(2) : '') + '%)\\n';\n    out += '  Day range: ' + q.l + ' \u2013 ' + q.h + '\\n';\n    out += '  Open: ' + q.o + '\\n';\n    out += '  Prev close: ' + q.pc + '\\n';\n    if (q.t) out += '  As of: ' + formatTs(q.t) + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Finnhub quote failed: ' + err.message } }];\n  }\n\n// === get_company_profile ===\n} else if (action === 'get_company_profile') {\n  const symbol = (input.symbol || '').toUpperCase().trim();\n  if (!symbol) return [{ json: { error: 'Parameter \"symbol\" is required (e.g. AAPL).' } }];\n\n  try {\n    const p = await helpers.httpRequest({ method: 'GET', url: API + '/stock/profile2?symbol=' + encodeURIComponent(symbol) + '&token=' + token });\n    if (!p || !p.name) {\n      return [{ json: { error: 'No profile found for symbol \"' + symbol + '\".' } }];\n    }\n    let out = '**' + p.name + '** (' + p.ticker + ')\\n';\n    if (p.finnhubIndustry) out += 'Industry: ' + p.finnhubIndustry + '\\n';\n    if (p.exchange) out += 'Exchange: ' + p.exchange + '\\n';\n    if (p.country) out += 'Country: ' + p.country + '\\n';\n    if (p.currency) out += 'Currency: ' + p.currency + '\\n';\n    if (p.marketCapitalization) out += 'Market cap: ' + formatCap(p.marketCapitalization) + ' ' + (p.currency || 'USD') + '\\n';\n    if (p.shareOutstanding) out += 'Shares outstanding: ' + p.shareOutstanding.toFixed(2) + 'M\\n';\n    if (p.ipo) out += 'IPO: ' + p.ipo + '\\n';\n    if (p.weburl) out += 'Web: ' + p.weburl + '\\n';\n    if (p.logo) out += 'Logo: ' + p.logo + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Finnhub profile failed: ' + err.message } }];\n  }\n\n// === get_company_news ===\n} else if (action === 'get_company_news') {\n  const symbol = (input.symbol || '').toUpperCase().trim();\n  if (!symbol) return [{ json: { error: 'Parameter \"symbol\" is required.' } }];\n  const days = Math.min(parseInt(input.days) || 7, 30);\n  const limit = Math.min(parseInt(input.limit) || 5, 15);\n\n  const now = new Date();\n  const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);\n\n  try {\n    const news = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/company-news?symbol=' + encodeURIComponent(symbol) + '&from=' + isoDate(from) + '&to=' + isoDate(now) + '&token=' + token\n    });\n    if (!Array.isArray(news) || news.length === 0) {\n      return [{ json: { result: 'No news for ' + symbol + ' in the last ' + days + ' days.' } }];\n    }\n    const slice = news.slice(0, limit);\n    let out = 'Latest news for ' + symbol + ' (' + news.length + ' total, showing ' + slice.length + '):\\n\\n';\n    for (const n of slice) {\n      out += '[' + (n.source || 'news') + '] ' + formatTs(n.datetime) + '\\n';\n      out += '  ' + (n.headline || '') + '\\n';\n      if (n.summary) out += '  ' + n.summary.substring(0, 200) + (n.summary.length > 200 ? '...' : '') + '\\n';\n      if (n.url) out += '  ' + n.url + '\\n';\n      out += '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Finnhub news failed: ' + err.message } }];\n  }\n\n// === search_symbol ===\n} else if (action === 'search_symbol') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required (company name or partial ticker).' } }];\n\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: API + '/search?q=' + encodeURIComponent(query) + '&token=' + token });\n    const results = data.result || [];\n    if (results.length === 0) return [{ json: { result: 'No symbols found for: ' + query } }];\n    const slice = results.slice(0, 10);\n    let out = 'Found ' + data.count + ' symbols, showing top ' + slice.length + ':\\n\\n';\n    for (const r of slice) {\n      out += (r.displaySymbol || r.symbol) + ' \u2014 ' + r.description + ' (' + (r.type || 'unknown') + ')\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Finnhub search failed: ' + err.message } }];\n  }\n\n// === get_market_status ===\n} else if (action === 'get_market_status') {\n  const exchange = (input.exchange || 'US').toUpperCase();\n  try {\n    const s = await helpers.httpRequest({ method: 'GET', url: API + '/stock/market-status?exchange=' + encodeURIComponent(exchange) + '&token=' + token });\n    let out = 'Market: ' + s.exchange + '\\n';\n    out += 'Status: ' + (s.isOpen ? 'OPEN' : 'CLOSED') + '\\n';\n    if (s.session) out += 'Session: ' + s.session + '\\n';\n    if (s.holiday) out += 'Holiday: ' + s.holiday + '\\n';\n    if (s.timezone) out += 'Timezone: ' + s.timezone + '\\n';\n    if (s.t) out += 'As of: ' + formatTs(s.t) + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Finnhub market status failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: get_quote, get_company_profile, get_company_news, search_symbol, get_market_status.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Finnhub Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Finnhub Stocks",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "finnhub"
+        }
+      },
+      {
+        "id": "tool-quote",
+        "name": "get_quote",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "get_quote",
+          "description": "Current stock price and daily change for a ticker symbol. Parameters: symbol (required, e.g. AAPL, MSFT, TSLA). Use search_symbol first if you only know the company name.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_quote",
+              "symbol": "={{ $fromAI('symbol', 'Stock ticker symbol (e.g. AAPL)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "symbol", "displayName": "symbol", "type": "string", "description": "Ticker symbol", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-profile",
+        "name": "get_company_profile",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "get_company_profile",
+          "description": "Company profile: industry, market cap, exchange, IPO date, website, logo. Parameters: symbol (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_company_profile",
+              "symbol": "={{ $fromAI('symbol', 'Stock ticker symbol', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "symbol", "displayName": "symbol", "type": "string", "description": "Ticker symbol", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-news",
+        "name": "get_company_news",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "get_company_news",
+          "description": "Recent news articles about a specific company. Parameters: symbol (required), days (optional, default 7, max 30), limit (optional, default 5, max 15).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_company_news",
+              "symbol": "={{ $fromAI('symbol', 'Stock ticker symbol', 'string') }}",
+              "days": "={{ $fromAI('days', 'Lookback window in days (default 7, max 30)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Number of headlines (default 5, max 15)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "symbol", "displayName": "symbol", "type": "string", "description": "Ticker symbol", "required": true },
+              { "id": "days", "displayName": "days", "type": "string", "description": "Lookback days", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Number of headlines", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-search",
+        "name": "search_symbol",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "search_symbol",
+          "description": "Find ticker symbols by company name. Use when the user refers to a company by name (e.g. \"Apple\", \"Tesla\") and you need the symbol (\"AAPL\", \"TSLA\") for other tools. Parameters: query (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_symbol",
+              "query": "={{ $fromAI('query', 'Company name or partial ticker', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "description": "Search query", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-market-status",
+        "name": "get_market_status",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "get_market_status",
+          "description": "Check if a stock exchange is currently open. Parameters: exchange (optional, default US; also supports L, T, HK, etc.).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_market_status",
+              "exchange": "={{ $fromAI('exchange', 'Exchange code (default US; e.g. L for London, T for Tokyo, HK)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "exchange", "displayName": "exchange", "type": "string", "description": "Exchange code", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "get_quote": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_company_profile": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_company_news": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "search_symbol": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_market_status": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}

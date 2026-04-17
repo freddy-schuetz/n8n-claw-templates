@@ -616,6 +616,17 @@
         { "key": "openaq_api_key", "label": "OpenAQ API Key" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "finnhub",
+      "name": "Finnhub Stocks",
+      "type": "native",
+      "category": "finance",
+      "description": "Real-time stock quotes, company profiles, news and symbol search via Finnhub (free tier: 60 calls/min).",
+      "credentials_required": [
+        { "key": "finnhub_api_key", "label": "Finnhub API Key" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
