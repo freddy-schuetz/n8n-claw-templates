@@ -1,11 +1,11 @@
 {
   "id": "zoho-crm",
   "name": "Zoho CRM",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "marketing",
-  "description": "Zoho CRM (28 tools): full read/write on Leads, Contacts, Accounts, Deals, Tasks, Cases via REST API v8. Plus COQL query and dynamic fields discovery — returns ALL fields incl. custom per Zoho org. Auth via Self-Client OAuth (one-time grant code exchange, then refresh-token-based server-to-server access). Regional endpoints: .com, .eu, .in, .com.au, .jp, .com.cn.",
+  "description": "Zoho CRM (37 tools): full read/write on Leads (incl. convert_lead), Contacts, Accounts, Deals, Tasks, Cases via REST API v8 — plus Notes CRUD, Users listing, COQL query, and dynamic fields discovery (returns ALL fields incl. custom per Zoho org). Auth via Self-Client OAuth (one-time grant code exchange, then refresh-token-based server-to-server access). Regional endpoints: .com, .eu, .in, .com.au, .jp, .com.cn.",
   "credentials_required": [
     {
       "key": "zoho_region",
@@ -52,6 +52,10 @@
     {
       "name": "delete_lead",
       "description": "Delete Lead by Id. Soft-Delete — restorable from Recycle Bin for 60 days."
+    },
+    {
+      "name": "convert_lead",
+      "description": "Convert a Lead into Contact + Account (+ optional Deal) — Zoho's classic Lead-Qualification flow. Required: lead_id. Optional Deal creation: Deal_Name, Stage, Closing_Date (all three required together if any is set), plus Amount, Probability. Optional: assign_to (user ID). Returns the IDs of the newly created Contact/Account/Deal."
     },
     {
       "name": "list_contacts",
@@ -122,16 +126,48 @@
       "description": "List recent Tasks. Returns all fields. Optional: limit"
     },
     {
+      "name": "get_task",
+      "description": "Get single Task by Id. Returns all fields incl. custom."
+    },
+    {
       "name": "create_task",
       "description": "Create Task. Required: Subject. Optional: Description, Status (Not Started|In Progress|Completed|Deferred|Waiting for input), Priority (High|Highest|Low|Lowest|Normal), Due_Date (YYYY-MM-DD), What_Id (Account/Deal ID), Who_Id (Contact/Lead ID), Owner (user ID), custom_fields"
+    },
+    {
+      "name": "update_task",
+      "description": "Update Task by Id — common use: mark Status=Completed. Any of: Subject, Status, Priority, Due_Date, Description, custom_fields."
+    },
+    {
+      "name": "delete_task",
+      "description": "Delete Task by Id (Soft-Delete, 60d Recycle Bin)."
     },
     {
       "name": "list_cases",
       "description": "List recent Cases (Service module). Returns all fields. Optional: limit"
     },
     {
+      "name": "get_case",
+      "description": "Get single Case by Id. Returns all fields incl. custom."
+    },
+    {
       "name": "create_case",
       "description": "Create Case. Required: Subject, Status (New|On Hold|Closed|Escalated). Optional: Description, Priority (High|Low|Normal), Case_Origin (Email|Phone|Web), Type, Account_Name (as ID), Contact_Name (as ID), custom_fields"
+    },
+    {
+      "name": "update_case",
+      "description": "Update Case by Id — common use: Status transitions and resolution notes. Any of: Subject, Status, Priority, Description, Case_Origin, custom_fields."
+    },
+    {
+      "name": "list_notes",
+      "description": "List Notes attached to any record. Required: parent_module (Leads|Contacts|Accounts|Deals|Tasks|Cases), parent_id (record ID). Optional: limit. Notes are Zoho's record-level activity log / comments."
+    },
+    {
+      "name": "create_note",
+      "description": "Attach a Note to any Zoho record — common for logging interactions, call outcomes, status updates. Required: parent_module (Leads|Contacts|Accounts|Deals|Tasks|Cases), parent_id. At least one of Note_Title or Note_Content."
+    },
+    {
+      "name": "list_users",
+      "description": "List Zoho CRM users — use to find Owner/assignee user IDs for create_task (Owner param) or convert_lead (assign_to). Optional: type (ActiveUsers|DeactiveUsers|AdminUsers|CurrentUser|...). Default: ActiveUsers."
     },
     {
       "name": "coql_query",

@@ -897,7 +897,7 @@
       "name": "Zoho CRM",
       "type": "native",
       "category": "marketing",
-      "description": "Zoho CRM (28 tools): Leads, Contacts, Accounts, Deals, Tasks, Cases + COQL query + describe_module. Dynamic field discovery — returns ALL fields incl. custom per Zoho org. Self-Client OAuth (refresh token). Regional endpoints (.com, .eu, .in, .com.au, .jp, .com.cn).",
+      "description": "Zoho CRM (37 tools): Leads (incl. convert_lead), Contacts, Accounts, Deals, Tasks (full CRUD), Cases, Notes (CRUD), Users + COQL + describe_module. Dynamic field discovery — returns ALL fields incl. custom per Zoho org. Self-Client OAuth (refresh token). Regional endpoints (.com, .eu, .in, .com.au, .jp, .com.cn).",
       "credentials_required": [
         {
           "key": "zoho_region",
@@ -916,7 +916,7 @@
           "label": "Refresh Token"
         }
       ],
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

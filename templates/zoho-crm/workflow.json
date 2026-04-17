@@ -31,7 +31,7 @@
           0
         ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.zoho-crm&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.zoho_client_id || !creds.zoho_client_secret || !creds.zoho_refresh_token) {\n  return [{ json: { error: 'Zoho credentials missing. Need: zoho_region, zoho_client_id, zoho_client_secret, zoho_refresh_token. Register a Self-Client at https://api-console.zoho.{region}/ and exchange a grant code for a refresh token.' } }];\n}\n\nconst REGION = String(creds.zoho_region || 'eu').trim().replace(/^\\./, '');\nconst ACCOUNTS = 'https://accounts.zoho.' + REGION;\nconst API = 'https://www.zohoapis.' + REGION + '/crm/v8';\n\nfunction truncate(text, max) {\n  max = max || 6000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total — use specific filters or smaller limit)';\n  return text;\n}\n\nfunction errMsg(err) {\n  if (!err) return 'unknown error';\n  const resp = err.response || {};\n  const b = resp.body || resp.data;\n  if (b) {\n    if (typeof b === 'string') return b;\n    if (b.code && b.message) {\n      let s = b.code + ': ' + b.message;\n      if (b.details && Object.keys(b.details).length) s += ' (' + JSON.stringify(b.details) + ')';\n      return s;\n    }\n    if (Array.isArray(b) && b[0]) {\n      const e = b[0];\n      return (e.code ? e.code + ': ' : '') + (e.message || JSON.stringify(e));\n    }\n    if (b.error_description) return String(b.error_description);\n    if (b.error && typeof b.error === 'string') return b.error;\n    if (b.message) return String(b.message);\n    try { return JSON.stringify(b); } catch (e) {}\n  }\n  if (err.description && typeof err.description === 'string') return err.description;\n  if (err.message && typeof err.message === 'string') return err.message;\n  if (err.cause) return errMsg(err.cause);\n  try { return JSON.stringify(err, Object.getOwnPropertyNames(err)); } catch (e) {}\n  return String(err);\n}\n\n// --- Auth: refresh access token ---\nlet accessToken;\ntry {\n  const tokenResp = await helpers.httpRequest({\n    method: 'POST',\n    url: ACCOUNTS + '/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: 'grant_type=refresh_token&client_id=' + encodeURIComponent(creds.zoho_client_id) + '&client_secret=' + encodeURIComponent(creds.zoho_client_secret) + '&refresh_token=' + encodeURIComponent(creds.zoho_refresh_token),\n    json: true\n  });\n  accessToken = tokenResp.access_token;\n  if (!accessToken) return [{ json: { error: 'Zoho auth failed: no access_token. Response: ' + JSON.stringify(tokenResp) + '. Check zoho_region (' + REGION + '), client_id/secret, and refresh_token validity.' } }];\n} catch (err) {\n  return [{ json: { error: 'Zoho auth failed: ' + errMsg(err) + '. Likely causes: wrong region (you set \"' + REGION + '\"), invalid refresh_token, revoked client. Re-run the Self-Client grant-code exchange.' } }];\n}\n\nconst authHeaders = { 'Authorization': 'Zoho-oauthtoken ' + accessToken };\nconst jsonHeaders = Object.assign({}, authHeaders, { 'Content-Type': 'application/json' });\n\nasync function zGet(path) {\n  return await helpers.httpRequest({ method: 'GET', url: API + path, headers: authHeaders, json: true });\n}\nasync function zPost(path, body) {\n  return await helpers.httpRequest({ method: 'POST', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zPut(path, body) {\n  return await helpers.httpRequest({ method: 'PUT', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zDelete(path) {\n  return await helpers.httpRequest({ method: 'DELETE', url: API + path, headers: authHeaders, json: true });\n}\n\n// --- Dynamic field discovery (cache per execution) ---\nconst fieldCache = {};\nasync function getFields(moduleName) {\n  if (fieldCache[moduleName]) return fieldCache[moduleName];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const names = (r.fields || []).map(function(f){ return f.api_name; }).filter(Boolean);\n    fieldCache[moduleName] = names;\n    return names;\n  } catch (err) {\n    return [];\n  }\n}\n\nasync function fieldsParam(moduleName) {\n  const names = await getFields(moduleName);\n  if (!names.length) return '';\n  return '&fields=' + encodeURIComponent(names.join(','));\n}\n\nfunction mergeCustomFields(props, raw) {\n  if (!raw) return props;\n  let obj;\n  try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return props; }\n  if (obj && typeof obj === 'object') Object.assign(props, obj);\n  return props;\n}\n\nfunction buildProps(input, allowed) {\n  const props = {};\n  for (const f of allowed) if (input[f] !== undefined && input[f] !== '' && input[f] !== null) props[f] = input[f];\n  mergeCustomFields(props, input.custom_fields);\n  return props;\n}\n\nfunction recCreateOK(resp) {\n  // Zoho wraps in {\"data\":[{\"code\":\"SUCCESS\",\"details\":{\"id\":\"...\",\"Modified_Time\":...}}]}\n  if (!resp || !resp.data || !resp.data[0]) return { ok: false, err: 'empty response' };\n  const d = resp.data[0];\n  if (d.code === 'SUCCESS') return { ok: true, id: d.details && d.details.id };\n  return { ok: false, err: (d.code || 'ERROR') + ': ' + (d.message || JSON.stringify(d)) };\n}\n\nfunction fmtRec(rec, primary) {\n  // Render a record as \"id - primary-field (extra1, extra2)\"\n  const id = rec.id || '(no id)';\n  const name = primary ? (rec[primary] || '') : '';\n  const kv = [];\n  const skipKeys = { id: 1, '$approved': 1, '$approval': 1, '$currency_symbol': 1, '$converted': 1, '$editable': 1, '$process_flow': 1, '$review_process': 1, '$se_module': 1, '$review': 1, '$orchestration': 1, '$in_merge': 1, '$approval_state': 1, '$state': 1, '$locked_for_me': 1, 'Tag': 1 };\n  skipKeys[primary] = 1;\n  for (const k of Object.keys(rec)) {\n    if (k.startsWith('$') || skipKeys[k]) continue;\n    const v = rec[k];\n    if (v === null || v === undefined || v === '') continue;\n    if (typeof v === 'object') {\n      if (v.name) kv.push(k + '=' + v.name);\n      continue;\n    }\n    const s = String(v);\n    if (s.length > 60) continue;\n    kv.push(k + '=' + s);\n  }\n  return id + (name ? ' - ' + name : '') + (kv.length ? ' | ' + kv.slice(0, 8).join(' | ') : '');\n}\n\n// Generic list handler\nasync function listRecords(moduleName, primary, limit) {\n  const lim = Math.min(Math.max(parseInt(limit) || 10, 1), 200);\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '?per_page=' + lim + fq);\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No ' + moduleName + '.' } }];\n    let out = moduleName + ' (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    if (r.info && r.info.more_records) out += '\\n(more records available, raise limit or filter)';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho list ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function searchRecords(moduleName, primary, input) {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const word = input.word;\n  const field = input.field;\n  const operator = input.operator;\n  const value = input.value;\n  let queryStr;\n  if (word) {\n    queryStr = 'word=' + encodeURIComponent(word);\n  } else if (field && operator && value !== undefined && value !== '') {\n    const op = String(operator).toLowerCase();\n    if (['equals', 'starts_with', 'contains'].indexOf(op) < 0) return [{ json: { error: 'Invalid operator \"' + operator + '\". Use: equals | starts_with | contains.' } }];\n    queryStr = 'criteria=' + encodeURIComponent('(' + field + ':' + op + ':' + value + ')');\n  } else {\n    return [{ json: { error: 'Provide either \"word\" (full-text across all fields) OR \"field\" + \"operator\" (equals|starts_with|contains) + \"value\".' } }];\n  }\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/search?' + queryStr + '&per_page=' + limit + fq);\n    const items = (r && r.data) || [];\n    if (items.length === 0) return [{ json: { result: 'No matches.' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    if (err && err.response && err.response.statusCode === 204) return [{ json: { result: 'No matches.' } }];\n    return [{ json: { error: 'Zoho search ' + moduleName + ': ' + errMsg(err) } }];\n  }\n}\n\nasync function getRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required (Zoho record ID, 18-digit numeric).' } }];\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/' + encodeURIComponent(id) + '?' + fq.replace(/^&/, ''));\n    const rec = (r.data || [])[0];\n    if (!rec) return [{ json: { result: 'Record not found.' } }];\n    let out = moduleName + ' ' + rec.id + '\\n';\n    for (const k of Object.keys(rec)) {\n      if (k.startsWith('$') || k === 'id' || k === 'Tag') continue;\n      const v = rec[k];\n      if (v === null || v === undefined || v === '') continue;\n      if (typeof v === 'object') {\n        if (v.name) out += k + ': ' + v.name + (v.id ? ' (' + v.id + ')' : '') + '\\n';\n      } else {\n        let s = String(v);\n        if (s.length > 300) s = s.substring(0, 300) + '…';\n        out += k + ': ' + s + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho get ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function createRecord(moduleName, props, label) {\n  try {\n    const resp = await zPost('/' + moduleName, { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' created: ' + ok.id } }];\n    return [{ json: { error: 'Zoho create ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho create ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function updateRecord(moduleName, id, props, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    const resp = await zPut('/' + moduleName + '/' + encodeURIComponent(id), { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' updated.' } }];\n    return [{ json: { error: 'Zoho update ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho update ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function deleteRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  try {\n    const resp = await zDelete('/' + moduleName + '/' + encodeURIComponent(id));\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' deleted (Soft-Delete — restorable from Recycle Bin for 60 days).' } }];\n    return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\n// === LEADS ===\nif (action === 'list_leads') {\n  return await listRecords('Leads', 'Last_Name', input.limit);\n} else if (action === 'search_leads') {\n  return await searchRecords('Leads', 'Last_Name', input);\n} else if (action === 'get_lead') {\n  return await getRecord('Leads', input.lead_id || input.id, 'lead');\n} else if (action === 'create_lead') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  if (!input.Company) return [{ json: { error: 'Parameter \"Company\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await createRecord('Leads', props, 'Lead');\n} else if (action === 'update_lead') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await updateRecord('Leads', input.lead_id || input.id, props, 'Lead');\n} else if (action === 'delete_lead') {\n  return await deleteRecord('Leads', input.lead_id || input.id, 'Lead');\n\n// === CONTACTS ===\n} else if (action === 'list_contacts') {\n  return await listRecords('Contacts', 'Last_Name', input.limit);\n} else if (action === 'search_contacts') {\n  return await searchRecords('Contacts', 'Last_Name', input);\n} else if (action === 'get_contact') {\n  return await getRecord('Contacts', input.contact_id || input.id, 'contact');\n} else if (action === 'create_contact') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await createRecord('Contacts', props, 'Contact');\n} else if (action === 'update_contact') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await updateRecord('Contacts', input.contact_id || input.id, props, 'Contact');\n} else if (action === 'delete_contact') {\n  return await deleteRecord('Contacts', input.contact_id || input.id, 'Contact');\n\n// === ACCOUNTS ===\n} else if (action === 'list_accounts') {\n  return await listRecords('Accounts', 'Account_Name', input.limit);\n} else if (action === 'search_accounts') {\n  return await searchRecords('Accounts', 'Account_Name', input);\n} else if (action === 'get_account') {\n  return await getRecord('Accounts', input.account_id || input.id, 'account');\n} else if (action === 'create_account') {\n  if (!input.Account_Name) return [{ json: { error: 'Parameter \"Account_Name\" is required.' } }];\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await createRecord('Accounts', props, 'Account');\n} else if (action === 'update_account') {\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await updateRecord('Accounts', input.account_id || input.id, props, 'Account');\n\n// === DEALS ===\n} else if (action === 'list_deals') {\n  return await listRecords('Deals', 'Deal_Name', input.limit);\n} else if (action === 'search_deals') {\n  return await searchRecords('Deals', 'Deal_Name', input);\n} else if (action === 'get_deal') {\n  return await getRecord('Deals', input.deal_id || input.id, 'deal');\n} else if (action === 'create_deal') {\n  if (!input.Deal_Name) return [{ json: { error: 'Parameter \"Deal_Name\" is required.' } }];\n  if (!input.Stage) return [{ json: { error: 'Parameter \"Stage\" is required (common: Qualification, Needs Analysis, Value Proposition, Identify Decision Makers, Proposal/Price Quote, Negotiation/Review, Closed Won, Closed Lost). Use describe_module Deals to see exact picklist.' } }];\n  if (!input.Closing_Date) return [{ json: { error: 'Parameter \"Closing_Date\" (YYYY-MM-DD) is required.' } }];\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await createRecord('Deals', props, 'Deal');\n} else if (action === 'update_deal') {\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await updateRecord('Deals', input.deal_id || input.id, props, 'Deal');\n\n// === TASKS ===\n} else if (action === 'list_tasks') {\n  return await listRecords('Tasks', 'Subject', input.limit);\n} else if (action === 'create_task') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'Due_Date', 'What_Id', 'Who_Id', 'Owner']);\n  return await createRecord('Tasks', props, 'Task');\n\n// === CASES ===\n} else if (action === 'list_cases') {\n  return await listRecords('Cases', 'Subject', input.limit);\n} else if (action === 'create_case') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  if (!input.Status) return [{ json: { error: 'Parameter \"Status\" is required (New|On Hold|Closed|Escalated).' } }];\n  const props = buildProps(input, ['Subject', 'Status', 'Description', 'Priority', 'Case_Origin', 'Type', 'Account_Name', 'Contact_Name', 'Reason']);\n  return await createRecord('Cases', props, 'Case');\n\n// === GENERIC ===\n} else if (action === 'coql_query') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Zoho v8 REQUIRES a WHERE clause. Example: \"SELECT First_Name, Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10\". Use Zoho field api_names (Last_Name not lastname — run describe_module to list them).' } }];\n  try {\n    const resp = await zPost('/coql', { select_query: String(query) });\n    const items = resp.data || [];\n    if (items.length === 0) return [{ json: { result: 'Query returned 0 records.' } }];\n    let out = 'COQL result (' + items.length + (resp.info && resp.info.more_records ? ', more available' : '') + '):\\n';\n    for (const rec of items) {\n      const kv = [];\n      for (const k of Object.keys(rec)) {\n        if (k.startsWith('$')) continue;\n        const v = rec[k];\n        if (v === null || v === undefined || v === '') continue;\n        if (typeof v === 'object') { if (v.name) kv.push(k + '=' + v.name); continue; }\n        kv.push(k + '=' + String(v));\n      }\n      out += '  ' + kv.join(' | ') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho coql_query: ' + errMsg(err) } }]; }\n\n} else if (action === 'describe_module') {\n  const moduleName = input.module_name || input.module;\n  if (!moduleName) return [{ json: { error: 'Parameter \"module_name\" is required (e.g. Leads, Contacts, Accounts, Deals, Tasks, Cases, Products, Quotes).' } }];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const fields = r.fields || [];\n    if (!fields.length) return [{ json: { result: 'No fields returned for module \"' + moduleName + '\". Check spelling (case-sensitive).' } }];\n    let out = 'Module: ' + moduleName + ' — ' + fields.length + ' fields\\n';\n    for (const f of fields) {\n      let line = '  ' + f.api_name + ' (' + (f.data_type || '?') + ')';\n      if (f.custom_field) line += ' [custom]';\n      if (f.system_mandatory || (f.required)) line += ' REQUIRED';\n      if (!f.read_only === false && f.read_only) line += ' [read-only]';\n      if (f.data_type === 'picklist' && f.pick_list_values && f.pick_list_values.length) {\n        const vals = f.pick_list_values.map(function(p){ return p.actual_value || p.display_value; }).filter(Boolean);\n        if (vals.length) line += ' values=[' + vals.slice(0, 10).join(', ') + (vals.length > 10 ? ', ...' : '') + ']';\n      }\n      out += line + '\\n';\n    }\n    return [{ json: { result: truncate(out, 10000) } }];\n  } catch (err) { return [{ json: { error: 'Zoho describe_module: ' + errMsg(err) } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_leads, search_leads, get_lead, create_lead, update_lead, delete_lead, list_contacts, search_contacts, get_contact, create_contact, update_contact, delete_contact, list_accounts, search_accounts, get_account, create_account, update_account, list_deals, search_deals, get_deal, create_deal, update_deal, list_tasks, create_task, list_cases, create_case, coql_query, describe_module.' } }];\n}\n"
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.zoho-crm&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.zoho_client_id || !creds.zoho_client_secret || !creds.zoho_refresh_token) {\n  return [{ json: { error: 'Zoho credentials missing. Need: zoho_region, zoho_client_id, zoho_client_secret, zoho_refresh_token. Register a Self-Client at https://api-console.zoho.{region}/ and exchange a grant code for a refresh token.' } }];\n}\n\nconst REGION = String(creds.zoho_region || 'eu').trim().replace(/^\\./, '');\nconst ACCOUNTS = 'https://accounts.zoho.' + REGION;\nconst API = 'https://www.zohoapis.' + REGION + '/crm/v8';\n\nfunction truncate(text, max) {\n  max = max || 6000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total — use specific filters or smaller limit)';\n  return text;\n}\n\nfunction errMsg(err) {\n  if (!err) return 'unknown error';\n  const resp = err.response || {};\n  const b = resp.body || resp.data;\n  if (b) {\n    if (typeof b === 'string') return b;\n    if (b.code && b.message) {\n      let s = b.code + ': ' + b.message;\n      if (b.details && Object.keys(b.details).length) s += ' (' + JSON.stringify(b.details) + ')';\n      return s;\n    }\n    if (Array.isArray(b) && b[0]) {\n      const e = b[0];\n      return (e.code ? e.code + ': ' : '') + (e.message || JSON.stringify(e));\n    }\n    if (b.error_description) return String(b.error_description);\n    if (b.error && typeof b.error === 'string') return b.error;\n    if (b.message) return String(b.message);\n    try { return JSON.stringify(b); } catch (e) {}\n  }\n  if (err.description && typeof err.description === 'string') return err.description;\n  if (err.message && typeof err.message === 'string') return err.message;\n  if (err.cause) return errMsg(err.cause);\n  try { return JSON.stringify(err, Object.getOwnPropertyNames(err)); } catch (e) {}\n  return String(err);\n}\n\n// --- Auth: refresh access token ---\nlet accessToken;\ntry {\n  const tokenResp = await helpers.httpRequest({\n    method: 'POST',\n    url: ACCOUNTS + '/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: 'grant_type=refresh_token&client_id=' + encodeURIComponent(creds.zoho_client_id) + '&client_secret=' + encodeURIComponent(creds.zoho_client_secret) + '&refresh_token=' + encodeURIComponent(creds.zoho_refresh_token),\n    json: true\n  });\n  accessToken = tokenResp.access_token;\n  if (!accessToken) return [{ json: { error: 'Zoho auth failed: no access_token. Response: ' + JSON.stringify(tokenResp) + '. Check zoho_region (' + REGION + '), client_id/secret, and refresh_token validity.' } }];\n} catch (err) {\n  return [{ json: { error: 'Zoho auth failed: ' + errMsg(err) + '. Likely causes: wrong region (you set \"' + REGION + '\"), invalid refresh_token, revoked client. Re-run the Self-Client grant-code exchange.' } }];\n}\n\nconst authHeaders = { 'Authorization': 'Zoho-oauthtoken ' + accessToken };\nconst jsonHeaders = Object.assign({}, authHeaders, { 'Content-Type': 'application/json' });\n\nasync function zGet(path) {\n  return await helpers.httpRequest({ method: 'GET', url: API + path, headers: authHeaders, json: true });\n}\nasync function zPost(path, body) {\n  return await helpers.httpRequest({ method: 'POST', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zPut(path, body) {\n  return await helpers.httpRequest({ method: 'PUT', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zDelete(path) {\n  return await helpers.httpRequest({ method: 'DELETE', url: API + path, headers: authHeaders, json: true });\n}\n\n// --- Dynamic field discovery (cache per execution) ---\nconst fieldCache = {};\nasync function getFields(moduleName) {\n  if (fieldCache[moduleName]) return fieldCache[moduleName];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const names = (r.fields || []).map(function(f){ return f.api_name; }).filter(Boolean);\n    fieldCache[moduleName] = names;\n    return names;\n  } catch (err) {\n    return [];\n  }\n}\n\nasync function fieldsParam(moduleName) {\n  const names = await getFields(moduleName);\n  if (!names.length) return '';\n  return '&fields=' + encodeURIComponent(names.join(','));\n}\n\nfunction mergeCustomFields(props, raw) {\n  if (!raw) return props;\n  let obj;\n  try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return props; }\n  if (obj && typeof obj === 'object') Object.assign(props, obj);\n  return props;\n}\n\nfunction buildProps(input, allowed) {\n  const props = {};\n  for (const f of allowed) if (input[f] !== undefined && input[f] !== '' && input[f] !== null) props[f] = input[f];\n  mergeCustomFields(props, input.custom_fields);\n  return props;\n}\n\nfunction recCreateOK(resp) {\n  // Zoho wraps in {\"data\":[{\"code\":\"SUCCESS\",\"details\":{\"id\":\"...\",\"Modified_Time\":...}}]}\n  if (!resp || !resp.data || !resp.data[0]) return { ok: false, err: 'empty response' };\n  const d = resp.data[0];\n  if (d.code === 'SUCCESS') return { ok: true, id: d.details && d.details.id };\n  return { ok: false, err: (d.code || 'ERROR') + ': ' + (d.message || JSON.stringify(d)) };\n}\n\nfunction fmtRec(rec, primary) {\n  // Render a record as \"id - primary-field (extra1, extra2)\"\n  const id = rec.id || '(no id)';\n  const name = primary ? (rec[primary] || '') : '';\n  const kv = [];\n  const skipKeys = { id: 1, '$approved': 1, '$approval': 1, '$currency_symbol': 1, '$converted': 1, '$editable': 1, '$process_flow': 1, '$review_process': 1, '$se_module': 1, '$review': 1, '$orchestration': 1, '$in_merge': 1, '$approval_state': 1, '$state': 1, '$locked_for_me': 1, 'Tag': 1 };\n  skipKeys[primary] = 1;\n  for (const k of Object.keys(rec)) {\n    if (k.startsWith('$') || skipKeys[k]) continue;\n    const v = rec[k];\n    if (v === null || v === undefined || v === '') continue;\n    if (typeof v === 'object') {\n      if (v.name) kv.push(k + '=' + v.name);\n      continue;\n    }\n    const s = String(v);\n    if (s.length > 60) continue;\n    kv.push(k + '=' + s);\n  }\n  return id + (name ? ' - ' + name : '') + (kv.length ? ' | ' + kv.slice(0, 8).join(' | ') : '');\n}\n\n// Generic list handler\nasync function listRecords(moduleName, primary, limit) {\n  const lim = Math.min(Math.max(parseInt(limit) || 10, 1), 200);\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '?per_page=' + lim + fq);\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No ' + moduleName + '.' } }];\n    let out = moduleName + ' (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    if (r.info && r.info.more_records) out += '\\n(more records available, raise limit or filter)';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho list ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function searchRecords(moduleName, primary, input) {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const word = input.word;\n  const field = input.field;\n  const operator = input.operator;\n  const value = input.value;\n  let queryStr;\n  if (word) {\n    queryStr = 'word=' + encodeURIComponent(word);\n  } else if (field && operator && value !== undefined && value !== '') {\n    const op = String(operator).toLowerCase();\n    if (['equals', 'starts_with', 'contains'].indexOf(op) < 0) return [{ json: { error: 'Invalid operator \"' + operator + '\". Use: equals | starts_with | contains.' } }];\n    queryStr = 'criteria=' + encodeURIComponent('(' + field + ':' + op + ':' + value + ')');\n  } else {\n    return [{ json: { error: 'Provide either \"word\" (full-text across all fields) OR \"field\" + \"operator\" (equals|starts_with|contains) + \"value\".' } }];\n  }\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/search?' + queryStr + '&per_page=' + limit + fq);\n    const items = (r && r.data) || [];\n    if (items.length === 0) return [{ json: { result: 'No matches.' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    if (err && err.response && err.response.statusCode === 204) return [{ json: { result: 'No matches.' } }];\n    return [{ json: { error: 'Zoho search ' + moduleName + ': ' + errMsg(err) } }];\n  }\n}\n\nasync function getRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required (Zoho record ID, 18-digit numeric).' } }];\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/' + encodeURIComponent(id) + '?' + fq.replace(/^&/, ''));\n    const rec = (r.data || [])[0];\n    if (!rec) return [{ json: { result: 'Record not found.' } }];\n    let out = moduleName + ' ' + rec.id + '\\n';\n    for (const k of Object.keys(rec)) {\n      if (k.startsWith('$') || k === 'id' || k === 'Tag') continue;\n      const v = rec[k];\n      if (v === null || v === undefined || v === '') continue;\n      if (typeof v === 'object') {\n        if (v.name) out += k + ': ' + v.name + (v.id ? ' (' + v.id + ')' : '') + '\\n';\n      } else {\n        let s = String(v);\n        if (s.length > 300) s = s.substring(0, 300) + '…';\n        out += k + ': ' + s + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho get ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function createRecord(moduleName, props, label) {\n  try {\n    const resp = await zPost('/' + moduleName, { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' created: ' + ok.id } }];\n    return [{ json: { error: 'Zoho create ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho create ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function updateRecord(moduleName, id, props, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    const resp = await zPut('/' + moduleName + '/' + encodeURIComponent(id), { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' updated.' } }];\n    return [{ json: { error: 'Zoho update ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho update ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function deleteRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  try {\n    const resp = await zDelete('/' + moduleName + '/' + encodeURIComponent(id));\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' deleted (Soft-Delete — restorable from Recycle Bin for 60 days).' } }];\n    return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\n// === LEADS ===\nif (action === 'list_leads') {\n  return await listRecords('Leads', 'Last_Name', input.limit);\n} else if (action === 'search_leads') {\n  return await searchRecords('Leads', 'Last_Name', input);\n} else if (action === 'get_lead') {\n  return await getRecord('Leads', input.lead_id || input.id, 'lead');\n} else if (action === 'create_lead') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  if (!input.Company) return [{ json: { error: 'Parameter \"Company\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await createRecord('Leads', props, 'Lead');\n} else if (action === 'update_lead') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await updateRecord('Leads', input.lead_id || input.id, props, 'Lead');\n} else if (action === 'delete_lead') {\n  return await deleteRecord('Leads', input.lead_id || input.id, 'Lead');\n} else if (action === 'convert_lead') {\n  const leadId = input.lead_id || input.id;\n  if (!leadId) return [{ json: { error: 'Parameter \"lead_id\" is required (Zoho Lead ID).' } }];\n  const entry = { overwrite: true, notify_lead_owner: false, notify_new_entity_owner: false };\n  if (input.Deal_Name || input.Stage || input.Closing_Date || input.Amount) {\n    if (!input.Deal_Name) return [{ json: { error: 'If creating a Deal during conversion, \"Deal_Name\" is required.' } }];\n    if (!input.Stage) return [{ json: { error: 'If creating a Deal during conversion, \"Stage\" is required (e.g. Qualification, Closed Won).' } }];\n    if (!input.Closing_Date) return [{ json: { error: 'If creating a Deal during conversion, \"Closing_Date\" (YYYY-MM-DD) is required.' } }];\n    const deal = { Deal_Name: input.Deal_Name, Stage: input.Stage, Closing_Date: input.Closing_Date };\n    if (input.Amount !== undefined && input.Amount !== '') deal.Amount = input.Amount;\n    if (input.Probability !== undefined && input.Probability !== '') deal.Probability = input.Probability;\n    entry.Deals = deal;\n  }\n  if (input.assign_to) entry.assign_to = input.assign_to;\n  try {\n    const resp = await zPost('/Leads/' + encodeURIComponent(leadId) + '/actions/convert', { data: [entry] });\n    const d = resp && resp.data && resp.data[0];\n    if (!d) return [{ json: { error: 'Empty convert response.' } }];\n    if (d.code !== 'SUCCESS') return [{ json: { error: 'Zoho convert_lead: ' + (d.code || 'ERROR') + ': ' + (d.message || JSON.stringify(d)) } }];\n    const det = d.details || {};\n    const parts = [];\n    if (det.Contacts) parts.push('Contact=' + det.Contacts.id + (det.Contacts.name ? ' (' + det.Contacts.name + ')' : ''));\n    if (det.Accounts) parts.push('Account=' + det.Accounts.id + (det.Accounts.name ? ' (' + det.Accounts.name + ')' : ''));\n    if (det.Deals) parts.push('Deal=' + det.Deals.id + (det.Deals.name ? ' (' + det.Deals.name + ')' : ''));\n    return [{ json: { result: 'Lead ' + leadId + ' converted successfully. ' + parts.join(', ') } }];\n  } catch (err) { return [{ json: { error: 'Zoho convert_lead: ' + errMsg(err) } }]; }\n\n// === CONTACTS ===\n} else if (action === 'list_contacts') {\n  return await listRecords('Contacts', 'Last_Name', input.limit);\n} else if (action === 'search_contacts') {\n  return await searchRecords('Contacts', 'Last_Name', input);\n} else if (action === 'get_contact') {\n  return await getRecord('Contacts', input.contact_id || input.id, 'contact');\n} else if (action === 'create_contact') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await createRecord('Contacts', props, 'Contact');\n} else if (action === 'update_contact') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await updateRecord('Contacts', input.contact_id || input.id, props, 'Contact');\n} else if (action === 'delete_contact') {\n  return await deleteRecord('Contacts', input.contact_id || input.id, 'Contact');\n\n// === ACCOUNTS ===\n} else if (action === 'list_accounts') {\n  return await listRecords('Accounts', 'Account_Name', input.limit);\n} else if (action === 'search_accounts') {\n  return await searchRecords('Accounts', 'Account_Name', input);\n} else if (action === 'get_account') {\n  return await getRecord('Accounts', input.account_id || input.id, 'account');\n} else if (action === 'create_account') {\n  if (!input.Account_Name) return [{ json: { error: 'Parameter \"Account_Name\" is required.' } }];\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await createRecord('Accounts', props, 'Account');\n} else if (action === 'update_account') {\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await updateRecord('Accounts', input.account_id || input.id, props, 'Account');\n\n// === DEALS ===\n} else if (action === 'list_deals') {\n  return await listRecords('Deals', 'Deal_Name', input.limit);\n} else if (action === 'search_deals') {\n  return await searchRecords('Deals', 'Deal_Name', input);\n} else if (action === 'get_deal') {\n  return await getRecord('Deals', input.deal_id || input.id, 'deal');\n} else if (action === 'create_deal') {\n  if (!input.Deal_Name) return [{ json: { error: 'Parameter \"Deal_Name\" is required.' } }];\n  if (!input.Stage) return [{ json: { error: 'Parameter \"Stage\" is required (common: Qualification, Needs Analysis, Value Proposition, Identify Decision Makers, Proposal/Price Quote, Negotiation/Review, Closed Won, Closed Lost). Use describe_module Deals to see exact picklist.' } }];\n  if (!input.Closing_Date) return [{ json: { error: 'Parameter \"Closing_Date\" (YYYY-MM-DD) is required.' } }];\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await createRecord('Deals', props, 'Deal');\n} else if (action === 'update_deal') {\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await updateRecord('Deals', input.deal_id || input.id, props, 'Deal');\n\n// === TASKS ===\n} else if (action === 'list_tasks') {\n  return await listRecords('Tasks', 'Subject', input.limit);\n} else if (action === 'get_task') {\n  return await getRecord('Tasks', input.task_id || input.id, 'task');\n} else if (action === 'create_task') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'Due_Date', 'What_Id', 'Who_Id', 'Owner']);\n  return await createRecord('Tasks', props, 'Task');\n} else if (action === 'update_task') {\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'Due_Date', 'What_Id', 'Who_Id', 'Owner']);\n  return await updateRecord('Tasks', input.task_id || input.id, props, 'Task');\n} else if (action === 'delete_task') {\n  return await deleteRecord('Tasks', input.task_id || input.id, 'Task');\n\n// === CASES ===\n} else if (action === 'list_cases') {\n  return await listRecords('Cases', 'Subject', input.limit);\n} else if (action === 'get_case') {\n  return await getRecord('Cases', input.case_id || input.id, 'case');\n} else if (action === 'create_case') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  if (!input.Status) return [{ json: { error: 'Parameter \"Status\" is required (New|On Hold|Closed|Escalated).' } }];\n  const props = buildProps(input, ['Subject', 'Status', 'Description', 'Priority', 'Case_Origin', 'Type', 'Account_Name', 'Contact_Name', 'Reason']);\n  return await createRecord('Cases', props, 'Case');\n} else if (action === 'update_case') {\n  const props = buildProps(input, ['Subject', 'Status', 'Description', 'Priority', 'Case_Origin', 'Type', 'Account_Name', 'Contact_Name', 'Reason']);\n  return await updateRecord('Cases', input.case_id || input.id, props, 'Case');\n\n// === NOTES ===\n} else if (action === 'list_notes') {\n  const parentModule = input.parent_module;\n  const parentId = input.parent_id;\n  if (!parentModule || !parentId) return [{ json: { error: 'Parameters \"parent_module\" (Leads|Contacts|Accounts|Deals|Tasks|Cases) and \"parent_id\" (record ID) are required.' } }];\n  const lim = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  try {\n    const r = await zGet('/' + encodeURIComponent(parentModule) + '/' + encodeURIComponent(parentId) + '/Notes?fields=Note_Title,Note_Content,Created_Time,Modified_Time,Created_By&per_page=' + lim);\n    const items = (r && r.data) || [];\n    if (items.length === 0) return [{ json: { result: 'No notes on ' + parentModule + ' ' + parentId + '.' } }];\n    let out = 'Notes (' + items.length + '):\\n';\n    for (const n of items) {\n      const t = n.Note_Title || '(no title)';\n      const c = (n.Note_Content || '').replace(/\\s+/g, ' ').substring(0, 200);\n      const by = n.Created_By && n.Created_By.name ? ' by ' + n.Created_By.name : '';\n      const when = n.Created_Time ? ' ' + n.Created_Time.substring(0, 10) : '';\n      out += '  ' + n.id + by + when + ' — ' + t + (c ? ': ' + c : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    if (err && err.response && err.response.statusCode === 204) return [{ json: { result: 'No notes.' } }];\n    return [{ json: { error: 'Zoho list_notes: ' + errMsg(err) } }];\n  }\n} else if (action === 'create_note') {\n  const parentModule = input.parent_module;\n  const parentId = input.parent_id;\n  if (!parentModule || !parentId) return [{ json: { error: 'Parameters \"parent_module\" and \"parent_id\" are required.' } }];\n  if (!input.Note_Title && !input.Note_Content) return [{ json: { error: 'At least one of \"Note_Title\" or \"Note_Content\" is required.' } }];\n  const entry = {\n    Parent_Id: { id: parentId, module: { api_name: parentModule } }\n  };\n  if (input.Note_Title) entry.Note_Title = input.Note_Title;\n  if (input.Note_Content) entry.Note_Content = input.Note_Content;\n  try {\n    const resp = await zPost('/Notes', { data: [entry] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: 'Note created: ' + ok.id + ' on ' + parentModule + ' ' + parentId } }];\n    return [{ json: { error: 'Zoho create_note: ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho create_note: ' + errMsg(err) } }]; }\n\n// === USERS ===\n} else if (action === 'list_users') {\n  const userType = input.type || 'ActiveUsers';\n  try {\n    const r = await zGet('/users?type=' + encodeURIComponent(userType));\n    const users = (r && r.users) || [];\n    if (users.length === 0) return [{ json: { result: 'No users of type \"' + userType + '\".' } }];\n    let out = 'Users (' + users.length + ', type=' + userType + '):\\n';\n    for (const u of users) {\n      const role = u.role && u.role.name ? ' [' + u.role.name + ']' : '';\n      const profile = u.profile && u.profile.name ? ' (' + u.profile.name + ')' : '';\n      out += '  ' + u.id + ' — ' + (u.full_name || (u.first_name || '') + ' ' + (u.last_name || '')).trim() + profile + role + ' <' + (u.email || '') + '>\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho list_users: ' + errMsg(err) } }]; }\n\n// === GENERIC ===\n} else if (action === 'coql_query') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Zoho v8 REQUIRES a WHERE clause. Example: \"SELECT First_Name, Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10\". Use Zoho field api_names (Last_Name not lastname — run describe_module to list them).' } }];\n  try {\n    const resp = await zPost('/coql', { select_query: String(query) });\n    const items = resp.data || [];\n    if (items.length === 0) return [{ json: { result: 'Query returned 0 records.' } }];\n    let out = 'COQL result (' + items.length + (resp.info && resp.info.more_records ? ', more available' : '') + '):\\n';\n    for (const rec of items) {\n      const kv = [];\n      for (const k of Object.keys(rec)) {\n        if (k.startsWith('$')) continue;\n        const v = rec[k];\n        if (v === null || v === undefined || v === '') continue;\n        if (typeof v === 'object') { if (v.name) kv.push(k + '=' + v.name); continue; }\n        kv.push(k + '=' + String(v));\n      }\n      out += '  ' + kv.join(' | ') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho coql_query: ' + errMsg(err) } }]; }\n\n} else if (action === 'describe_module') {\n  const moduleName = input.module_name || input.module;\n  if (!moduleName) return [{ json: { error: 'Parameter \"module_name\" is required (e.g. Leads, Contacts, Accounts, Deals, Tasks, Cases, Products, Quotes).' } }];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const fields = r.fields || [];\n    if (!fields.length) return [{ json: { result: 'No fields returned for module \"' + moduleName + '\". Check spelling (case-sensitive).' } }];\n    let out = 'Module: ' + moduleName + ' — ' + fields.length + ' fields\\n';\n    for (const f of fields) {\n      let line = '  ' + f.api_name + ' (' + (f.data_type || '?') + ')';\n      if (f.custom_field) line += ' [custom]';\n      if (f.system_mandatory || (f.required)) line += ' REQUIRED';\n      if (!f.read_only === false && f.read_only) line += ' [read-only]';\n      if (f.data_type === 'picklist' && f.pick_list_values && f.pick_list_values.length) {\n        const vals = f.pick_list_values.map(function(p){ return p.actual_value || p.display_value; }).filter(Boolean);\n        if (vals.length) line += ' values=[' + vals.slice(0, 10).join(', ') + (vals.length > 10 ? ', ...' : '') + ']';\n      }\n      out += line + '\\n';\n    }\n    return [{ json: { result: truncate(out, 10000) } }];\n  } catch (err) { return [{ json: { error: 'Zoho describe_module: ' + errMsg(err) } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_leads, search_leads, get_lead, create_lead, update_lead, delete_lead, convert_lead, list_contacts, search_contacts, get_contact, create_contact, update_contact, delete_contact, list_accounts, search_accounts, get_account, create_account, update_account, list_deals, search_deals, get_deal, create_deal, update_deal, list_tasks, get_task, create_task, update_task, delete_task, list_cases, get_case, create_case, update_case, list_notes, create_note, list_users, coql_query, describe_module.' } }];\n}\n"
         }
       }
     ],
@@ -585,12 +585,113 @@
         }
       },
       {
+        "id": "t-convert-lead",
+        "name": "convert_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          550
+        ],
+        "parameters": {
+          "name": "convert_lead",
+          "description": "Convert a Zoho Lead into Contact + Account (+ optional Deal). Zoho's classic Lead-Qualification flow.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "convert_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"REQUIRED — Zoho Lead ID to convert\", 'string') }}",
+              "Deal_Name": "={{ $fromAI('Deal_Name', \"Optional — create a Deal during conversion; Deal_Name required if any Deal-* field is set\", 'string') }}",
+              "Stage": "={{ $fromAI('Stage', \"Deal Stage (e.g. Qualification, Closed Won) — required if creating a Deal\", 'string') }}",
+              "Closing_Date": "={{ $fromAI('Closing_Date', \"Deal Closing_Date YYYY-MM-DD — required if creating a Deal\", 'string') }}",
+              "Amount": "={{ $fromAI('Amount', \"Deal Amount (number) — optional\", 'string') }}",
+              "Probability": "={{ $fromAI('Probability', \"Deal Probability 0-100 — optional\", 'string') }}",
+              "assign_to": "={{ $fromAI('assign_to', \"User ID to assign new Contact/Account/Deal to — optional\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Zoho Lead ID to convert"
+              },
+              {
+                "id": "Deal_Name",
+                "displayName": "Deal_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Optional — create a Deal during conversion; Deal_Name required if any Deal-* field is set"
+              },
+              {
+                "id": "Stage",
+                "displayName": "Stage",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal Stage (e.g. Qualification, Closed Won) — required if creating a Deal"
+              },
+              {
+                "id": "Closing_Date",
+                "displayName": "Closing_Date",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal Closing_Date YYYY-MM-DD — required if creating a Deal"
+              },
+              {
+                "id": "Amount",
+                "displayName": "Amount",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal Amount (number) — optional"
+              },
+              {
+                "id": "Probability",
+                "displayName": "Probability",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal Probability 0-100 — optional"
+              },
+              {
+                "id": "assign_to",
+                "displayName": "assign_to",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "User ID to assign new Contact/Account/Deal to — optional"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
         "id": "t-list-contacts",
         "name": "list_contacts",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          0,
+          270,
           550
         ],
         "parameters": {
@@ -637,7 +738,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          270,
+          540,
           550
         ],
         "parameters": {
@@ -720,7 +821,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          540,
+          810,
           550
         ],
         "parameters": {
@@ -767,7 +868,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          810,
+          1080,
           550
         ],
         "parameters": {
@@ -904,7 +1005,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1080,
+          1350,
           550
         ],
         "parameters": {
@@ -1032,8 +1133,8 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1350,
-          550
+          0,
+          800
         ],
         "parameters": {
           "name": "delete_contact",
@@ -1079,7 +1180,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          0,
+          270,
           800
         ],
         "parameters": {
@@ -1126,7 +1227,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          270,
+          540,
           800
         ],
         "parameters": {
@@ -1209,7 +1310,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          540,
+          810,
           800
         ],
         "parameters": {
@@ -1256,7 +1357,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          810,
+          1080,
           800
         ],
         "parameters": {
@@ -1384,7 +1485,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1080,
+          1350,
           800
         ],
         "parameters": {
@@ -1512,8 +1613,8 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1350,
-          800
+          0,
+          1050
         ],
         "parameters": {
           "name": "list_deals",
@@ -1559,7 +1660,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          0,
+          270,
           1050
         ],
         "parameters": {
@@ -1642,7 +1743,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          270,
+          540,
           1050
         ],
         "parameters": {
@@ -1689,7 +1790,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          540,
+          810,
           1050
         ],
         "parameters": {
@@ -1826,7 +1927,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          810,
+          1080,
           1050
         ],
         "parameters": {
@@ -1936,7 +2037,7 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1080,
+          1350,
           1050
         ],
         "parameters": {
@@ -1978,13 +2079,60 @@
         }
       },
       {
+        "id": "t-get-task",
+        "name": "get_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1300
+        ],
+        "parameters": {
+          "name": "get_task",
+          "description": "Get single Zoho Task by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_task",
+              "task_id": "={{ $fromAI('task_id', \"Zoho Task ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "task_id",
+                "displayName": "task_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Task ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
         "id": "t-create-task",
         "name": "create_task",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          1350,
-          1050
+          270,
+          1300
         ],
         "parameters": {
           "name": "create_task",
@@ -2088,12 +2236,160 @@
         }
       },
       {
+        "id": "t-update-task",
+        "name": "update_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1300
+        ],
+        "parameters": {
+          "name": "update_task",
+          "description": "Update a Zoho Task by Id — typically to mark it Completed.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_task",
+              "task_id": "={{ $fromAI('task_id', \"Zoho Task ID\", 'string') }}",
+              "Subject": "={{ $fromAI('Subject', \"Task subject\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Not Started|In Progress|Completed|Deferred|Waiting for input\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"High|Highest|Low|Lowest|Normal\", 'string') }}",
+              "Due_Date": "={{ $fromAI('Due_Date', \"YYYY-MM-DD\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "task_id",
+                "displayName": "task_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Task ID"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Task subject"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Not Started|In Progress|Completed|Deferred|Waiting for input"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "High|Highest|Low|Lowest|Normal"
+              },
+              {
+                "id": "Due_Date",
+                "displayName": "Due_Date",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "YYYY-MM-DD"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-task",
+        "name": "delete_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1300
+        ],
+        "parameters": {
+          "name": "delete_task",
+          "description": "Delete a Zoho Task by Id (Soft-Delete, 60d Recycle Bin).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_task",
+              "task_id": "={{ $fromAI('task_id', \"Zoho Task ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "task_id",
+                "displayName": "task_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Task ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
         "id": "t-list-cases",
         "name": "list_cases",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          0,
+          1080,
           1300
         ],
         "parameters": {
@@ -2135,13 +2431,60 @@
         }
       },
       {
+        "id": "t-get-case",
+        "name": "get_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          1300
+        ],
+        "parameters": {
+          "name": "get_case",
+          "description": "Get single Zoho Case by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_case",
+              "case_id": "={{ $fromAI('case_id', \"Zoho Case ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "case_id",
+                "displayName": "case_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Case ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
         "id": "t-create-case",
         "name": "create_case",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          270,
-          1300
+          0,
+          1550
         ],
         "parameters": {
           "name": "create_case",
@@ -2254,13 +2597,300 @@
         }
       },
       {
+        "id": "t-update-case",
+        "name": "update_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          1550
+        ],
+        "parameters": {
+          "name": "update_case",
+          "description": "Update a Zoho Case by Id — typically to update Status or Description.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_case",
+              "case_id": "={{ $fromAI('case_id', \"Zoho Case ID\", 'string') }}",
+              "Subject": "={{ $fromAI('Subject', \"Subject\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"New|On Hold|Closed|Escalated\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"High|Low|Normal\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Case_Origin": "={{ $fromAI('Case_Origin', \"Email|Phone|Web\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "case_id",
+                "displayName": "case_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Case ID"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Subject"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "New|On Hold|Closed|Escalated"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "High|Low|Normal"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Case_Origin",
+                "displayName": "Case_Origin",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email|Phone|Web"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-notes",
+        "name": "list_notes",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1550
+        ],
+        "parameters": {
+          "name": "list_notes",
+          "description": "List Notes attached to a record (any module). Notes are Zoho's record-level comments/activity log.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_notes",
+              "parent_module": "={{ $fromAI('parent_module', \"REQUIRED — Module of the parent record (Leads|Contacts|Accounts|Deals|Tasks|Cases)\", 'string') }}",
+              "parent_id": "={{ $fromAI('parent_id', \"REQUIRED — Record ID to list notes for\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "parent_module",
+                "displayName": "parent_module",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Module of the parent record (Leads|Contacts|Accounts|Deals|Tasks|Cases)"
+              },
+              {
+                "id": "parent_id",
+                "displayName": "parent_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Record ID to list notes for"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-note",
+        "name": "create_note",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1550
+        ],
+        "parameters": {
+          "name": "create_note",
+          "description": "Attach a Note to any Zoho record. Common use: log an interaction, meeting outcome, or status update.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_note",
+              "parent_module": "={{ $fromAI('parent_module', \"REQUIRED — Module (Leads|Contacts|Accounts|Deals|Tasks|Cases)\", 'string') }}",
+              "parent_id": "={{ $fromAI('parent_id', \"REQUIRED — Record ID\", 'string') }}",
+              "Note_Title": "={{ $fromAI('Note_Title', \"Short title (optional if Note_Content provided)\", 'string') }}",
+              "Note_Content": "={{ $fromAI('Note_Content', \"Note body text (optional if Note_Title provided)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "parent_module",
+                "displayName": "parent_module",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Module (Leads|Contacts|Accounts|Deals|Tasks|Cases)"
+              },
+              {
+                "id": "parent_id",
+                "displayName": "parent_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Record ID"
+              },
+              {
+                "id": "Note_Title",
+                "displayName": "Note_Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Short title (optional if Note_Content provided)"
+              },
+              {
+                "id": "Note_Content",
+                "displayName": "Note_Content",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Note body text (optional if Note_Title provided)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-users",
+        "name": "list_users",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          1550
+        ],
+        "parameters": {
+          "name": "list_users",
+          "description": "List Zoho CRM users (for Owner_ID picker / assignment). Default: ActiveUsers only.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_users",
+              "type": "={{ $fromAI('type', \"Filter type: ActiveUsers | DeactiveUsers | ConfirmedUsers | NotConfirmedUsers | DeletedUsers | ActiveConfirmedUsers | AdminUsers | ActiveConfirmedAdmins | CurrentUser. Default: ActiveUsers\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Filter type: ActiveUsers | DeactiveUsers | ConfirmedUsers | NotConfirmedUsers | DeletedUsers | ActiveConfirmedUsers | AdminUsers | ActiveConfirmedAdmins | CurrentUser. Default: ActiveUsers"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
         "id": "t-coql-query",
         "name": "coql_query",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          540,
-          1300
+          1350,
+          1550
         ],
         "parameters": {
           "name": "coql_query",
@@ -2306,8 +2936,8 @@
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
         "position": [
-          810,
-          1300
+          0,
+          1800
         ],
         "parameters": {
           "name": "describe_module",
@@ -2405,6 +3035,17 @@
         ]
       },
       "delete_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "convert_lead": {
         "ai_tool": [
           [
             {
@@ -2602,7 +3243,40 @@
           ]
         ]
       },
+      "get_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "create_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_task": {
         "ai_tool": [
           [
             {
@@ -2624,7 +3298,62 @@
           ]
         ]
       },
+      "get_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "create_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_notes": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_note": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_users": {
         "ai_tool": [
           [
             {
