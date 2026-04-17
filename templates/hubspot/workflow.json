@@ -1,0 +1,2419 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: HubSpot CRM",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "HubSpot Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.hubspot&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.hubspot_pat) {\n  return [{ json: { error: 'HubSpot PAT not configured. Create a Private App at Settings -> Integrations -> Private Apps and paste the Access Token (pat-eu1-... / pat-na1-...).' } }];\n}\n\nconst API = 'https://api.hubapi.com';\nconst authHeaders = { 'Authorization': 'Bearer ' + creds.hubspot_pat };\nconst jsonHeaders = Object.assign({}, authHeaders, { 'Content-Type': 'application/json' });\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction errMsg(err) {\n  if (err.response && err.response.body) {\n    const b = err.response.body;\n    if (typeof b === 'string') return b;\n    if (b.message) return b.message + (b.correlationId ? ' (corr: ' + b.correlationId + ')' : '');\n    return JSON.stringify(b);\n  }\n  if (err.message) return err.message;\n  return String(err);\n}\n\nasync function hsGet(path) {\n  return await helpers.httpRequest({ method: 'GET', url: API + path, headers: authHeaders, json: true });\n}\nasync function hsPost(path, body) {\n  return await helpers.httpRequest({ method: 'POST', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function hsPatch(path, body) {\n  return await helpers.httpRequest({ method: 'PATCH', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function hsPut(path, body) {\n  return await helpers.httpRequest({ method: 'PUT', url: API + path, headers: jsonHeaders, body: body || {}, json: true });\n}\nasync function hsDelete(path) {\n  return await helpers.httpRequest({ method: 'DELETE', url: API + path, headers: authHeaders, json: true });\n}\n\nfunction nameOf(p) {\n  return ((p.firstname || '') + ' ' + (p.lastname || '')).trim() || '(no name)';\n}\n\nfunction ymd(s) { return s ? String(s).substring(0, 10) : ''; }\n\n// Association type IDs (HubSpot default associations, category HUBSPOT_DEFINED)\nconst ASSOC = {\n  'notes->contacts': 202, 'notes->companies': 190, 'notes->deals': 214, 'notes->tickets': 228,\n  'tasks->contacts': 204, 'tasks->companies': 192, 'tasks->deals': 216, 'tasks->tickets': 230\n};\n\nfunction buildAssocs(objType, inp) {\n  // For create_note / create_task: turn associated_*_id into v3 associations array\n  const assocs = [];\n  const map = {\n    associated_contact_id: 'contacts',\n    associated_company_id: 'companies',\n    associated_deal_id: 'deals',\n    associated_ticket_id: 'tickets'\n  };\n  for (const [key, toType] of Object.entries(map)) {\n    if (inp[key]) {\n      const typeId = ASSOC[objType + '->' + toType];\n      if (typeId) assocs.push({\n        to: { id: String(inp[key]) },\n        types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: typeId }]\n      });\n    }\n  }\n  return assocs;\n}\n\n// === CONTACTS ===\nif (action === 'list_contacts') {\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const props = 'firstname,lastname,email,phone,company,jobtitle,lifecyclestage';\n  try {\n    const r = await hsGet('/crm/v3/objects/contacts?limit=' + limit + '&properties=' + encodeURIComponent(props));\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No contacts.' } }];\n    let out = 'Contacts (' + items.length + '):\\n';\n    for (const c of items) {\n      const p = c.properties || {};\n      out += '  ' + c.id + ' - ' + nameOf(p) + (p.email ? ' <' + p.email + '>' : '') + (p.company ? ' @ ' + p.company : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot list_contacts: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_contacts') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Default search on \"email\". Override via \"property\" (e.g. firstname, lastname, phone, company) and \"operator\" (EQ, NEQ, CONTAINS_TOKEN, GT, LT, HAS_PROPERTY).' } }];\n  const property = input.property || 'email';\n  const operator = (input.operator || 'CONTAINS_TOKEN').toUpperCase();\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const body = {\n    filterGroups: [{ filters: [{ propertyName: property, operator: operator, value: String(query) }] }],\n    properties: ['firstname', 'lastname', 'email', 'phone', 'company', 'jobtitle'],\n    limit: limit\n  };\n  try {\n    const r = await hsPost('/crm/v3/objects/contacts/search', body);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + property + ' ' + operator + ' \"' + query + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const c of items) {\n      const p = c.properties || {};\n      out += '  ' + c.id + ' - ' + nameOf(p) + (p.email ? ' <' + p.email + '>' : '') + (p.company ? ' @ ' + p.company : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot search_contacts: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_contact') {\n  const id = input.contact_id || input.id;\n  const email = input.email;\n  if (!id && !email) return [{ json: { error: 'Parameter \"contact_id\" or \"email\" is required.' } }];\n  const props = 'firstname,lastname,email,phone,company,jobtitle,lifecyclestage,hs_lead_status,createdate,lastmodifieddate';\n  try {\n    const path = id\n      ? '/crm/v3/objects/contacts/' + encodeURIComponent(id) + '?properties=' + encodeURIComponent(props)\n      : '/crm/v3/objects/contacts/' + encodeURIComponent(email) + '?idProperty=email&properties=' + encodeURIComponent(props);\n    const c = await hsGet(path);\n    const p = c.properties || {};\n    let out = 'Contact ' + c.id + ' - ' + nameOf(p) + '\\n';\n    if (p.email) out += 'Email: ' + p.email + '\\n';\n    if (p.phone) out += 'Phone: ' + p.phone + '\\n';\n    if (p.company) out += 'Company: ' + p.company + '\\n';\n    if (p.jobtitle) out += 'Job: ' + p.jobtitle + '\\n';\n    if (p.lifecyclestage) out += 'Lifecycle: ' + p.lifecyclestage + '\\n';\n    if (p.hs_lead_status) out += 'Lead status: ' + p.hs_lead_status + '\\n';\n    if (p.createdate) out += 'Created: ' + ymd(p.createdate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot get_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_contact') {\n  if (!input.email && !input.firstname && !input.lastname) return [{ json: { error: 'At least \"email\", \"firstname\" or \"lastname\" is required.' } }];\n  const props = {};\n  const fields = ['email', 'firstname', 'lastname', 'phone', 'company', 'jobtitle', 'lifecyclestage'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  try {\n    const c = await hsPost('/crm/v3/objects/contacts', { properties: props });\n    return [{ json: { result: 'Contact created: ' + c.id + (props.email ? ' <' + props.email + '>' : '') } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_contact') {\n  const id = input.contact_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"contact_id\" is required.' } }];\n  const props = {};\n  const fields = ['email', 'firstname', 'lastname', 'phone', 'company', 'jobtitle', 'lifecyclestage', 'hs_lead_status'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field: ' + fields.join(', ') } }];\n  try {\n    const c = await hsPatch('/crm/v3/objects/contacts/' + encodeURIComponent(id), { properties: props });\n    return [{ json: { result: 'Contact ' + c.id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot update_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_contact') {\n  const id = input.contact_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"contact_id\" is required.' } }];\n  try {\n    await hsDelete('/crm/v3/objects/contacts/' + encodeURIComponent(id));\n    return [{ json: { result: 'Contact ' + id + ' archived. Can be restored within 90 days in HubSpot UI.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot delete_contact: ' + errMsg(err) } }]; }\n\n// === COMPANIES ===\n} else if (action === 'search_companies') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Default search on \"name\". Override via \"property\" (e.g. domain, industry, country) and \"operator\".' } }];\n  const property = input.property || 'name';\n  const operator = (input.operator || 'CONTAINS_TOKEN').toUpperCase();\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const body = {\n    filterGroups: [{ filters: [{ propertyName: property, operator: operator, value: String(query) }] }],\n    properties: ['name', 'domain', 'phone', 'city', 'country', 'industry', 'numberofemployees'],\n    limit: limit\n  };\n  try {\n    const r = await hsPost('/crm/v3/objects/companies/search', body);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + property + ' ' + operator + ' \"' + query + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const c of items) {\n      const p = c.properties || {};\n      out += '  ' + c.id + ' - ' + (p.name || '(no name)') + (p.domain ? ' (' + p.domain + ')' : '') + (p.country ? ' ' + p.country : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot search_companies: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_company') {\n  const id = input.company_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"company_id\" is required.' } }];\n  const props = 'name,domain,phone,address,city,state,country,zip,industry,description,numberofemployees,annualrevenue,website,createdate';\n  try {\n    const c = await hsGet('/crm/v3/objects/companies/' + encodeURIComponent(id) + '?properties=' + encodeURIComponent(props));\n    const p = c.properties || {};\n    let out = 'Company ' + c.id + ' - ' + (p.name || '(no name)') + '\\n';\n    if (p.domain) out += 'Domain: ' + p.domain + '\\n';\n    if (p.website) out += 'Website: ' + p.website + '\\n';\n    if (p.phone) out += 'Phone: ' + p.phone + '\\n';\n    const loc = [p.city, p.state, p.country].filter(Boolean).join(', ');\n    if (loc) out += 'Location: ' + loc + '\\n';\n    if (p.industry) out += 'Industry: ' + p.industry + '\\n';\n    if (p.numberofemployees) out += 'Employees: ' + p.numberofemployees + '\\n';\n    if (p.annualrevenue) out += 'Revenue: ' + p.annualrevenue + '\\n';\n    if (p.description) out += 'Description: ' + p.description.substring(0, 300) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot get_company: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_company') {\n  if (!input.name && !input.domain) return [{ json: { error: 'At least \"name\" or \"domain\" is required.' } }];\n  const props = {};\n  const fields = ['name', 'domain', 'phone', 'city', 'state', 'country', 'industry', 'description', 'numberofemployees', 'website'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  try {\n    const c = await hsPost('/crm/v3/objects/companies', { properties: props });\n    return [{ json: { result: 'Company created: ' + c.id + ' - ' + (props.name || props.domain) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_company: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_company') {\n  const id = input.company_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"company_id\" is required.' } }];\n  const props = {};\n  const fields = ['name', 'domain', 'phone', 'city', 'state', 'country', 'industry', 'description', 'numberofemployees', 'website'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field: ' + fields.join(', ') } }];\n  try {\n    const c = await hsPatch('/crm/v3/objects/companies/' + encodeURIComponent(id), { properties: props });\n    return [{ json: { result: 'Company ' + c.id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot update_company: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_company') {\n  const id = input.company_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"company_id\" is required.' } }];\n  try {\n    await hsDelete('/crm/v3/objects/companies/' + encodeURIComponent(id));\n    return [{ json: { result: 'Company ' + id + ' archived. Can be restored within 90 days in HubSpot UI.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot delete_company: ' + errMsg(err) } }]; }\n\n// === DEALS ===\n} else if (action === 'list_deals') {\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const props = 'dealname,amount,dealstage,pipeline,closedate,hubspot_owner_id,createdate';\n  try {\n    const r = await hsGet('/crm/v3/objects/deals?limit=' + limit + '&properties=' + encodeURIComponent(props));\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No deals.' } }];\n    let out = 'Deals (' + items.length + '):\\n';\n    for (const d of items) {\n      const p = d.properties || {};\n      out += '  ' + d.id + ' - ' + (p.dealname || '(no name)') + (p.amount ? ' ' + p.amount : '') + (p.dealstage ? ' [' + p.dealstage + ']' : '') + (p.closedate ? ' close: ' + ymd(p.closedate) : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot list_deals: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_deals') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Default search on \"dealname\". Override via \"property\" (e.g. dealstage, amount, hubspot_owner_id) and \"operator\" (EQ, GT, LT, CONTAINS_TOKEN).' } }];\n  const property = input.property || 'dealname';\n  const operator = (input.operator || 'CONTAINS_TOKEN').toUpperCase();\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const body = {\n    filterGroups: [{ filters: [{ propertyName: property, operator: operator, value: String(query) }] }],\n    properties: ['dealname', 'amount', 'dealstage', 'pipeline', 'closedate', 'hubspot_owner_id'],\n    limit: limit\n  };\n  try {\n    const r = await hsPost('/crm/v3/objects/deals/search', body);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + property + ' ' + operator + ' \"' + query + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const d of items) {\n      const p = d.properties || {};\n      out += '  ' + d.id + ' - ' + (p.dealname || '(no name)') + (p.amount ? ' ' + p.amount : '') + (p.dealstage ? ' [' + p.dealstage + ']' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot search_deals: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_deal') {\n  const id = input.deal_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"deal_id\" is required.' } }];\n  const props = 'dealname,amount,dealstage,pipeline,closedate,hubspot_owner_id,dealtype,description,createdate,hs_lastmodifieddate';\n  try {\n    const d = await hsGet('/crm/v3/objects/deals/' + encodeURIComponent(id) + '?properties=' + encodeURIComponent(props) + '&associations=contacts,companies');\n    const p = d.properties || {};\n    let out = 'Deal ' + d.id + ' - ' + (p.dealname || '(no name)') + '\\n';\n    if (p.amount) out += 'Amount: ' + p.amount + '\\n';\n    if (p.dealstage) out += 'Stage: ' + p.dealstage + '\\n';\n    if (p.pipeline) out += 'Pipeline: ' + p.pipeline + '\\n';\n    if (p.closedate) out += 'Close date: ' + ymd(p.closedate) + '\\n';\n    if (p.hubspot_owner_id) out += 'Owner: ' + p.hubspot_owner_id + '\\n';\n    if (p.dealtype) out += 'Type: ' + p.dealtype + '\\n';\n    if (p.description) out += 'Description: ' + p.description.substring(0, 300) + '\\n';\n    if (d.associations) {\n      if (d.associations.contacts && d.associations.contacts.results && d.associations.contacts.results.length) {\n        out += 'Contacts: ' + d.associations.contacts.results.map(function(x){return x.id;}).join(', ') + '\\n';\n      }\n      if (d.associations.companies && d.associations.companies.results && d.associations.companies.results.length) {\n        out += 'Companies: ' + d.associations.companies.results.map(function(x){return x.id;}).join(', ') + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot get_deal: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_deal') {\n  if (!input.dealname) return [{ json: { error: 'Parameter \"dealname\" is required.' } }];\n  const props = {};\n  const fields = ['dealname', 'amount', 'dealstage', 'pipeline', 'closedate', 'hubspot_owner_id', 'dealtype', 'description'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  const associations = [];\n  if (input.associated_contact_id) associations.push({ to: { id: String(input.associated_contact_id) }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 }] });\n  if (input.associated_company_id) associations.push({ to: { id: String(input.associated_company_id) }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 5 }] });\n  const body = { properties: props };\n  if (associations.length) body.associations = associations;\n  try {\n    const d = await hsPost('/crm/v3/objects/deals', body);\n    return [{ json: { result: 'Deal created: ' + d.id + ' - ' + props.dealname } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_deal: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_deal') {\n  const id = input.deal_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"deal_id\" is required.' } }];\n  const props = {};\n  const fields = ['dealname', 'amount', 'dealstage', 'pipeline', 'closedate', 'hubspot_owner_id', 'dealtype', 'description'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field: ' + fields.join(', ') } }];\n  try {\n    const d = await hsPatch('/crm/v3/objects/deals/' + encodeURIComponent(id), { properties: props });\n    return [{ json: { result: 'Deal ' + d.id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot update_deal: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_deal') {\n  const id = input.deal_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"deal_id\" is required.' } }];\n  try {\n    await hsDelete('/crm/v3/objects/deals/' + encodeURIComponent(id));\n    return [{ json: { result: 'Deal ' + id + ' archived. Can be restored within 90 days in HubSpot UI.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot delete_deal: ' + errMsg(err) } }]; }\n\n// === TICKETS ===\n} else if (action === 'search_tickets') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Default search on \"subject\". Override via \"property\" (e.g. hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id) and \"operator\".' } }];\n  const property = input.property || 'subject';\n  const operator = (input.operator || 'CONTAINS_TOKEN').toUpperCase();\n  const limit = Math.min(parseInt(input.limit) || 10, 100);\n  const body = {\n    filterGroups: [{ filters: [{ propertyName: property, operator: operator, value: String(query) }] }],\n    properties: ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'hs_ticket_priority', 'hubspot_owner_id', 'createdate'],\n    limit: limit\n  };\n  try {\n    const r = await hsPost('/crm/v3/objects/tickets/search', body);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + property + ' ' + operator + ' \"' + query + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const t of items) {\n      const p = t.properties || {};\n      out += '  ' + t.id + ' - ' + (p.subject || '(no subject)') + (p.hs_pipeline_stage ? ' [' + p.hs_pipeline_stage + ']' : '') + (p.hs_ticket_priority ? ' ' + p.hs_ticket_priority : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot search_tickets: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_ticket') {\n  const id = input.ticket_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"ticket_id\" is required.' } }];\n  const props = 'subject,content,hs_pipeline,hs_pipeline_stage,hs_ticket_priority,hubspot_owner_id,source_type,createdate,hs_lastmodifieddate';\n  try {\n    const t = await hsGet('/crm/v3/objects/tickets/' + encodeURIComponent(id) + '?properties=' + encodeURIComponent(props) + '&associations=contacts,companies');\n    const p = t.properties || {};\n    let out = 'Ticket ' + t.id + ' - ' + (p.subject || '(no subject)') + '\\n';\n    if (p.hs_pipeline_stage) out += 'Stage: ' + p.hs_pipeline_stage + '\\n';\n    if (p.hs_pipeline) out += 'Pipeline: ' + p.hs_pipeline + '\\n';\n    if (p.hs_ticket_priority) out += 'Priority: ' + p.hs_ticket_priority + '\\n';\n    if (p.hubspot_owner_id) out += 'Owner: ' + p.hubspot_owner_id + '\\n';\n    if (p.source_type) out += 'Source: ' + p.source_type + '\\n';\n    if (p.content) out += 'Content: ' + p.content.substring(0, 500) + '\\n';\n    if (p.createdate) out += 'Created: ' + ymd(p.createdate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot get_ticket: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_ticket') {\n  if (!input.subject) return [{ json: { error: 'Parameter \"subject\" is required.' } }];\n  const props = { subject: input.subject };\n  const fields = ['content', 'hs_pipeline', 'hs_pipeline_stage', 'hs_ticket_priority', 'hubspot_owner_id', 'source_type'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  if (!props.hs_pipeline_stage) props.hs_pipeline_stage = '1';\n  const associations = [];\n  if (input.associated_contact_id) associations.push({ to: { id: String(input.associated_contact_id) }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 16 }] });\n  if (input.associated_company_id) associations.push({ to: { id: String(input.associated_company_id) }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 26 }] });\n  const body = { properties: props };\n  if (associations.length) body.associations = associations;\n  try {\n    const t = await hsPost('/crm/v3/objects/tickets', body);\n    return [{ json: { result: 'Ticket created: ' + t.id + ' - ' + props.subject } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_ticket: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_ticket') {\n  const id = input.ticket_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"ticket_id\" is required.' } }];\n  const props = {};\n  const fields = ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'hs_ticket_priority', 'hubspot_owner_id'];\n  for (const f of fields) if (input[f] !== undefined && input[f] !== '') props[f] = input[f];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field: ' + fields.join(', ') } }];\n  try {\n    const t = await hsPatch('/crm/v3/objects/tickets/' + encodeURIComponent(id), { properties: props });\n    return [{ json: { result: 'Ticket ' + t.id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot update_ticket: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_ticket') {\n  const id = input.ticket_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"ticket_id\" is required.' } }];\n  try {\n    await hsDelete('/crm/v3/objects/tickets/' + encodeURIComponent(id));\n    return [{ json: { result: 'Ticket ' + id + ' archived. Can be restored within 90 days in HubSpot UI.' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot delete_ticket: ' + errMsg(err) } }]; }\n\n// === ENGAGEMENTS ===\n} else if (action === 'create_note') {\n  const body = input.body || input.note_body;\n  if (!body) return [{ json: { error: 'Parameter \"body\" (note text) is required.' } }];\n  const props = { hs_note_body: body, hs_timestamp: Date.now() };\n  const assocs = buildAssocs('notes', input);\n  const payload = { properties: props };\n  if (assocs.length) payload.associations = assocs;\n  try {\n    const n = await hsPost('/crm/v3/objects/notes', payload);\n    let out = 'Note created: ' + n.id;\n    if (assocs.length) out += ' (associated with ' + assocs.length + ' object' + (assocs.length !== 1 ? 's' : '') + ')';\n    return [{ json: { result: out } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_note: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_task') {\n  const subject = input.subject;\n  if (!subject) return [{ json: { error: 'Parameter \"subject\" is required.' } }];\n  const props = {\n    hs_task_subject: subject,\n    hs_timestamp: Date.now()\n  };\n  if (input.body) props.hs_task_body = input.body;\n  if (input.priority) props.hs_task_priority = String(input.priority).toUpperCase();\n  if (input.status) props.hs_task_status = String(input.status).toUpperCase();\n  if (input.type) props.hs_task_type = String(input.type).toUpperCase();\n  if (input.hubspot_owner_id) props.hubspot_owner_id = input.hubspot_owner_id;\n  if (input.due_date) {\n    const d = new Date(input.due_date);\n    if (!isNaN(d.getTime())) props.hs_task_due_date = d.getTime();\n  }\n  const assocs = buildAssocs('tasks', input);\n  const payload = { properties: props };\n  if (assocs.length) payload.associations = assocs;\n  try {\n    const t = await hsPost('/crm/v3/objects/tasks', payload);\n    let out = 'Task created: ' + t.id + ' - ' + subject;\n    if (assocs.length) out += ' (associated with ' + assocs.length + ' object' + (assocs.length !== 1 ? 's' : '') + ')';\n    return [{ json: { result: out } }];\n  } catch (err) { return [{ json: { error: 'HubSpot create_task: ' + errMsg(err) } }]; }\n\n// === ASSOCIATIONS (v4) ===\n} else if (action === 'associate_objects') {\n  const fromType = input.from_type;\n  const fromId = input.from_id;\n  const toType = input.to_type;\n  const toId = input.to_id;\n  if (!fromType || !fromId || !toType || !toId) return [{ json: { error: 'Parameters \"from_type\", \"from_id\", \"to_type\", \"to_id\" are all required. Types: contacts, companies, deals, tickets, notes, tasks.' } }];\n  try {\n    await hsPut('/crm/v4/objects/' + encodeURIComponent(fromType) + '/' + encodeURIComponent(fromId) + '/associations/default/' + encodeURIComponent(toType) + '/' + encodeURIComponent(toId));\n    return [{ json: { result: 'Associated ' + fromType + ':' + fromId + ' -> ' + toType + ':' + toId + ' (default association).' } }];\n  } catch (err) { return [{ json: { error: 'HubSpot associate_objects: ' + errMsg(err) } }]; }\n\n} else if (action === 'list_associations') {\n  const fromType = input.from_type;\n  const fromId = input.from_id;\n  const toType = input.to_type;\n  if (!fromType || !fromId || !toType) return [{ json: { error: 'Parameters \"from_type\", \"from_id\", \"to_type\" are required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 20, 100);\n  try {\n    const r = await hsGet('/crm/v4/objects/' + encodeURIComponent(fromType) + '/' + encodeURIComponent(fromId) + '/associations/' + encodeURIComponent(toType) + '?limit=' + limit);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No ' + toType + ' associated with ' + fromType + ':' + fromId + '.' } }];\n    let out = 'Associated ' + toType + ' (' + items.length + '):\\n';\n    for (const a of items) {\n      out += '  ' + (a.toObjectId || a.id) + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot list_associations: ' + errMsg(err) } }]; }\n\n// === META ===\n} else if (action === 'list_pipelines') {\n  const objType = input.object_type || 'deals';\n  if (objType !== 'deals' && objType !== 'tickets') return [{ json: { error: 'Parameter \"object_type\" must be \"deals\" or \"tickets\".' } }];\n  try {\n    const r = await hsGet('/crm/v3/pipelines/' + encodeURIComponent(objType));\n    const pipelines = r.results || [];\n    if (pipelines.length === 0) return [{ json: { result: 'No pipelines for ' + objType + '.' } }];\n    let out = 'Pipelines for ' + objType + ' (' + pipelines.length + '):\\n';\n    for (const pl of pipelines) {\n      out += '- ' + pl.id + ' \"' + pl.label + '\"\\n';\n      for (const s of (pl.stages || [])) {\n        out += '    stage: ' + s.id + ' \"' + s.label + '\"' + (s.metadata && s.metadata.probability ? ' (p=' + s.metadata.probability + ')' : '') + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot list_pipelines: ' + errMsg(err) } }]; }\n\n} else if (action === 'list_owners') {\n  const limit = Math.min(parseInt(input.limit) || 50, 100);\n  try {\n    const r = await hsGet('/crm/v3/owners?limit=' + limit);\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No owners.' } }];\n    let out = 'Owners (' + items.length + '):\\n';\n    for (const o of items) {\n      const name = ((o.firstName || '') + ' ' + (o.lastName || '')).trim() || '(no name)';\n      out += '  ' + o.id + ' - ' + name + (o.email ? ' <' + o.email + '>' : '') + (o.archived ? ' [archived]' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'HubSpot list_owners: ' + errMsg(err) } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_contacts, search_contacts, get_contact, create_contact, update_contact, delete_contact, search_companies, get_company, create_company, update_company, delete_company, list_deals, search_deals, get_deal, create_deal, update_deal, delete_deal, search_tickets, get_ticket, create_ticket, update_ticket, delete_ticket, create_note, create_task, associate_objects, list_associations, list_pipelines, list_owners.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "HubSpot Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: HubSpot CRM",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "hubspot"
+        }
+      },
+      {
+        "id": "t-list-contacts",
+        "name": "list_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "list_contacts",
+          "description": "List recent HubSpot contacts (paginated).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_contacts",
+              "limit": "={{ $fromAI('limit', \"Max results (1-100, default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (1-100, default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-contacts",
+        "name": "search_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          300
+        ],
+        "parameters": {
+          "name": "search_contacts",
+          "description": "Search contacts. Default matches 'email'; override via 'property' (firstname, lastname, phone, company, any property name) and 'operator' (EQ, NEQ, CONTAINS_TOKEN, GT, LT, HAS_PROPERTY).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_contacts",
+              "query": "={{ $fromAI('query', \"Search value\", 'string') }}",
+              "property": "={{ $fromAI('property', \"Property name to search (default: email)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"Filter operator (default: CONTAINS_TOKEN)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results (default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search value",
+                "required": true
+              },
+              {
+                "id": "property",
+                "displayName": "property",
+                "type": "string",
+                "description": "Property name to search (default: email)",
+                "required": false
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "description": "Filter operator (default: CONTAINS_TOKEN)",
+                "required": false
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-contact",
+        "name": "get_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          300
+        ],
+        "parameters": {
+          "name": "get_contact",
+          "description": "Get a contact by id or email.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"HubSpot contact id (numeric)\", 'string') }}",
+              "email": "={{ $fromAI('email', \"Contact email (alternative to id)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "description": "HubSpot contact id (numeric)",
+                "required": false
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Contact email (alternative to id)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-contact",
+        "name": "create_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          300
+        ],
+        "parameters": {
+          "name": "create_contact",
+          "description": "Create a new contact. At least email, firstname or lastname required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_contact",
+              "email": "={{ $fromAI('email', \"Email\", 'string') }}",
+              "firstname": "={{ $fromAI('firstname', \"First name\", 'string') }}",
+              "lastname": "={{ $fromAI('lastname', \"Last name\", 'string') }}",
+              "phone": "={{ $fromAI('phone', \"Phone\", 'string') }}",
+              "company": "={{ $fromAI('company', \"Company name\", 'string') }}",
+              "jobtitle": "={{ $fromAI('jobtitle', \"Job title\", 'string') }}",
+              "lifecyclestage": "={{ $fromAI('lifecyclestage', \"Lifecycle stage (e.g. lead, customer)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email",
+                "required": false
+              },
+              {
+                "id": "firstname",
+                "displayName": "firstname",
+                "type": "string",
+                "description": "First name",
+                "required": false
+              },
+              {
+                "id": "lastname",
+                "displayName": "lastname",
+                "type": "string",
+                "description": "Last name",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "company",
+                "displayName": "company",
+                "type": "string",
+                "description": "Company name",
+                "required": false
+              },
+              {
+                "id": "jobtitle",
+                "displayName": "jobtitle",
+                "type": "string",
+                "description": "Job title",
+                "required": false
+              },
+              {
+                "id": "lifecyclestage",
+                "displayName": "lifecyclestage",
+                "type": "string",
+                "description": "Lifecycle stage (e.g. lead, customer)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-update-contact",
+        "name": "update_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1000,
+          300
+        ],
+        "parameters": {
+          "name": "update_contact",
+          "description": "Update an existing contact by id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Contact id\", 'string') }}",
+              "email": "={{ $fromAI('email', \"Email\", 'string') }}",
+              "firstname": "={{ $fromAI('firstname', \"First name\", 'string') }}",
+              "lastname": "={{ $fromAI('lastname', \"Last name\", 'string') }}",
+              "phone": "={{ $fromAI('phone', \"Phone\", 'string') }}",
+              "company": "={{ $fromAI('company', \"Company\", 'string') }}",
+              "jobtitle": "={{ $fromAI('jobtitle', \"Job title\", 'string') }}",
+              "lifecyclestage": "={{ $fromAI('lifecyclestage', \"Lifecycle stage\", 'string') }}",
+              "hs_lead_status": "={{ $fromAI('hs_lead_status', \"Lead status\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "description": "Contact id",
+                "required": true
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "type": "string",
+                "description": "Email",
+                "required": false
+              },
+              {
+                "id": "firstname",
+                "displayName": "firstname",
+                "type": "string",
+                "description": "First name",
+                "required": false
+              },
+              {
+                "id": "lastname",
+                "displayName": "lastname",
+                "type": "string",
+                "description": "Last name",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "company",
+                "displayName": "company",
+                "type": "string",
+                "description": "Company",
+                "required": false
+              },
+              {
+                "id": "jobtitle",
+                "displayName": "jobtitle",
+                "type": "string",
+                "description": "Job title",
+                "required": false
+              },
+              {
+                "id": "lifecyclestage",
+                "displayName": "lifecyclestage",
+                "type": "string",
+                "description": "Lifecycle stage",
+                "required": false
+              },
+              {
+                "id": "hs_lead_status",
+                "displayName": "hs_lead_status",
+                "type": "string",
+                "description": "Lead status",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-delete-contact",
+        "name": "delete_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1250,
+          300
+        ],
+        "parameters": {
+          "name": "delete_contact",
+          "description": "Archive (soft-delete) a contact by id. Restorable within 90 days in HubSpot UI.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Contact id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "description": "Contact id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-companies",
+        "name": "search_companies",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          500
+        ],
+        "parameters": {
+          "name": "search_companies",
+          "description": "Search companies. Default property 'name'; override via 'property' (domain, industry, country) and 'operator'.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_companies",
+              "query": "={{ $fromAI('query', \"Search value\", 'string') }}",
+              "property": "={{ $fromAI('property', \"Property name (default: name)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"Filter operator (default: CONTAINS_TOKEN)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results (default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search value",
+                "required": true
+              },
+              {
+                "id": "property",
+                "displayName": "property",
+                "type": "string",
+                "description": "Property name (default: name)",
+                "required": false
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "description": "Filter operator (default: CONTAINS_TOKEN)",
+                "required": false
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-company",
+        "name": "get_company",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          500
+        ],
+        "parameters": {
+          "name": "get_company",
+          "description": "Get a company by id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_company",
+              "company_id": "={{ $fromAI('company_id', \"Company id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "company_id",
+                "displayName": "company_id",
+                "type": "string",
+                "description": "Company id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-company",
+        "name": "create_company",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          500
+        ],
+        "parameters": {
+          "name": "create_company",
+          "description": "Create a new company. Requires name or domain.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_company",
+              "name": "={{ $fromAI('name', \"Company name\", 'string') }}",
+              "domain": "={{ $fromAI('domain', \"Primary domain\", 'string') }}",
+              "phone": "={{ $fromAI('phone', \"Phone\", 'string') }}",
+              "city": "={{ $fromAI('city', \"City\", 'string') }}",
+              "state": "={{ $fromAI('state', \"State/region\", 'string') }}",
+              "country": "={{ $fromAI('country', \"Country\", 'string') }}",
+              "industry": "={{ $fromAI('industry', \"Industry\", 'string') }}",
+              "description": "={{ $fromAI('description', \"Description\", 'string') }}",
+              "numberofemployees": "={{ $fromAI('numberofemployees', \"Headcount\", 'string') }}",
+              "website": "={{ $fromAI('website', \"Website URL\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Company name",
+                "required": false
+              },
+              {
+                "id": "domain",
+                "displayName": "domain",
+                "type": "string",
+                "description": "Primary domain",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City",
+                "required": false
+              },
+              {
+                "id": "state",
+                "displayName": "state",
+                "type": "string",
+                "description": "State/region",
+                "required": false
+              },
+              {
+                "id": "country",
+                "displayName": "country",
+                "type": "string",
+                "description": "Country",
+                "required": false
+              },
+              {
+                "id": "industry",
+                "displayName": "industry",
+                "type": "string",
+                "description": "Industry",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "numberofemployees",
+                "displayName": "numberofemployees",
+                "type": "string",
+                "description": "Headcount",
+                "required": false
+              },
+              {
+                "id": "website",
+                "displayName": "website",
+                "type": "string",
+                "description": "Website URL",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-update-company",
+        "name": "update_company",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          500
+        ],
+        "parameters": {
+          "name": "update_company",
+          "description": "Update a company by id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_company",
+              "company_id": "={{ $fromAI('company_id', \"Company id\", 'string') }}",
+              "name": "={{ $fromAI('name', \"Name\", 'string') }}",
+              "domain": "={{ $fromAI('domain', \"Domain\", 'string') }}",
+              "phone": "={{ $fromAI('phone', \"Phone\", 'string') }}",
+              "city": "={{ $fromAI('city', \"City\", 'string') }}",
+              "state": "={{ $fromAI('state', \"State\", 'string') }}",
+              "country": "={{ $fromAI('country', \"Country\", 'string') }}",
+              "industry": "={{ $fromAI('industry', \"Industry\", 'string') }}",
+              "description": "={{ $fromAI('description', \"Description\", 'string') }}",
+              "numberofemployees": "={{ $fromAI('numberofemployees', \"Headcount\", 'string') }}",
+              "website": "={{ $fromAI('website', \"Website\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "company_id",
+                "displayName": "company_id",
+                "type": "string",
+                "description": "Company id",
+                "required": true
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Name",
+                "required": false
+              },
+              {
+                "id": "domain",
+                "displayName": "domain",
+                "type": "string",
+                "description": "Domain",
+                "required": false
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "type": "string",
+                "description": "Phone",
+                "required": false
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City",
+                "required": false
+              },
+              {
+                "id": "state",
+                "displayName": "state",
+                "type": "string",
+                "description": "State",
+                "required": false
+              },
+              {
+                "id": "country",
+                "displayName": "country",
+                "type": "string",
+                "description": "Country",
+                "required": false
+              },
+              {
+                "id": "industry",
+                "displayName": "industry",
+                "type": "string",
+                "description": "Industry",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "numberofemployees",
+                "displayName": "numberofemployees",
+                "type": "string",
+                "description": "Headcount",
+                "required": false
+              },
+              {
+                "id": "website",
+                "displayName": "website",
+                "type": "string",
+                "description": "Website",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-delete-company",
+        "name": "delete_company",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1000,
+          500
+        ],
+        "parameters": {
+          "name": "delete_company",
+          "description": "Archive (soft-delete) a company.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_company",
+              "company_id": "={{ $fromAI('company_id', \"Company id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "company_id",
+                "displayName": "company_id",
+                "type": "string",
+                "description": "Company id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-deals",
+        "name": "list_deals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1250,
+          500
+        ],
+        "parameters": {
+          "name": "list_deals",
+          "description": "List recent deals.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_deals",
+              "limit": "={{ $fromAI('limit', \"Max results (default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-deals",
+        "name": "search_deals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          700
+        ],
+        "parameters": {
+          "name": "search_deals",
+          "description": "Search deals. Default property 'dealname'; override via 'property' (dealstage, amount, hubspot_owner_id, closedate) and 'operator' (EQ, GT, LT, CONTAINS_TOKEN, BETWEEN).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_deals",
+              "query": "={{ $fromAI('query', \"Search value\", 'string') }}",
+              "property": "={{ $fromAI('property', \"Property name (default: dealname)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"Filter operator (default: CONTAINS_TOKEN)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results (default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search value",
+                "required": true
+              },
+              {
+                "id": "property",
+                "displayName": "property",
+                "type": "string",
+                "description": "Property name (default: dealname)",
+                "required": false
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "description": "Filter operator (default: CONTAINS_TOKEN)",
+                "required": false
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-deal",
+        "name": "get_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          700
+        ],
+        "parameters": {
+          "name": "get_deal",
+          "description": "Get a deal by id. Includes associated contacts and companies.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_deal",
+              "deal_id": "={{ $fromAI('deal_id', \"Deal id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "type": "string",
+                "description": "Deal id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-deal",
+        "name": "create_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          700
+        ],
+        "parameters": {
+          "name": "create_deal",
+          "description": "Create a new deal. Requires dealname.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_deal",
+              "dealname": "={{ $fromAI('dealname', \"Deal name\", 'string') }}",
+              "amount": "={{ $fromAI('amount', \"Deal amount (numeric)\", 'string') }}",
+              "dealstage": "={{ $fromAI('dealstage', \"Stage id (use list_pipelines to discover)\", 'string') }}",
+              "pipeline": "={{ $fromAI('pipeline', \"Pipeline id (default = default pipeline)\", 'string') }}",
+              "closedate": "={{ $fromAI('closedate', \"Close date (ISO date or unix ms)\", 'string') }}",
+              "hubspot_owner_id": "={{ $fromAI('hubspot_owner_id', \"Owner id (use list_owners)\", 'string') }}",
+              "dealtype": "={{ $fromAI('dealtype', \"Deal type (newbusiness, existingbusiness)\", 'string') }}",
+              "description": "={{ $fromAI('description', \"Description\", 'string') }}",
+              "associated_contact_id": "={{ $fromAI('associated_contact_id', \"Optional: associate with contact id on creation\", 'string') }}",
+              "associated_company_id": "={{ $fromAI('associated_company_id', \"Optional: associate with company id on creation\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "dealname",
+                "displayName": "dealname",
+                "type": "string",
+                "description": "Deal name",
+                "required": true
+              },
+              {
+                "id": "amount",
+                "displayName": "amount",
+                "type": "string",
+                "description": "Deal amount (numeric)",
+                "required": false
+              },
+              {
+                "id": "dealstage",
+                "displayName": "dealstage",
+                "type": "string",
+                "description": "Stage id (use list_pipelines to discover)",
+                "required": false
+              },
+              {
+                "id": "pipeline",
+                "displayName": "pipeline",
+                "type": "string",
+                "description": "Pipeline id (default = default pipeline)",
+                "required": false
+              },
+              {
+                "id": "closedate",
+                "displayName": "closedate",
+                "type": "string",
+                "description": "Close date (ISO date or unix ms)",
+                "required": false
+              },
+              {
+                "id": "hubspot_owner_id",
+                "displayName": "hubspot_owner_id",
+                "type": "string",
+                "description": "Owner id (use list_owners)",
+                "required": false
+              },
+              {
+                "id": "dealtype",
+                "displayName": "dealtype",
+                "type": "string",
+                "description": "Deal type (newbusiness, existingbusiness)",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "associated_contact_id",
+                "displayName": "associated_contact_id",
+                "type": "string",
+                "description": "Optional: associate with contact id on creation",
+                "required": false
+              },
+              {
+                "id": "associated_company_id",
+                "displayName": "associated_company_id",
+                "type": "string",
+                "description": "Optional: associate with company id on creation",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-update-deal",
+        "name": "update_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          700
+        ],
+        "parameters": {
+          "name": "update_deal",
+          "description": "Update a deal by id (move stage, update amount, change owner, etc.).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_deal",
+              "deal_id": "={{ $fromAI('deal_id', \"Deal id\", 'string') }}",
+              "dealname": "={{ $fromAI('dealname', \"Deal name\", 'string') }}",
+              "amount": "={{ $fromAI('amount', \"Amount\", 'string') }}",
+              "dealstage": "={{ $fromAI('dealstage', \"Stage\", 'string') }}",
+              "pipeline": "={{ $fromAI('pipeline', \"Pipeline\", 'string') }}",
+              "closedate": "={{ $fromAI('closedate', \"Close date\", 'string') }}",
+              "hubspot_owner_id": "={{ $fromAI('hubspot_owner_id', \"Owner id\", 'string') }}",
+              "dealtype": "={{ $fromAI('dealtype', \"Deal type\", 'string') }}",
+              "description": "={{ $fromAI('description', \"Description\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "type": "string",
+                "description": "Deal id",
+                "required": true
+              },
+              {
+                "id": "dealname",
+                "displayName": "dealname",
+                "type": "string",
+                "description": "Deal name",
+                "required": false
+              },
+              {
+                "id": "amount",
+                "displayName": "amount",
+                "type": "string",
+                "description": "Amount",
+                "required": false
+              },
+              {
+                "id": "dealstage",
+                "displayName": "dealstage",
+                "type": "string",
+                "description": "Stage",
+                "required": false
+              },
+              {
+                "id": "pipeline",
+                "displayName": "pipeline",
+                "type": "string",
+                "description": "Pipeline",
+                "required": false
+              },
+              {
+                "id": "closedate",
+                "displayName": "closedate",
+                "type": "string",
+                "description": "Close date",
+                "required": false
+              },
+              {
+                "id": "hubspot_owner_id",
+                "displayName": "hubspot_owner_id",
+                "type": "string",
+                "description": "Owner id",
+                "required": false
+              },
+              {
+                "id": "dealtype",
+                "displayName": "dealtype",
+                "type": "string",
+                "description": "Deal type",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-delete-deal",
+        "name": "delete_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1000,
+          700
+        ],
+        "parameters": {
+          "name": "delete_deal",
+          "description": "Archive (soft-delete) a deal.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_deal",
+              "deal_id": "={{ $fromAI('deal_id', \"Deal id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "type": "string",
+                "description": "Deal id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-tickets",
+        "name": "search_tickets",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1250,
+          700
+        ],
+        "parameters": {
+          "name": "search_tickets",
+          "description": "Search tickets. Default property 'subject'; override via 'property' (hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id) and 'operator'.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_tickets",
+              "query": "={{ $fromAI('query', \"Search value\", 'string') }}",
+              "property": "={{ $fromAI('property', \"Property name (default: subject)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"Filter operator (default: CONTAINS_TOKEN)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results (default 10)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search value",
+                "required": true
+              },
+              {
+                "id": "property",
+                "displayName": "property",
+                "type": "string",
+                "description": "Property name (default: subject)",
+                "required": false
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "description": "Filter operator (default: CONTAINS_TOKEN)",
+                "required": false
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 10)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-ticket",
+        "name": "get_ticket",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          900
+        ],
+        "parameters": {
+          "name": "get_ticket",
+          "description": "Get a ticket by id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_ticket",
+              "ticket_id": "={{ $fromAI('ticket_id', \"Ticket id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "ticket_id",
+                "displayName": "ticket_id",
+                "type": "string",
+                "description": "Ticket id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-ticket",
+        "name": "create_ticket",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          900
+        ],
+        "parameters": {
+          "name": "create_ticket",
+          "description": "Create a new ticket. Requires subject.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_ticket",
+              "subject": "={{ $fromAI('subject', \"Ticket subject/title\", 'string') }}",
+              "content": "={{ $fromAI('content', \"Ticket description/content\", 'string') }}",
+              "hs_pipeline": "={{ $fromAI('hs_pipeline', \"Pipeline id\", 'string') }}",
+              "hs_pipeline_stage": "={{ $fromAI('hs_pipeline_stage', \"Stage id (default: '1' = first stage of support pipeline)\", 'string') }}",
+              "hs_ticket_priority": "={{ $fromAI('hs_ticket_priority', \"Priority (LOW, MEDIUM, HIGH)\", 'string') }}",
+              "hubspot_owner_id": "={{ $fromAI('hubspot_owner_id', \"Owner id\", 'string') }}",
+              "source_type": "={{ $fromAI('source_type', \"Source channel (CHAT, EMAIL, FORM, PHONE)\", 'string') }}",
+              "associated_contact_id": "={{ $fromAI('associated_contact_id', \"Optional: associate with contact id\", 'string') }}",
+              "associated_company_id": "={{ $fromAI('associated_company_id', \"Optional: associate with company id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "subject",
+                "displayName": "subject",
+                "type": "string",
+                "description": "Ticket subject/title",
+                "required": true
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Ticket description/content",
+                "required": false
+              },
+              {
+                "id": "hs_pipeline",
+                "displayName": "hs_pipeline",
+                "type": "string",
+                "description": "Pipeline id",
+                "required": false
+              },
+              {
+                "id": "hs_pipeline_stage",
+                "displayName": "hs_pipeline_stage",
+                "type": "string",
+                "description": "Stage id (default: '1' = first stage of support pipeline)",
+                "required": false
+              },
+              {
+                "id": "hs_ticket_priority",
+                "displayName": "hs_ticket_priority",
+                "type": "string",
+                "description": "Priority (LOW, MEDIUM, HIGH)",
+                "required": false
+              },
+              {
+                "id": "hubspot_owner_id",
+                "displayName": "hubspot_owner_id",
+                "type": "string",
+                "description": "Owner id",
+                "required": false
+              },
+              {
+                "id": "source_type",
+                "displayName": "source_type",
+                "type": "string",
+                "description": "Source channel (CHAT, EMAIL, FORM, PHONE)",
+                "required": false
+              },
+              {
+                "id": "associated_contact_id",
+                "displayName": "associated_contact_id",
+                "type": "string",
+                "description": "Optional: associate with contact id",
+                "required": false
+              },
+              {
+                "id": "associated_company_id",
+                "displayName": "associated_company_id",
+                "type": "string",
+                "description": "Optional: associate with company id",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-update-ticket",
+        "name": "update_ticket",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          900
+        ],
+        "parameters": {
+          "name": "update_ticket",
+          "description": "Update a ticket (change stage, priority, assign owner).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_ticket",
+              "ticket_id": "={{ $fromAI('ticket_id', \"Ticket id\", 'string') }}",
+              "subject": "={{ $fromAI('subject', \"Subject\", 'string') }}",
+              "content": "={{ $fromAI('content', \"Content\", 'string') }}",
+              "hs_pipeline": "={{ $fromAI('hs_pipeline', \"Pipeline\", 'string') }}",
+              "hs_pipeline_stage": "={{ $fromAI('hs_pipeline_stage', \"Stage\", 'string') }}",
+              "hs_ticket_priority": "={{ $fromAI('hs_ticket_priority', \"Priority\", 'string') }}",
+              "hubspot_owner_id": "={{ $fromAI('hubspot_owner_id', \"Owner id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "ticket_id",
+                "displayName": "ticket_id",
+                "type": "string",
+                "description": "Ticket id",
+                "required": true
+              },
+              {
+                "id": "subject",
+                "displayName": "subject",
+                "type": "string",
+                "description": "Subject",
+                "required": false
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Content",
+                "required": false
+              },
+              {
+                "id": "hs_pipeline",
+                "displayName": "hs_pipeline",
+                "type": "string",
+                "description": "Pipeline",
+                "required": false
+              },
+              {
+                "id": "hs_pipeline_stage",
+                "displayName": "hs_pipeline_stage",
+                "type": "string",
+                "description": "Stage",
+                "required": false
+              },
+              {
+                "id": "hs_ticket_priority",
+                "displayName": "hs_ticket_priority",
+                "type": "string",
+                "description": "Priority",
+                "required": false
+              },
+              {
+                "id": "hubspot_owner_id",
+                "displayName": "hubspot_owner_id",
+                "type": "string",
+                "description": "Owner id",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-delete-ticket",
+        "name": "delete_ticket",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          900
+        ],
+        "parameters": {
+          "name": "delete_ticket",
+          "description": "Archive (soft-delete) a ticket.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_ticket",
+              "ticket_id": "={{ $fromAI('ticket_id', \"Ticket id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "ticket_id",
+                "displayName": "ticket_id",
+                "type": "string",
+                "description": "Ticket id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-note",
+        "name": "create_note",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1000,
+          900
+        ],
+        "parameters": {
+          "name": "create_note",
+          "description": "Create a note and optionally associate it with an object (contact, company, deal or ticket).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_note",
+              "body": "={{ $fromAI('body', \"Note text (supports basic HTML)\", 'string') }}",
+              "associated_contact_id": "={{ $fromAI('associated_contact_id', \"Attach to contact id\", 'string') }}",
+              "associated_company_id": "={{ $fromAI('associated_company_id', \"Attach to company id\", 'string') }}",
+              "associated_deal_id": "={{ $fromAI('associated_deal_id', \"Attach to deal id\", 'string') }}",
+              "associated_ticket_id": "={{ $fromAI('associated_ticket_id', \"Attach to ticket id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "body",
+                "displayName": "body",
+                "type": "string",
+                "description": "Note text (supports basic HTML)",
+                "required": true
+              },
+              {
+                "id": "associated_contact_id",
+                "displayName": "associated_contact_id",
+                "type": "string",
+                "description": "Attach to contact id",
+                "required": false
+              },
+              {
+                "id": "associated_company_id",
+                "displayName": "associated_company_id",
+                "type": "string",
+                "description": "Attach to company id",
+                "required": false
+              },
+              {
+                "id": "associated_deal_id",
+                "displayName": "associated_deal_id",
+                "type": "string",
+                "description": "Attach to deal id",
+                "required": false
+              },
+              {
+                "id": "associated_ticket_id",
+                "displayName": "associated_ticket_id",
+                "type": "string",
+                "description": "Attach to ticket id",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-task",
+        "name": "create_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1250,
+          900
+        ],
+        "parameters": {
+          "name": "create_task",
+          "description": "Create a task with due-date, priority and optional object attachment.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_task",
+              "subject": "={{ $fromAI('subject', \"Task title\", 'string') }}",
+              "body": "={{ $fromAI('body', \"Task description\", 'string') }}",
+              "priority": "={{ $fromAI('priority', \"LOW / MEDIUM / HIGH\", 'string') }}",
+              "status": "={{ $fromAI('status', \"NOT_STARTED / IN_PROGRESS / WAITING / COMPLETED / DEFERRED\", 'string') }}",
+              "type": "={{ $fromAI('type', \"TODO / CALL / EMAIL\", 'string') }}",
+              "due_date": "={{ $fromAI('due_date', \"Due date (ISO date or timestamp)\", 'string') }}",
+              "hubspot_owner_id": "={{ $fromAI('hubspot_owner_id', \"Assign owner\", 'string') }}",
+              "associated_contact_id": "={{ $fromAI('associated_contact_id', \"Attach to contact id\", 'string') }}",
+              "associated_company_id": "={{ $fromAI('associated_company_id', \"Attach to company id\", 'string') }}",
+              "associated_deal_id": "={{ $fromAI('associated_deal_id', \"Attach to deal id\", 'string') }}",
+              "associated_ticket_id": "={{ $fromAI('associated_ticket_id', \"Attach to ticket id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "subject",
+                "displayName": "subject",
+                "type": "string",
+                "description": "Task title",
+                "required": true
+              },
+              {
+                "id": "body",
+                "displayName": "body",
+                "type": "string",
+                "description": "Task description",
+                "required": false
+              },
+              {
+                "id": "priority",
+                "displayName": "priority",
+                "type": "string",
+                "description": "LOW / MEDIUM / HIGH",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "NOT_STARTED / IN_PROGRESS / WAITING / COMPLETED / DEFERRED",
+                "required": false
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "TODO / CALL / EMAIL",
+                "required": false
+              },
+              {
+                "id": "due_date",
+                "displayName": "due_date",
+                "type": "string",
+                "description": "Due date (ISO date or timestamp)",
+                "required": false
+              },
+              {
+                "id": "hubspot_owner_id",
+                "displayName": "hubspot_owner_id",
+                "type": "string",
+                "description": "Assign owner",
+                "required": false
+              },
+              {
+                "id": "associated_contact_id",
+                "displayName": "associated_contact_id",
+                "type": "string",
+                "description": "Attach to contact id",
+                "required": false
+              },
+              {
+                "id": "associated_company_id",
+                "displayName": "associated_company_id",
+                "type": "string",
+                "description": "Attach to company id",
+                "required": false
+              },
+              {
+                "id": "associated_deal_id",
+                "displayName": "associated_deal_id",
+                "type": "string",
+                "description": "Attach to deal id",
+                "required": false
+              },
+              {
+                "id": "associated_ticket_id",
+                "displayName": "associated_ticket_id",
+                "type": "string",
+                "description": "Attach to ticket id",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-associate-objects",
+        "name": "associate_objects",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1100
+        ],
+        "parameters": {
+          "name": "associate_objects",
+          "description": "Associate two CRM objects via v4 default association. Types: contacts, companies, deals, tickets, notes, tasks.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "associate_objects",
+              "from_type": "={{ $fromAI('from_type', \"Source object type\", 'string') }}",
+              "from_id": "={{ $fromAI('from_id', \"Source object id\", 'string') }}",
+              "to_type": "={{ $fromAI('to_type', \"Target object type\", 'string') }}",
+              "to_id": "={{ $fromAI('to_id', \"Target object id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "from_type",
+                "displayName": "from_type",
+                "type": "string",
+                "description": "Source object type",
+                "required": true
+              },
+              {
+                "id": "from_id",
+                "displayName": "from_id",
+                "type": "string",
+                "description": "Source object id",
+                "required": true
+              },
+              {
+                "id": "to_type",
+                "displayName": "to_type",
+                "type": "string",
+                "description": "Target object type",
+                "required": true
+              },
+              {
+                "id": "to_id",
+                "displayName": "to_id",
+                "type": "string",
+                "description": "Target object id",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-associations",
+        "name": "list_associations",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          1100
+        ],
+        "parameters": {
+          "name": "list_associations",
+          "description": "List objects of a given type associated with a source object.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_associations",
+              "from_type": "={{ $fromAI('from_type', \"Source type (contacts, companies, deals, tickets)\", 'string') }}",
+              "from_id": "={{ $fromAI('from_id', \"Source id\", 'string') }}",
+              "to_type": "={{ $fromAI('to_type', \"Target type to list\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results (default 20)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "from_type",
+                "displayName": "from_type",
+                "type": "string",
+                "description": "Source type (contacts, companies, deals, tickets)",
+                "required": true
+              },
+              {
+                "id": "from_id",
+                "displayName": "from_id",
+                "type": "string",
+                "description": "Source id",
+                "required": true
+              },
+              {
+                "id": "to_type",
+                "displayName": "to_type",
+                "type": "string",
+                "description": "Target type to list",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 20)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-pipelines",
+        "name": "list_pipelines",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          1100
+        ],
+        "parameters": {
+          "name": "list_pipelines",
+          "description": "List pipelines and their stages for deals or tickets.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_pipelines",
+              "object_type": "={{ $fromAI('object_type', \"'deals' or 'tickets' (default: deals)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "object_type",
+                "displayName": "object_type",
+                "type": "string",
+                "description": "'deals' or 'tickets' (default: deals)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-owners",
+        "name": "list_owners",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          1100
+        ],
+        "parameters": {
+          "name": "list_owners",
+          "description": "List HubSpot users / owners (for hubspot_owner_id assignments).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_owners",
+              "limit": "={{ $fromAI('limit', \"Max results (default 50)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results (default 50)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_companies": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_company": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_company": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_company": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_company": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_deals": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_deals": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_tickets": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_ticket": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_ticket": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_ticket": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_ticket": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_note": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "associate_objects": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_associations": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_pipelines": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_owners": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "id": "hubspot",
+  "name": "HubSpot CRM",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "marketing",
+  "description": "HubSpot CRM (28 tools): full coverage of contacts, companies, deals and tickets (list/search/get/create/update/delete), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth.",
+  "credentials_required": [
+    {
+      "key": "hubspot_pat",
+      "label": "HubSpot Private App Access Token",
+      "hint": "Create in HubSpot: Settings (gear) \u2192 Integrations \u2192 Private Apps \u2192 Create. In the 'Scopes' tab enable: crm.objects.contacts.read+write, crm.objects.companies.read+write, crm.objects.deals.read+write, crm.objects.owners.read, tickets (read+write), crm.lists.read+write. Copy the Access Token (starts with 'pat-eu1-...' or 'pat-na1-...')."
+    }
+  ],
+  "tools": [
+    { "name": "list_contacts", "description": "List recent contacts (paginated). Optional: limit (1-100, default 10)" },
+    { "name": "search_contacts", "description": "Search contacts by email, name, phone or any property. Uses HubSpot search filters (propertyName + operator + value)" },
+    { "name": "get_contact", "description": "Get a contact by id or email (auto-detects)" },
+    { "name": "create_contact", "description": "Create a new contact. At least email or name required. Optional: firstname, lastname, phone, company, jobtitle, lifecyclestage" },
+    { "name": "update_contact", "description": "Update contact properties by id" },
+    { "name": "delete_contact", "description": "Archive (soft-delete) a contact by id. Can be restored within 90 days in HubSpot UI" },
+    { "name": "search_companies", "description": "Search companies by name, domain, or any property" },
+    { "name": "get_company", "description": "Get a company by id" },
+    { "name": "create_company", "description": "Create a new company. Requires name or domain. Optional: phone, city, country, industry, description, numberofemployees" },
+    { "name": "update_company", "description": "Update company properties by id" },
+    { "name": "delete_company", "description": "Archive (soft-delete) a company by id" },
+    { "name": "list_deals", "description": "List recent deals (paginated). Optional: limit" },
+    { "name": "search_deals", "description": "Search deals by stage, owner, amount, closedate or any property" },
+    { "name": "get_deal", "description": "Get a deal by id (includes properties + associated contacts/companies)" },
+    { "name": "create_deal", "description": "Create a new deal. Requires dealname. Optional: amount, dealstage, pipeline, closedate, hubspot_owner_id, associated_contact_id, associated_company_id" },
+    { "name": "update_deal", "description": "Update deal properties by id (e.g. move to new stage, update amount)" },
+    { "name": "delete_deal", "description": "Archive (soft-delete) a deal by id" },
+    { "name": "search_tickets", "description": "Search tickets (Service Hub) by status, pipeline, owner, priority or any property" },
+    { "name": "get_ticket", "description": "Get a ticket by id" },
+    { "name": "create_ticket", "description": "Create a new ticket. Requires subject. Optional: content, hs_pipeline, hs_pipeline_stage, hs_ticket_priority, hubspot_owner_id, associated_contact_id" },
+    { "name": "update_ticket", "description": "Update ticket properties by id (e.g. change status, priority, assign owner)" },
+    { "name": "delete_ticket", "description": "Archive (soft-delete) a ticket by id" },
+    { "name": "create_note", "description": "Create a note and optionally associate it with a contact, company, deal or ticket (pass associated_contact_id / associated_company_id / associated_deal_id / associated_ticket_id)" },
+    { "name": "create_task", "description": "Create a task with subject, body, due-date (ISO-date), priority (LOW/MEDIUM/HIGH), status (NOT_STARTED/IN_PROGRESS/COMPLETED), type (TODO/CALL/EMAIL) and optional associated object id + owner" },
+    { "name": "associate_objects", "description": "Associate two CRM objects (v4 default association). Params: from_type, from_id, to_type, to_id. Types: contacts, companies, deals, tickets, notes, tasks" },
+    { "name": "list_associations", "description": "List objects associated with a source object. Params: from_type, from_id, to_type" },
+    { "name": "list_pipelines", "description": "List pipelines for deals or tickets (incl. stages). Param: object_type (deals|tickets)" },
+    { "name": "list_owners", "description": "List HubSpot users / owners (for hubspot_owner_id assignments)" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

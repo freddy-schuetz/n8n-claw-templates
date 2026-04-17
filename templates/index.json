@@ -855,6 +855,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot CRM",
+      "type": "native",
+      "category": "marketing",
+      "description": "HubSpot CRM (28 tools): full coverage of contacts, companies, deals and tickets (list/search/get/create/update/delete), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth.",
+      "credentials_required": [
+        {
+          "key": "hubspot_pat",
+          "label": "HubSpot Private App Access Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
