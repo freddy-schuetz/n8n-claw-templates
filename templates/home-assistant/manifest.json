@@ -1,11 +1,11 @@
 {
   "id": "home-assistant",
   "name": "Home Assistant",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "smart-home",
-  "description": "Control your Home Assistant smart home: list entities, check states, call services (lights, switches, climate, media, scenes, etc.). Requires a publicly reachable HA instance (Nabu Casa, Cloudflare Tunnel, DuckDNS, or Tailscale).",
+  "description": "Control your Home Assistant smart home: list entities, check states, call services (lights, switches, climate, media, scenes, etc.), and speak text on voice devices / speakers with automatic routing (assist_satellite.announce preferred, tts.speak fallback). Requires a publicly reachable HA instance (Nabu Casa, Cloudflare Tunnel, DuckDNS, or Tailscale).",
   "credentials_required": [
     {
       "key": "ha_url",
@@ -35,6 +35,10 @@
     {
       "name": "call_service",
       "description": "Call a service (e.g. light.turn_on, switch.toggle, climate.set_temperature)"
+    },
+    {
+      "name": "speak",
+      "description": "Speak text on a voice device / speaker. Auto-selects assist_satellite.announce (HA Voice) or tts.speak with media_player, with optional device_hint to pick a specific room"
     }
   ],
   "author": "freddy-schuetz",
