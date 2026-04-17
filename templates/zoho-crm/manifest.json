@@ -1,0 +1,148 @@
+{
+  "id": "zoho-crm",
+  "name": "Zoho CRM",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "marketing",
+  "description": "Zoho CRM (28 tools): full read/write on Leads, Contacts, Accounts, Deals, Tasks, Cases via REST API v8. Plus COQL query and dynamic fields discovery — returns ALL fields incl. custom per Zoho org. Auth via Self-Client OAuth (one-time grant code exchange, then refresh-token-based server-to-server access). Regional endpoints: .com, .eu, .in, .com.au, .jp, .com.cn.",
+  "credentials_required": [
+    {
+      "key": "zoho_region",
+      "label": "Zoho Data Center",
+      "hint": "Where your Zoho CRM account lives. Most common: 'eu' (Europe/GDPR), 'com' (US/Global), 'in' (India), 'com.au' (Australia), 'jp' (Japan), 'com.cn' (China). If unsure: check where you log in — accounts.zoho.EU means 'eu'. Default 'eu'."
+    },
+    {
+      "key": "zoho_client_id",
+      "label": "Client ID",
+      "hint": "Zoho API Console -> https://api-console.zoho.{region} -> 'Add Client' -> 'Self Client' -> Create. Copy 'Client ID' from the generated card. Starts with '1000.XXXX...'."
+    },
+    {
+      "key": "zoho_client_secret",
+      "label": "Client Secret",
+      "hint": "Same Self-Client card as Client ID. Click 'Client Secret' -> Copy. Long hex string."
+    },
+    {
+      "key": "zoho_refresh_token",
+      "label": "Refresh Token",
+      "hint": "One-time step: In the Self-Client console, tab 'Generate Code' -> Scope: 'ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.coql.READ,ZohoCRM.users.READ' -> Time Duration 10 minutes -> Create. Copy the Grant Code, then run in terminal (within 10 min!): curl -X POST 'https://accounts.zoho.{region}/oauth/v2/token' -d 'grant_type=authorization_code' -d 'client_id=YOUR_ID' -d 'client_secret=YOUR_SECRET' -d 'code=YOUR_GRANT'. The response contains 'refresh_token' — paste it here. The refresh token does not expire (unless revoked). Starts with '1000.XXXX...'."
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_leads",
+      "description": "List recent Leads. Returns ALL fields (incl. custom fields) via dynamic discovery. Optional: limit (1-200, default 10)"
+    },
+    {
+      "name": "search_leads",
+      "description": "Search Leads. Two modes: word-search (param: word=searchterm) for full-text across all fields (most reliable); OR criteria-search (params: field, operator=equals|starts_with|contains, value). Example: word=Maclead or field=Email,operator=equals,value=max@edge.com. Returns all fields."
+    },
+    {
+      "name": "get_lead",
+      "description": "Get single Lead by Zoho ID (18-char numeric). Returns all fields."
+    },
+    {
+      "name": "create_lead",
+      "description": "Create Lead. Required: Last_Name, Company. Optional: First_Name, Email, Phone, Title, Lead_Source, Lead_Status, Industry, Description, custom_fields (JSON-string for any Zoho field, e.g. '{\"VIP_Status\":true,\"Projektnummer\":\"P-123\"}')"
+    },
+    {
+      "name": "update_lead",
+      "description": "Update Lead by Id. Any of: First_Name, Last_Name, Company, Email, Phone, Title, Lead_Source, Lead_Status, Industry, Description, custom_fields (JSON-string)"
+    },
+    {
+      "name": "delete_lead",
+      "description": "Delete Lead by Id. Soft-Delete — restorable from Recycle Bin for 60 days."
+    },
+    {
+      "name": "list_contacts",
+      "description": "List recent Contacts. Returns all fields. Optional: limit (1-200, default 10)"
+    },
+    {
+      "name": "search_contacts",
+      "description": "Search Contacts. word-search (word=X) or criteria (field, operator, value). Common fields: Email, Phone, Last_Name, Account_Name"
+    },
+    {
+      "name": "get_contact",
+      "description": "Get Contact by Id. Returns all fields incl. custom."
+    },
+    {
+      "name": "create_contact",
+      "description": "Create Contact. Required: Last_Name. Optional: First_Name, Email, Phone, Mobile, Title, Account_Name (as ID), Mailing_City, Mailing_Country, Description, custom_fields (JSON-string)"
+    },
+    {
+      "name": "update_contact",
+      "description": "Update Contact by Id. Any of: First_Name, Last_Name, Email, Phone, Mobile, Title, Account_Name, Mailing_City, Mailing_Country, Description, custom_fields"
+    },
+    {
+      "name": "delete_contact",
+      "description": "Delete Contact by Id (Soft-Delete, 60d recyclable)"
+    },
+    {
+      "name": "list_accounts",
+      "description": "List recent Accounts (companies). Returns all fields. Optional: limit"
+    },
+    {
+      "name": "search_accounts",
+      "description": "Search Accounts. word-search or criteria-search. Common: Account_Name, Industry, Website, Phone"
+    },
+    {
+      "name": "get_account",
+      "description": "Get Account by Id incl. Industry, Phone, Website, Billing_City/Country, Employees, Annual_Revenue + all custom fields"
+    },
+    {
+      "name": "create_account",
+      "description": "Create Account. Required: Account_Name. Optional: Phone, Website, Industry, Billing_City, Billing_Country, Employees (number), Annual_Revenue (number), Description, custom_fields"
+    },
+    {
+      "name": "update_account",
+      "description": "Update Account by Id. Any of: Account_Name, Phone, Website, Industry, Billing_City, Billing_Country, Employees, Annual_Revenue, Description, custom_fields. NOTE: no delete_account — delete Accounts manually in Zoho UI to prevent Cascade data loss."
+    },
+    {
+      "name": "list_deals",
+      "description": "List recent Deals (Opportunities). Returns all fields. Optional: limit"
+    },
+    {
+      "name": "search_deals",
+      "description": "Search Deals. word or criteria. Common: Stage, Amount, Closing_Date, Deal_Name, Account_Name, Owner"
+    },
+    {
+      "name": "get_deal",
+      "description": "Get Deal by Id incl. Stage, Amount, Probability, Closing_Date, Account_Name + all custom"
+    },
+    {
+      "name": "create_deal",
+      "description": "Create Deal. Required: Deal_Name, Stage (e.g. 'Qualification', 'Needs Analysis', 'Closed Won'), Closing_Date (YYYY-MM-DD). Optional: Amount (number), Account_Name (as ID), Contact_Name (as ID), Probability (0-100), Type, Lead_Source, Description, custom_fields"
+    },
+    {
+      "name": "update_deal",
+      "description": "Update Deal by Id. Any of: Deal_Name, Stage, Closing_Date, Amount, Account_Name, Contact_Name, Probability, Type, Lead_Source, Description, custom_fields. NOTE: no delete_deal for revenue-record safety."
+    },
+    {
+      "name": "list_tasks",
+      "description": "List recent Tasks. Returns all fields. Optional: limit"
+    },
+    {
+      "name": "create_task",
+      "description": "Create Task. Required: Subject. Optional: Description, Status (Not Started|In Progress|Completed|Deferred|Waiting for input), Priority (High|Highest|Low|Lowest|Normal), Due_Date (YYYY-MM-DD), What_Id (Account/Deal ID), Who_Id (Contact/Lead ID), Owner (user ID), custom_fields"
+    },
+    {
+      "name": "list_cases",
+      "description": "List recent Cases (Service module). Returns all fields. Optional: limit"
+    },
+    {
+      "name": "create_case",
+      "description": "Create Case. Required: Subject, Status (New|On Hold|Closed|Escalated). Optional: Description, Priority (High|Low|Normal), Case_Origin (Email|Phone|Web), Type, Account_Name (as ID), Contact_Name (as ID), custom_fields"
+    },
+    {
+      "name": "coql_query",
+      "description": "Run raw COQL query (Zoho's SQL-like). Params: query (full string). MUST include WHERE clause (Zoho v8 enforces this). Example: 'SELECT First_Name, Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10'. Max 200 rows/page. NOTE: use Zoho field API names (Last_Name not lastname)."
+    },
+    {
+      "name": "describe_module",
+      "description": "Get metadata for a Zoho module (field names, types, picklist values). Param: module_name (Leads|Contacts|Accounts|Deals|Tasks|Cases|Products|Quotes|etc). Useful to discover custom field API names before create/update."
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

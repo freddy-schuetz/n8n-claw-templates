@@ -1,0 +1,2662 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Zoho CRM",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Zoho CRM Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.zoho-crm&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.zoho_client_id || !creds.zoho_client_secret || !creds.zoho_refresh_token) {\n  return [{ json: { error: 'Zoho credentials missing. Need: zoho_region, zoho_client_id, zoho_client_secret, zoho_refresh_token. Register a Self-Client at https://api-console.zoho.{region}/ and exchange a grant code for a refresh token.' } }];\n}\n\nconst REGION = String(creds.zoho_region || 'eu').trim().replace(/^\\./, '');\nconst ACCOUNTS = 'https://accounts.zoho.' + REGION;\nconst API = 'https://www.zohoapis.' + REGION + '/crm/v8';\n\nfunction truncate(text, max) {\n  max = max || 6000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total — use specific filters or smaller limit)';\n  return text;\n}\n\nfunction errMsg(err) {\n  if (!err) return 'unknown error';\n  const resp = err.response || {};\n  const b = resp.body || resp.data;\n  if (b) {\n    if (typeof b === 'string') return b;\n    if (b.code && b.message) {\n      let s = b.code + ': ' + b.message;\n      if (b.details && Object.keys(b.details).length) s += ' (' + JSON.stringify(b.details) + ')';\n      return s;\n    }\n    if (Array.isArray(b) && b[0]) {\n      const e = b[0];\n      return (e.code ? e.code + ': ' : '') + (e.message || JSON.stringify(e));\n    }\n    if (b.error_description) return String(b.error_description);\n    if (b.error && typeof b.error === 'string') return b.error;\n    if (b.message) return String(b.message);\n    try { return JSON.stringify(b); } catch (e) {}\n  }\n  if (err.description && typeof err.description === 'string') return err.description;\n  if (err.message && typeof err.message === 'string') return err.message;\n  if (err.cause) return errMsg(err.cause);\n  try { return JSON.stringify(err, Object.getOwnPropertyNames(err)); } catch (e) {}\n  return String(err);\n}\n\n// --- Auth: refresh access token ---\nlet accessToken;\ntry {\n  const tokenResp = await helpers.httpRequest({\n    method: 'POST',\n    url: ACCOUNTS + '/oauth/v2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: 'grant_type=refresh_token&client_id=' + encodeURIComponent(creds.zoho_client_id) + '&client_secret=' + encodeURIComponent(creds.zoho_client_secret) + '&refresh_token=' + encodeURIComponent(creds.zoho_refresh_token),\n    json: true\n  });\n  accessToken = tokenResp.access_token;\n  if (!accessToken) return [{ json: { error: 'Zoho auth failed: no access_token. Response: ' + JSON.stringify(tokenResp) + '. Check zoho_region (' + REGION + '), client_id/secret, and refresh_token validity.' } }];\n} catch (err) {\n  return [{ json: { error: 'Zoho auth failed: ' + errMsg(err) + '. Likely causes: wrong region (you set \"' + REGION + '\"), invalid refresh_token, revoked client. Re-run the Self-Client grant-code exchange.' } }];\n}\n\nconst authHeaders = { 'Authorization': 'Zoho-oauthtoken ' + accessToken };\nconst jsonHeaders = Object.assign({}, authHeaders, { 'Content-Type': 'application/json' });\n\nasync function zGet(path) {\n  return await helpers.httpRequest({ method: 'GET', url: API + path, headers: authHeaders, json: true });\n}\nasync function zPost(path, body) {\n  return await helpers.httpRequest({ method: 'POST', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zPut(path, body) {\n  return await helpers.httpRequest({ method: 'PUT', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function zDelete(path) {\n  return await helpers.httpRequest({ method: 'DELETE', url: API + path, headers: authHeaders, json: true });\n}\n\n// --- Dynamic field discovery (cache per execution) ---\nconst fieldCache = {};\nasync function getFields(moduleName) {\n  if (fieldCache[moduleName]) return fieldCache[moduleName];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const names = (r.fields || []).map(function(f){ return f.api_name; }).filter(Boolean);\n    fieldCache[moduleName] = names;\n    return names;\n  } catch (err) {\n    return [];\n  }\n}\n\nasync function fieldsParam(moduleName) {\n  const names = await getFields(moduleName);\n  if (!names.length) return '';\n  return '&fields=' + encodeURIComponent(names.join(','));\n}\n\nfunction mergeCustomFields(props, raw) {\n  if (!raw) return props;\n  let obj;\n  try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return props; }\n  if (obj && typeof obj === 'object') Object.assign(props, obj);\n  return props;\n}\n\nfunction buildProps(input, allowed) {\n  const props = {};\n  for (const f of allowed) if (input[f] !== undefined && input[f] !== '' && input[f] !== null) props[f] = input[f];\n  mergeCustomFields(props, input.custom_fields);\n  return props;\n}\n\nfunction recCreateOK(resp) {\n  // Zoho wraps in {\"data\":[{\"code\":\"SUCCESS\",\"details\":{\"id\":\"...\",\"Modified_Time\":...}}]}\n  if (!resp || !resp.data || !resp.data[0]) return { ok: false, err: 'empty response' };\n  const d = resp.data[0];\n  if (d.code === 'SUCCESS') return { ok: true, id: d.details && d.details.id };\n  return { ok: false, err: (d.code || 'ERROR') + ': ' + (d.message || JSON.stringify(d)) };\n}\n\nfunction fmtRec(rec, primary) {\n  // Render a record as \"id - primary-field (extra1, extra2)\"\n  const id = rec.id || '(no id)';\n  const name = primary ? (rec[primary] || '') : '';\n  const kv = [];\n  const skipKeys = { id: 1, '$approved': 1, '$approval': 1, '$currency_symbol': 1, '$converted': 1, '$editable': 1, '$process_flow': 1, '$review_process': 1, '$se_module': 1, '$review': 1, '$orchestration': 1, '$in_merge': 1, '$approval_state': 1, '$state': 1, '$locked_for_me': 1, 'Tag': 1 };\n  skipKeys[primary] = 1;\n  for (const k of Object.keys(rec)) {\n    if (k.startsWith('$') || skipKeys[k]) continue;\n    const v = rec[k];\n    if (v === null || v === undefined || v === '') continue;\n    if (typeof v === 'object') {\n      if (v.name) kv.push(k + '=' + v.name);\n      continue;\n    }\n    const s = String(v);\n    if (s.length > 60) continue;\n    kv.push(k + '=' + s);\n  }\n  return id + (name ? ' - ' + name : '') + (kv.length ? ' | ' + kv.slice(0, 8).join(' | ') : '');\n}\n\n// Generic list handler\nasync function listRecords(moduleName, primary, limit) {\n  const lim = Math.min(Math.max(parseInt(limit) || 10, 1), 200);\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '?per_page=' + lim + fq);\n    const items = r.data || [];\n    if (items.length === 0) return [{ json: { result: 'No ' + moduleName + '.' } }];\n    let out = moduleName + ' (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    if (r.info && r.info.more_records) out += '\\n(more records available, raise limit or filter)';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho list ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function searchRecords(moduleName, primary, input) {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const word = input.word;\n  const field = input.field;\n  const operator = input.operator;\n  const value = input.value;\n  let queryStr;\n  if (word) {\n    queryStr = 'word=' + encodeURIComponent(word);\n  } else if (field && operator && value !== undefined && value !== '') {\n    const op = String(operator).toLowerCase();\n    if (['equals', 'starts_with', 'contains'].indexOf(op) < 0) return [{ json: { error: 'Invalid operator \"' + operator + '\". Use: equals | starts_with | contains.' } }];\n    queryStr = 'criteria=' + encodeURIComponent('(' + field + ':' + op + ':' + value + ')');\n  } else {\n    return [{ json: { error: 'Provide either \"word\" (full-text across all fields) OR \"field\" + \"operator\" (equals|starts_with|contains) + \"value\".' } }];\n  }\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/search?' + queryStr + '&per_page=' + limit + fq);\n    const items = (r && r.data) || [];\n    if (items.length === 0) return [{ json: { result: 'No matches.' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const rec of items) out += '  ' + fmtRec(rec, primary) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    if (err && err.response && err.response.statusCode === 204) return [{ json: { result: 'No matches.' } }];\n    return [{ json: { error: 'Zoho search ' + moduleName + ': ' + errMsg(err) } }];\n  }\n}\n\nasync function getRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required (Zoho record ID, 18-digit numeric).' } }];\n  const fq = await fieldsParam(moduleName);\n  try {\n    const r = await zGet('/' + moduleName + '/' + encodeURIComponent(id) + '?' + fq.replace(/^&/, ''));\n    const rec = (r.data || [])[0];\n    if (!rec) return [{ json: { result: 'Record not found.' } }];\n    let out = moduleName + ' ' + rec.id + '\\n';\n    for (const k of Object.keys(rec)) {\n      if (k.startsWith('$') || k === 'id' || k === 'Tag') continue;\n      const v = rec[k];\n      if (v === null || v === undefined || v === '') continue;\n      if (typeof v === 'object') {\n        if (v.name) out += k + ': ' + v.name + (v.id ? ' (' + v.id + ')' : '') + '\\n';\n      } else {\n        let s = String(v);\n        if (s.length > 300) s = s.substring(0, 300) + '…';\n        out += k + ': ' + s + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho get ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function createRecord(moduleName, props, label) {\n  try {\n    const resp = await zPost('/' + moduleName, { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' created: ' + ok.id } }];\n    return [{ json: { error: 'Zoho create ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho create ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function updateRecord(moduleName, id, props, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    const resp = await zPut('/' + moduleName + '/' + encodeURIComponent(id), { data: [props] });\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' updated.' } }];\n    return [{ json: { error: 'Zoho update ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho update ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\nasync function deleteRecord(moduleName, id, label) {\n  if (!id) return [{ json: { error: 'Parameter \"' + label + '_id\" is required.' } }];\n  try {\n    const resp = await zDelete('/' + moduleName + '/' + encodeURIComponent(id));\n    const ok = recCreateOK(resp);\n    if (ok.ok) return [{ json: { result: label + ' ' + id + ' deleted (Soft-Delete — restorable from Recycle Bin for 60 days).' } }];\n    return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + ok.err } }];\n  } catch (err) { return [{ json: { error: 'Zoho delete ' + moduleName + ': ' + errMsg(err) } }]; }\n}\n\n// === LEADS ===\nif (action === 'list_leads') {\n  return await listRecords('Leads', 'Last_Name', input.limit);\n} else if (action === 'search_leads') {\n  return await searchRecords('Leads', 'Last_Name', input);\n} else if (action === 'get_lead') {\n  return await getRecord('Leads', input.lead_id || input.id, 'lead');\n} else if (action === 'create_lead') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  if (!input.Company) return [{ json: { error: 'Parameter \"Company\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await createRecord('Leads', props, 'Lead');\n} else if (action === 'update_lead') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Company', 'Email', 'Phone', 'Mobile', 'Title', 'Lead_Source', 'Lead_Status', 'Industry', 'Description', 'Website', 'Rating', 'Annual_Revenue', 'No_of_Employees']);\n  return await updateRecord('Leads', input.lead_id || input.id, props, 'Lead');\n} else if (action === 'delete_lead') {\n  return await deleteRecord('Leads', input.lead_id || input.id, 'Lead');\n\n// === CONTACTS ===\n} else if (action === 'list_contacts') {\n  return await listRecords('Contacts', 'Last_Name', input.limit);\n} else if (action === 'search_contacts') {\n  return await searchRecords('Contacts', 'Last_Name', input);\n} else if (action === 'get_contact') {\n  return await getRecord('Contacts', input.contact_id || input.id, 'contact');\n} else if (action === 'create_contact') {\n  if (!input.Last_Name) return [{ json: { error: 'Parameter \"Last_Name\" is required.' } }];\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await createRecord('Contacts', props, 'Contact');\n} else if (action === 'update_contact') {\n  const props = buildProps(input, ['First_Name', 'Last_Name', 'Email', 'Phone', 'Mobile', 'Title', 'Account_Name', 'Mailing_City', 'Mailing_Country', 'Mailing_State', 'Mailing_Street', 'Mailing_Zip', 'Department', 'Description']);\n  return await updateRecord('Contacts', input.contact_id || input.id, props, 'Contact');\n} else if (action === 'delete_contact') {\n  return await deleteRecord('Contacts', input.contact_id || input.id, 'Contact');\n\n// === ACCOUNTS ===\n} else if (action === 'list_accounts') {\n  return await listRecords('Accounts', 'Account_Name', input.limit);\n} else if (action === 'search_accounts') {\n  return await searchRecords('Accounts', 'Account_Name', input);\n} else if (action === 'get_account') {\n  return await getRecord('Accounts', input.account_id || input.id, 'account');\n} else if (action === 'create_account') {\n  if (!input.Account_Name) return [{ json: { error: 'Parameter \"Account_Name\" is required.' } }];\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await createRecord('Accounts', props, 'Account');\n} else if (action === 'update_account') {\n  const props = buildProps(input, ['Account_Name', 'Phone', 'Website', 'Industry', 'Billing_City', 'Billing_Country', 'Billing_State', 'Billing_Street', 'Billing_Code', 'Description', 'Employees', 'Annual_Revenue', 'Account_Type']);\n  return await updateRecord('Accounts', input.account_id || input.id, props, 'Account');\n\n// === DEALS ===\n} else if (action === 'list_deals') {\n  return await listRecords('Deals', 'Deal_Name', input.limit);\n} else if (action === 'search_deals') {\n  return await searchRecords('Deals', 'Deal_Name', input);\n} else if (action === 'get_deal') {\n  return await getRecord('Deals', input.deal_id || input.id, 'deal');\n} else if (action === 'create_deal') {\n  if (!input.Deal_Name) return [{ json: { error: 'Parameter \"Deal_Name\" is required.' } }];\n  if (!input.Stage) return [{ json: { error: 'Parameter \"Stage\" is required (common: Qualification, Needs Analysis, Value Proposition, Identify Decision Makers, Proposal/Price Quote, Negotiation/Review, Closed Won, Closed Lost). Use describe_module Deals to see exact picklist.' } }];\n  if (!input.Closing_Date) return [{ json: { error: 'Parameter \"Closing_Date\" (YYYY-MM-DD) is required.' } }];\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await createRecord('Deals', props, 'Deal');\n} else if (action === 'update_deal') {\n  const props = buildProps(input, ['Deal_Name', 'Stage', 'Closing_Date', 'Amount', 'Account_Name', 'Contact_Name', 'Probability', 'Type', 'Lead_Source', 'Description', 'Next_Step', 'Expected_Revenue']);\n  return await updateRecord('Deals', input.deal_id || input.id, props, 'Deal');\n\n// === TASKS ===\n} else if (action === 'list_tasks') {\n  return await listRecords('Tasks', 'Subject', input.limit);\n} else if (action === 'create_task') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'Due_Date', 'What_Id', 'Who_Id', 'Owner']);\n  return await createRecord('Tasks', props, 'Task');\n\n// === CASES ===\n} else if (action === 'list_cases') {\n  return await listRecords('Cases', 'Subject', input.limit);\n} else if (action === 'create_case') {\n  if (!input.Subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  if (!input.Status) return [{ json: { error: 'Parameter \"Status\" is required (New|On Hold|Closed|Escalated).' } }];\n  const props = buildProps(input, ['Subject', 'Status', 'Description', 'Priority', 'Case_Origin', 'Type', 'Account_Name', 'Contact_Name', 'Reason']);\n  return await createRecord('Cases', props, 'Case');\n\n// === GENERIC ===\n} else if (action === 'coql_query') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Zoho v8 REQUIRES a WHERE clause. Example: \"SELECT First_Name, Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10\". Use Zoho field api_names (Last_Name not lastname — run describe_module to list them).' } }];\n  try {\n    const resp = await zPost('/coql', { select_query: String(query) });\n    const items = resp.data || [];\n    if (items.length === 0) return [{ json: { result: 'Query returned 0 records.' } }];\n    let out = 'COQL result (' + items.length + (resp.info && resp.info.more_records ? ', more available' : '') + '):\\n';\n    for (const rec of items) {\n      const kv = [];\n      for (const k of Object.keys(rec)) {\n        if (k.startsWith('$')) continue;\n        const v = rec[k];\n        if (v === null || v === undefined || v === '') continue;\n        if (typeof v === 'object') { if (v.name) kv.push(k + '=' + v.name); continue; }\n        kv.push(k + '=' + String(v));\n      }\n      out += '  ' + kv.join(' | ') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Zoho coql_query: ' + errMsg(err) } }]; }\n\n} else if (action === 'describe_module') {\n  const moduleName = input.module_name || input.module;\n  if (!moduleName) return [{ json: { error: 'Parameter \"module_name\" is required (e.g. Leads, Contacts, Accounts, Deals, Tasks, Cases, Products, Quotes).' } }];\n  try {\n    const r = await zGet('/settings/fields?module=' + encodeURIComponent(moduleName));\n    const fields = r.fields || [];\n    if (!fields.length) return [{ json: { result: 'No fields returned for module \"' + moduleName + '\". Check spelling (case-sensitive).' } }];\n    let out = 'Module: ' + moduleName + ' — ' + fields.length + ' fields\\n';\n    for (const f of fields) {\n      let line = '  ' + f.api_name + ' (' + (f.data_type || '?') + ')';\n      if (f.custom_field) line += ' [custom]';\n      if (f.system_mandatory || (f.required)) line += ' REQUIRED';\n      if (!f.read_only === false && f.read_only) line += ' [read-only]';\n      if (f.data_type === 'picklist' && f.pick_list_values && f.pick_list_values.length) {\n        const vals = f.pick_list_values.map(function(p){ return p.actual_value || p.display_value; }).filter(Boolean);\n        if (vals.length) line += ' values=[' + vals.slice(0, 10).join(', ') + (vals.length > 10 ? ', ...' : '') + ']';\n      }\n      out += line + '\\n';\n    }\n    return [{ json: { result: truncate(out, 10000) } }];\n  } catch (err) { return [{ json: { error: 'Zoho describe_module: ' + errMsg(err) } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_leads, search_leads, get_lead, create_lead, update_lead, delete_lead, list_contacts, search_contacts, get_contact, create_contact, update_contact, delete_contact, list_accounts, search_accounts, get_account, create_account, update_account, list_deals, search_deals, get_deal, create_deal, update_deal, list_tasks, create_task, list_cases, create_case, coql_query, describe_module.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Zoho CRM Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Zoho CRM",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "zoho-crm"
+        }
+      },
+      {
+        "id": "t-list-leads",
+        "name": "list_leads",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "list_leads",
+          "description": "List recent Zoho Leads. Returns all fields (incl. custom fields).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_leads",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-leads",
+        "name": "search_leads",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          300
+        ],
+        "parameters": {
+          "name": "search_leads",
+          "description": "Search Zoho Leads. Use either word (full-text) OR field+operator+value (criteria).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_leads",
+              "word": "={{ $fromAI('word', \"Full-text search term across all fields (recommended)\", 'string') }}",
+              "field": "={{ $fromAI('field', \"Field api_name for criteria search (Email, Phone, Last_Name, Company, ...)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"equals | starts_with | contains\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match in criteria search\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "word",
+                "displayName": "word",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full-text search term across all fields (recommended)"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field api_name for criteria search (Email, Phone, Last_Name, Company, ...)"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "equals | starts_with | contains"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match in criteria search"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-lead",
+        "name": "get_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          300
+        ],
+        "parameters": {
+          "name": "get_lead",
+          "description": "Get single Zoho Lead by Id. Returns all fields.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Zoho Lead ID (18-digit numeric)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Lead ID (18-digit numeric)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-lead",
+        "name": "create_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          300
+        ],
+        "parameters": {
+          "name": "create_lead",
+          "description": "Create a Zoho Lead. Required: Last_Name, Company.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_lead",
+              "Last_Name": "={{ $fromAI('Last_Name', \"REQUIRED — Last name\", 'string') }}",
+              "Company": "={{ $fromAI('Company', \"REQUIRED — Company/organization name\", 'string') }}",
+              "First_Name": "={{ $fromAI('First_Name', \"First name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Primary email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone number\", 'string') }}",
+              "Mobile": "={{ $fromAI('Mobile', \"Mobile number\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "Lead_Source": "={{ $fromAI('Lead_Source', \"Lead source (e.g. Cold Call, Web, Referral)\", 'string') }}",
+              "Lead_Status": "={{ $fromAI('Lead_Status', \"Lead status (e.g. Not Contacted, Contacted, Qualified)\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes/description\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON string for custom fields, e.g. '{\\\"VIP_Status\\\":true}'\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Last_Name",
+                "displayName": "Last_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Last name"
+              },
+              {
+                "id": "Company",
+                "displayName": "Company",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Company/organization name"
+              },
+              {
+                "id": "First_Name",
+                "displayName": "First_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Primary email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone number"
+              },
+              {
+                "id": "Mobile",
+                "displayName": "Mobile",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Mobile number"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "Lead_Source",
+                "displayName": "Lead_Source",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead source (e.g. Cold Call, Web, Referral)"
+              },
+              {
+                "id": "Lead_Status",
+                "displayName": "Lead_Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead status (e.g. Not Contacted, Contacted, Qualified)"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes/description"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON string for custom fields, e.g. '{\"VIP_Status\":true}'"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-lead",
+        "name": "update_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          300
+        ],
+        "parameters": {
+          "name": "update_lead",
+          "description": "Update a Zoho Lead by Id. Any subset of fields.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Zoho Lead ID\", 'string') }}",
+              "First_Name": "={{ $fromAI('First_Name', \"First name\", 'string') }}",
+              "Last_Name": "={{ $fromAI('Last_Name', \"Last name\", 'string') }}",
+              "Company": "={{ $fromAI('Company', \"Company name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "Lead_Source": "={{ $fromAI('Lead_Source', \"Lead source\", 'string') }}",
+              "Lead_Status": "={{ $fromAI('Lead_Status', \"Lead status\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON string for custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Lead ID"
+              },
+              {
+                "id": "First_Name",
+                "displayName": "First_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Last_Name",
+                "displayName": "Last_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name"
+              },
+              {
+                "id": "Company",
+                "displayName": "Company",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Company name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "Lead_Source",
+                "displayName": "Lead_Source",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead source"
+              },
+              {
+                "id": "Lead_Status",
+                "displayName": "Lead_Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead status"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON string for custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-lead",
+        "name": "delete_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          300
+        ],
+        "parameters": {
+          "name": "delete_lead",
+          "description": "Delete a Zoho Lead by Id (Soft-Delete, 60d Recycle Bin).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Zoho Lead ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Lead ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-contacts",
+        "name": "list_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          550
+        ],
+        "parameters": {
+          "name": "list_contacts",
+          "description": "List recent Zoho Contacts. Returns all fields.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_contacts",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-contacts",
+        "name": "search_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          550
+        ],
+        "parameters": {
+          "name": "search_contacts",
+          "description": "Search Zoho Contacts. word OR field+operator+value.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_contacts",
+              "word": "={{ $fromAI('word', \"Full-text search\", 'string') }}",
+              "field": "={{ $fromAI('field', \"Field name (Email, Phone, Last_Name, Account_Name, ...)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"equals | starts_with | contains\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "word",
+                "displayName": "word",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full-text search"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field name (Email, Phone, Last_Name, Account_Name, ...)"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "equals | starts_with | contains"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-contact",
+        "name": "get_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          550
+        ],
+        "parameters": {
+          "name": "get_contact",
+          "description": "Get single Zoho Contact by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Zoho Contact ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Contact ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-contact",
+        "name": "create_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          550
+        ],
+        "parameters": {
+          "name": "create_contact",
+          "description": "Create a Zoho Contact. Required: Last_Name.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_contact",
+              "Last_Name": "={{ $fromAI('Last_Name', \"REQUIRED — Last name\", 'string') }}",
+              "First_Name": "={{ $fromAI('First_Name', \"First name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Mobile": "={{ $fromAI('Mobile', \"Mobile\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "Account_Name": "={{ $fromAI('Account_Name', \"Parent Account ID (19-digit)\", 'string') }}",
+              "Mailing_City": "={{ $fromAI('Mailing_City', \"City\", 'string') }}",
+              "Mailing_Country": "={{ $fromAI('Mailing_Country', \"Country\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON string for custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Last_Name",
+                "displayName": "Last_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Last name"
+              },
+              {
+                "id": "First_Name",
+                "displayName": "First_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Mobile",
+                "displayName": "Mobile",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Mobile"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Parent Account ID (19-digit)"
+              },
+              {
+                "id": "Mailing_City",
+                "displayName": "Mailing_City",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "Mailing_Country",
+                "displayName": "Mailing_Country",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON string for custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-contact",
+        "name": "update_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          550
+        ],
+        "parameters": {
+          "name": "update_contact",
+          "description": "Update a Zoho Contact by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Zoho Contact ID\", 'string') }}",
+              "First_Name": "={{ $fromAI('First_Name', \"First name\", 'string') }}",
+              "Last_Name": "={{ $fromAI('Last_Name', \"Last name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Title\", 'string') }}",
+              "Account_Name": "={{ $fromAI('Account_Name', \"Parent Account ID\", 'string') }}",
+              "Mailing_City": "={{ $fromAI('Mailing_City', \"City\", 'string') }}",
+              "Mailing_Country": "={{ $fromAI('Mailing_Country', \"Country\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Contact ID"
+              },
+              {
+                "id": "First_Name",
+                "displayName": "First_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Last_Name",
+                "displayName": "Last_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Title"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Parent Account ID"
+              },
+              {
+                "id": "Mailing_City",
+                "displayName": "Mailing_City",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "Mailing_Country",
+                "displayName": "Mailing_Country",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-contact",
+        "name": "delete_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          550
+        ],
+        "parameters": {
+          "name": "delete_contact",
+          "description": "Delete a Zoho Contact by Id (Soft-Delete, 60d).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Zoho Contact ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Contact ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-accounts",
+        "name": "list_accounts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          800
+        ],
+        "parameters": {
+          "name": "list_accounts",
+          "description": "List recent Zoho Accounts (companies). Returns all fields.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_accounts",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-accounts",
+        "name": "search_accounts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          800
+        ],
+        "parameters": {
+          "name": "search_accounts",
+          "description": "Search Zoho Accounts.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_accounts",
+              "word": "={{ $fromAI('word', \"Full-text search\", 'string') }}",
+              "field": "={{ $fromAI('field', \"Field name (Account_Name, Industry, Website, Phone, ...)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"equals | starts_with | contains\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "word",
+                "displayName": "word",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full-text search"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field name (Account_Name, Industry, Website, Phone, ...)"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "equals | starts_with | contains"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-account",
+        "name": "get_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          800
+        ],
+        "parameters": {
+          "name": "get_account",
+          "description": "Get single Zoho Account by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_account",
+              "account_id": "={{ $fromAI('account_id', \"Zoho Account ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "account_id",
+                "displayName": "account_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Account ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-account",
+        "name": "create_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          800
+        ],
+        "parameters": {
+          "name": "create_account",
+          "description": "Create a Zoho Account. Required: Account_Name.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_account",
+              "Account_Name": "={{ $fromAI('Account_Name', \"REQUIRED — Company name\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Website": "={{ $fromAI('Website', \"Website\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "Billing_City": "={{ $fromAI('Billing_City', \"City\", 'string') }}",
+              "Billing_Country": "={{ $fromAI('Billing_Country', \"Country\", 'string') }}",
+              "Employees": "={{ $fromAI('Employees', \"Employee count (integer)\", 'string') }}",
+              "Annual_Revenue": "={{ $fromAI('Annual_Revenue', \"Revenue (number)\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Company name"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Website",
+                "displayName": "Website",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Website"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "Billing_City",
+                "displayName": "Billing_City",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "Billing_Country",
+                "displayName": "Billing_Country",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "Employees",
+                "displayName": "Employees",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Employee count (integer)"
+              },
+              {
+                "id": "Annual_Revenue",
+                "displayName": "Annual_Revenue",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Revenue (number)"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-account",
+        "name": "update_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          800
+        ],
+        "parameters": {
+          "name": "update_account",
+          "description": "Update a Zoho Account by Id. No delete — remove via Zoho UI for safety.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_account",
+              "account_id": "={{ $fromAI('account_id', \"Zoho Account ID\", 'string') }}",
+              "Account_Name": "={{ $fromAI('Account_Name', \"Company name\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Website": "={{ $fromAI('Website', \"Website\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "Billing_City": "={{ $fromAI('Billing_City', \"City\", 'string') }}",
+              "Billing_Country": "={{ $fromAI('Billing_Country', \"Country\", 'string') }}",
+              "Employees": "={{ $fromAI('Employees', \"Employee count\", 'string') }}",
+              "Annual_Revenue": "={{ $fromAI('Annual_Revenue', \"Revenue\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "account_id",
+                "displayName": "account_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Account ID"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Company name"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Website",
+                "displayName": "Website",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Website"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "Billing_City",
+                "displayName": "Billing_City",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "Billing_Country",
+                "displayName": "Billing_Country",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "Employees",
+                "displayName": "Employees",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Employee count"
+              },
+              {
+                "id": "Annual_Revenue",
+                "displayName": "Annual_Revenue",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Revenue"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-deals",
+        "name": "list_deals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          800
+        ],
+        "parameters": {
+          "name": "list_deals",
+          "description": "List recent Zoho Deals. Returns all fields.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_deals",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-deals",
+        "name": "search_deals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1050
+        ],
+        "parameters": {
+          "name": "search_deals",
+          "description": "Search Zoho Deals.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_deals",
+              "word": "={{ $fromAI('word', \"Full-text search\", 'string') }}",
+              "field": "={{ $fromAI('field', \"Field name (Deal_Name, Stage, Amount, Closing_Date, Account_Name, Owner, ...)\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"equals | starts_with | contains\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "word",
+                "displayName": "word",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full-text search"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field name (Deal_Name, Stage, Amount, Closing_Date, Account_Name, Owner, ...)"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "equals | starts_with | contains"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-deal",
+        "name": "get_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          1050
+        ],
+        "parameters": {
+          "name": "get_deal",
+          "description": "Get single Zoho Deal by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_deal",
+              "deal_id": "={{ $fromAI('deal_id', \"Zoho Deal ID\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Deal ID"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-deal",
+        "name": "create_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1050
+        ],
+        "parameters": {
+          "name": "create_deal",
+          "description": "Create a Zoho Deal. Required: Deal_Name, Stage, Closing_Date.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_deal",
+              "Deal_Name": "={{ $fromAI('Deal_Name', \"REQUIRED — Deal name\", 'string') }}",
+              "Stage": "={{ $fromAI('Stage', \"REQUIRED — Deal stage (e.g. Qualification, Negotiation/Review, Closed Won)\", 'string') }}",
+              "Closing_Date": "={{ $fromAI('Closing_Date', \"REQUIRED — YYYY-MM-DD\", 'string') }}",
+              "Amount": "={{ $fromAI('Amount', \"Deal value (number)\", 'string') }}",
+              "Account_Name": "={{ $fromAI('Account_Name', \"Parent Account ID\", 'string') }}",
+              "Contact_Name": "={{ $fromAI('Contact_Name', \"Primary Contact ID\", 'string') }}",
+              "Probability": "={{ $fromAI('Probability', \"Probability 0-100\", 'string') }}",
+              "Type": "={{ $fromAI('Type', \"Type (New Business, Existing Business)\", 'string') }}",
+              "Lead_Source": "={{ $fromAI('Lead_Source', \"Source\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Deal_Name",
+                "displayName": "Deal_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Deal name"
+              },
+              {
+                "id": "Stage",
+                "displayName": "Stage",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Deal stage (e.g. Qualification, Negotiation/Review, Closed Won)"
+              },
+              {
+                "id": "Closing_Date",
+                "displayName": "Closing_Date",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — YYYY-MM-DD"
+              },
+              {
+                "id": "Amount",
+                "displayName": "Amount",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal value (number)"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Parent Account ID"
+              },
+              {
+                "id": "Contact_Name",
+                "displayName": "Contact_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Primary Contact ID"
+              },
+              {
+                "id": "Probability",
+                "displayName": "Probability",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Probability 0-100"
+              },
+              {
+                "id": "Type",
+                "displayName": "Type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Type (New Business, Existing Business)"
+              },
+              {
+                "id": "Lead_Source",
+                "displayName": "Lead_Source",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Source"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-deal",
+        "name": "update_deal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1050
+        ],
+        "parameters": {
+          "name": "update_deal",
+          "description": "Update a Zoho Deal by Id. No delete — remove via Zoho UI for safety.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_deal",
+              "deal_id": "={{ $fromAI('deal_id', \"Zoho Deal ID\", 'string') }}",
+              "Deal_Name": "={{ $fromAI('Deal_Name', \"Deal name\", 'string') }}",
+              "Stage": "={{ $fromAI('Stage', \"Stage\", 'string') }}",
+              "Closing_Date": "={{ $fromAI('Closing_Date', \"Closing date YYYY-MM-DD\", 'string') }}",
+              "Amount": "={{ $fromAI('Amount', \"Amount\", 'string') }}",
+              "Probability": "={{ $fromAI('Probability', \"0-100\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Notes\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "deal_id",
+                "displayName": "deal_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Zoho Deal ID"
+              },
+              {
+                "id": "Deal_Name",
+                "displayName": "Deal_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal name"
+              },
+              {
+                "id": "Stage",
+                "displayName": "Stage",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Stage"
+              },
+              {
+                "id": "Closing_Date",
+                "displayName": "Closing_Date",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Closing date YYYY-MM-DD"
+              },
+              {
+                "id": "Amount",
+                "displayName": "Amount",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Amount"
+              },
+              {
+                "id": "Probability",
+                "displayName": "Probability",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "0-100"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Notes"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-tasks",
+        "name": "list_tasks",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          1050
+        ],
+        "parameters": {
+          "name": "list_tasks",
+          "description": "List recent Zoho Tasks.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_tasks",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-task",
+        "name": "create_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          1050
+        ],
+        "parameters": {
+          "name": "create_task",
+          "description": "Create a Zoho Task. Required: Subject.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_task",
+              "Subject": "={{ $fromAI('Subject', \"REQUIRED — Task subject\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status (Not Started|In Progress|Completed|Deferred|Waiting for input)\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority (High|Highest|Low|Lowest|Normal)\", 'string') }}",
+              "Due_Date": "={{ $fromAI('Due_Date', \"Due date YYYY-MM-DD\", 'string') }}",
+              "What_Id": "={{ $fromAI('What_Id', \"Related Account/Deal ID\", 'string') }}",
+              "Who_Id": "={{ $fromAI('Who_Id', \"Related Contact/Lead ID\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Task subject"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status (Not Started|In Progress|Completed|Deferred|Waiting for input)"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority (High|Highest|Low|Lowest|Normal)"
+              },
+              {
+                "id": "Due_Date",
+                "displayName": "Due_Date",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Due date YYYY-MM-DD"
+              },
+              {
+                "id": "What_Id",
+                "displayName": "What_Id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Account/Deal ID"
+              },
+              {
+                "id": "Who_Id",
+                "displayName": "Who_Id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Contact/Lead ID"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-cases",
+        "name": "list_cases",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1300
+        ],
+        "parameters": {
+          "name": "list_cases",
+          "description": "List recent Zoho Cases (Service module).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_cases",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-case",
+        "name": "create_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          1300
+        ],
+        "parameters": {
+          "name": "create_case",
+          "description": "Create a Zoho Case. Required: Subject, Status.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_case",
+              "Subject": "={{ $fromAI('Subject', \"REQUIRED — Case subject\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"REQUIRED — Status (New|On Hold|Closed|Escalated)\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority (High|Low|Normal)\", 'string') }}",
+              "Case_Origin": "={{ $fromAI('Case_Origin', \"Origin (Email|Phone|Web)\", 'string') }}",
+              "Type": "={{ $fromAI('Type', \"Case type\", 'string') }}",
+              "Account_Name": "={{ $fromAI('Account_Name', \"Related Account ID\", 'string') }}",
+              "Contact_Name": "={{ $fromAI('Contact_Name', \"Related Contact ID\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON custom fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Case subject"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "REQUIRED — Status (New|On Hold|Closed|Escalated)"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority (High|Low|Normal)"
+              },
+              {
+                "id": "Case_Origin",
+                "displayName": "Case_Origin",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Origin (Email|Phone|Web)"
+              },
+              {
+                "id": "Type",
+                "displayName": "Type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Case type"
+              },
+              {
+                "id": "Account_Name",
+                "displayName": "Account_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Account ID"
+              },
+              {
+                "id": "Contact_Name",
+                "displayName": "Contact_Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Contact ID"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON custom fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-coql-query",
+        "name": "coql_query",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1300
+        ],
+        "parameters": {
+          "name": "coql_query",
+          "description": "Run raw COQL query (SQL-like). Requires WHERE clause.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "coql_query",
+              "query": "={{ $fromAI('query', \"Full COQL string, e.g. SELECT Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10. Uses Zoho api_names (Last_Name not lastname).\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full COQL string, e.g. SELECT Last_Name, Email FROM Leads WHERE Last_Name is not null LIMIT 10. Uses Zoho api_names (Last_Name not lastname)."
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-describe-module",
+        "name": "describe_module",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1300
+        ],
+        "parameters": {
+          "name": "describe_module",
+          "description": "Get metadata for a Zoho module — list all fields incl. custom fields, types, picklist values. Use this first to discover custom field api_names.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "describe_module",
+              "module_name": "={{ $fromAI('module_name', \"Module name: Leads | Contacts | Accounts | Deals | Tasks | Cases | Products | Quotes | Vendors | Invoices (case-sensitive)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "module_name",
+                "displayName": "module_name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Module name: Leads | Contacts | Accounts | Deals | Tasks | Cases | Products | Quotes | Vendors | Invoices (case-sensitive)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_leads": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_leads": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_accounts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_accounts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_deals": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_deals": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_deal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_tasks": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_cases": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "coql_query": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "describe_module": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (63)
+## Available Skills (64)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -19,7 +19,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Maps](#maps) | 2 | OpenStreetMap / Overpass POI search, OpenRouteService routing |
-| [Marketing](#marketing) | 3 | Google Ads, HubSpot CRM, Salesforce CRM |
+| [Marketing](#marketing) | 4 | Google Ads, HubSpot CRM, Salesforce CRM, Zoho CRM |
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
@@ -128,6 +128,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Google Ads](https://ads.google.com/) | Query campaigns, ad groups, and performance data via GAQL (Beta) | Google OAuth2, Developer Token, Customer ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Salesforce CRM](https://www.salesforce.com/) | Full CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks (CRUD + search) plus SOQL query, SOSL search, describe-object. REST v60.0 via Client Credentials Flow | Instance URL, Consumer Key, Consumer Secret | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Zoho CRM](https://www.zoho.com/crm/) | Full CRM (28 tools): Leads, Contacts, Accounts, Deals, Tasks, Cases (CRUD + search) plus COQL query and describe_module. Dynamic field discovery returns ALL fields incl. custom per Zoho org. Self-Client OAuth (refresh token). Regional endpoints (.com/.eu/.in/.com.au/.jp/.com.cn) | Region, Client ID, Client Secret, Refresh Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 
 ### Meetings
 
