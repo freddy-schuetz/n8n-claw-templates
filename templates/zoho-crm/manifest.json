@@ -1,7 +1,7 @@
 {
   "id": "zoho-crm",
   "name": "Zoho CRM",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "updated": "2026-04-17",
   "type": "native",
   "category": "marketing",
@@ -9,8 +9,8 @@
   "credentials_required": [
     {
       "key": "zoho_region",
-      "label": "Zoho Data Center",
-      "hint": "Where your Zoho CRM account lives. Most common: 'eu' (Europe/GDPR), 'com' (US/Global), 'in' (India), 'com.au' (Australia), 'jp' (Japan), 'com.cn' (China). If unsure: check where you log in — accounts.zoho.EU means 'eu'. Default 'eu'."
+      "label": "Zoho Region Code (just 'com' or 'eu' — not a URL)",
+      "hint": "Enter ONLY the 2-6 letter suffix from your Zoho login URL. Examples: if you log in at accounts.zoho.COM -> type: com — if accounts.zoho.EU -> type: eu — if accounts.zoho.COM.AU -> type: com.au. DO NOT enter https://, dots at the start, or the full domain. Valid values: com (USA/Global), eu (Europe/GDPR), in (India), com.au (Australia), jp (Japan), com.cn (China). Unsure? Go to zoho.com, log in, then check the URL in your browser — the part after 'zoho.' is your region."
     },
     {
       "key": "zoho_client_id",
