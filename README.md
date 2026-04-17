@@ -177,7 +177,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Asana](https://asana.com/) | Full Asana CRUD (16 tools): workspaces, projects, sections, tasks incl. subtasks, comments, Kanban section moves, typeahead search for users and tasks | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
-| [Jira Cloud](https://www.atlassian.com/software/jira) | Jira issue tracking (12 tools): JQL search, CRUD issues, comments, transitions, issue links, user search. Shares Atlassian creds with Confluence | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [Jira Cloud](https://www.atlassian.com/software/jira) | Jira issue tracking (12 tools): JQL search, CRUD issues, comments, transitions, issue links, user search. Shares Atlassian creds with Confluence | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
