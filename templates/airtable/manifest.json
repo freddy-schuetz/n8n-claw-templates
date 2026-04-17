@@ -1,0 +1,50 @@
+{
+  "id": "airtable",
+  "name": "Airtable",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "productivity",
+  "description": "Work with Airtable bases and records: list bases/tables, search records with filterByFormula, create/update/delete rows. WARNING: Free plan has only 1,000 API calls/month — for active agent use, Team plan (~20 USD/user/month) is recommended.",
+  "credentials_required": [
+    {
+      "key": "airtable_pat",
+      "label": "Airtable Personal Access Token",
+      "hint": "Create at https://airtable.com/create/tokens. Minimum scopes: data.records:read, data.records:write, schema.bases:read. Restrict access to specific bases for security."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_bases",
+      "description": "List all Airtable bases the token has access to"
+    },
+    {
+      "name": "list_tables",
+      "description": "List tables in a base with their fields and views"
+    },
+    {
+      "name": "list_records",
+      "description": "List records from a table, with optional filterByFormula, sort, maxRecords, view"
+    },
+    {
+      "name": "get_record",
+      "description": "Get a single record by ID"
+    },
+    {
+      "name": "create_record",
+      "description": "Create a new record with field values"
+    },
+    {
+      "name": "update_record",
+      "description": "Update fields on an existing record (partial update via PATCH)"
+    },
+    {
+      "name": "delete_record",
+      "description": "Delete a record by ID"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

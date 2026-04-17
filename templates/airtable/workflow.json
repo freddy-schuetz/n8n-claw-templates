@@ -1,0 +1,273 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Airtable",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Airtable Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_bases';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst credRes = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.airtable&cred_key=eq.airtable_pat&select=cred_value',\n  headers: pgHeaders\n});\nif (!credRes || !credRes[0] || !credRes[0].cred_value) {\n  return [{ json: { error: 'Airtable PAT not configured. Use add_credential to set airtable_pat (create one at https://airtable.com/create/tokens with scopes: data.records:read, data.records:write, schema.bases:read).' } }];\n}\nconst pat = credRes[0].cred_value;\nconst atHeaders = { 'Authorization': 'Bearer ' + pat, 'Content-Type': 'application/json' };\nconst API = 'https://api.airtable.com/v0';\n\nfunction fmtFields(fields) {\n  const out = [];\n  for (const [k, v] of Object.entries(fields || {})) {\n    let val;\n    if (Array.isArray(v)) val = v.length > 3 ? v.slice(0, 3).join(', ') + ' +' + (v.length - 3) : v.join(', ');\n    else if (typeof v === 'object' && v !== null) val = JSON.stringify(v);\n    else val = String(v);\n    if (val.length > 100) val = val.substring(0, 100) + '...';\n    out.push(k + ': ' + val);\n  }\n  return out.join(' | ');\n}\n\nfunction parseFields(raw) {\n  if (!raw) return {};\n  if (typeof raw === 'object') return raw;\n  try { return JSON.parse(raw); } catch (e) { throw new Error('Invalid fields JSON: ' + e.message + '. Must be a JSON object like {\"Name\":\"Test\",\"Status\":\"Done\"}.'); }\n}\n\nasync function req(method, path, body) {\n  try {\n    const opts = { method: method, url: API + path, headers: atHeaders };\n    if (body) opts.body = JSON.stringify(body);\n    return await helpers.httpRequest(opts);\n  } catch (e) {\n    const msg = e.message || String(e);\n    if (msg.includes('401')) throw new Error('Unauthorized. Check your Airtable PAT.');\n    if (msg.includes('403')) throw new Error('Forbidden. Your PAT does not have access to this base/table or lacks required scopes.');\n    if (msg.includes('404')) throw new Error('Not found. Check base ID / table name / record ID.');\n    if (msg.includes('422')) throw new Error('Unprocessable entity (422). Check that all field names and values match your table schema.');\n    if (msg.includes('429')) throw new Error('Rate limited. Free plan: 5 req/sec per base, 1000 req/month total.');\n    throw new Error(msg);\n  }\n}\n\n// === list_bases ===\nif (action === 'list_bases') {\n  try {\n    const r = await req('GET', '/meta/bases');\n    const bases = r.bases || [];\n    if (bases.length === 0) return [{ json: { result: 'No bases accessible with this PAT.' } }];\n    let out = bases.length + ' base(s) accessible:\\n\\n';\n    for (const b of bases) out += '- ' + b.name + ' (id: ' + b.id + ', permission: ' + b.permissionLevel + ')\\n';\n    return [{ json: { result: out } }];\n  } catch (e) { return [{ json: { error: 'list_bases failed: ' + e.message } }]; }\n}\n\n// === list_tables ===\nif (action === 'list_tables') {\n  const baseId = input.base_id;\n  if (!baseId) return [{ json: { error: 'Parameter \"base_id\" is required (e.g. appXXXXXXXX). Use list_bases to find it.' } }];\n  try {\n    const r = await req('GET', '/meta/bases/' + encodeURIComponent(baseId) + '/tables');\n    const tables = r.tables || [];\n    if (tables.length === 0) return [{ json: { result: 'No tables in base ' + baseId } }];\n    let out = tables.length + ' table(s) in ' + baseId + ':\\n\\n';\n    for (const t of tables) {\n      out += '- ' + t.name + ' (id: ' + t.id + ')\\n';\n      if (t.fields) {\n        const fields = t.fields.map(f => f.name + ' [' + f.type + ']');\n        out += '  Fields: ' + fields.slice(0, 20).join(', ');\n        if (fields.length > 20) out += ' +' + (fields.length - 20) + ' more';\n        out += '\\n';\n      }\n      if (t.views && t.views.length) {\n        out += '  Views: ' + t.views.slice(0, 10).map(v => v.name).join(', ') + '\\n';\n      }\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (e) { return [{ json: { error: 'list_tables failed: ' + e.message } }]; }\n}\n\n// === list_records ===\nif (action === 'list_records') {\n  const baseId = input.base_id;\n  const table = input.table;\n  if (!baseId || !table) return [{ json: { error: 'Parameters \"base_id\" and \"table\" are required (table name or id).' } }];\n  const params = [];\n  const max = parseInt(input.max_records) || 10;\n  params.push('maxRecords=' + max);\n  if (input.view) params.push('view=' + encodeURIComponent(String(input.view)));\n  if (input.filter_by_formula) params.push('filterByFormula=' + encodeURIComponent(String(input.filter_by_formula)));\n  if (input.sort_field) {\n    params.push('sort[0][field]=' + encodeURIComponent(String(input.sort_field)));\n    params.push('sort[0][direction]=' + (input.sort_desc === 'true' || input.sort_desc === true ? 'desc' : 'asc'));\n  }\n  try {\n    const r = await req('GET', '/' + encodeURIComponent(baseId) + '/' + encodeURIComponent(table) + '?' + params.join('&'));\n    const records = r.records || [];\n    if (records.length === 0) return [{ json: { result: 'No records found.' } }];\n    let out = records.length + ' record(s) from \"' + table + '\":\\n\\n';\n    for (const rec of records) {\n      out += '- ' + rec.id + ': ' + fmtFields(rec.fields) + '\\n';\n    }\n    if (r.offset) out += '\\n(more records available, use higher max_records)';\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (e) { return [{ json: { error: 'list_records failed: ' + e.message } }]; }\n}\n\n// === get_record ===\nif (action === 'get_record') {\n  const baseId = input.base_id;\n  const table = input.table;\n  const recId = input.record_id;\n  if (!baseId || !table || !recId) return [{ json: { error: 'Parameters \"base_id\", \"table\", and \"record_id\" are required.' } }];\n  try {\n    const r = await req('GET', '/' + encodeURIComponent(baseId) + '/' + encodeURIComponent(table) + '/' + encodeURIComponent(recId));\n    let out = 'Record ' + r.id + ' (created ' + r.createdTime + '):\\n';\n    for (const [k, v] of Object.entries(r.fields || {})) {\n      let val;\n      if (Array.isArray(v)) val = v.join(', ');\n      else if (typeof v === 'object' && v !== null) val = JSON.stringify(v);\n      else val = String(v);\n      out += '  ' + k + ': ' + val + '\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (e) { return [{ json: { error: 'get_record failed: ' + e.message } }]; }\n}\n\n// === create_record ===\nif (action === 'create_record') {\n  const baseId = input.base_id;\n  const table = input.table;\n  if (!baseId || !table) return [{ json: { error: 'Parameters \"base_id\" and \"table\" are required.' } }];\n  let fields;\n  try { fields = parseFields(input.fields); } catch (e) { return [{ json: { error: e.message } }]; }\n  if (!fields || Object.keys(fields).length === 0) return [{ json: { error: 'Parameter \"fields\" is required (JSON object with field names and values, e.g. {\"Name\":\"Test\",\"Status\":\"Done\"}).' } }];\n  try {\n    const r = await req('POST', '/' + encodeURIComponent(baseId) + '/' + encodeURIComponent(table), { fields: fields });\n    return [{ json: { result: 'Created record ' + r.id + '\\n' + fmtFields(r.fields) } }];\n  } catch (e) { return [{ json: { error: 'create_record failed: ' + e.message } }]; }\n}\n\n// === update_record ===\nif (action === 'update_record') {\n  const baseId = input.base_id;\n  const table = input.table;\n  const recId = input.record_id;\n  if (!baseId || !table || !recId) return [{ json: { error: 'Parameters \"base_id\", \"table\", and \"record_id\" are required.' } }];\n  let fields;\n  try { fields = parseFields(input.fields); } catch (e) { return [{ json: { error: e.message } }]; }\n  if (!fields || Object.keys(fields).length === 0) return [{ json: { error: 'Parameter \"fields\" is required (JSON object with fields to update).' } }];\n  try {\n    const r = await req('PATCH', '/' + encodeURIComponent(baseId) + '/' + encodeURIComponent(table) + '/' + encodeURIComponent(recId), { fields: fields });\n    return [{ json: { result: 'Updated record ' + r.id + '\\n' + fmtFields(r.fields) } }];\n  } catch (e) { return [{ json: { error: 'update_record failed: ' + e.message } }]; }\n}\n\n// === delete_record ===\nif (action === 'delete_record') {\n  const baseId = input.base_id;\n  const table = input.table;\n  const recId = input.record_id;\n  if (!baseId || !table || !recId) return [{ json: { error: 'Parameters \"base_id\", \"table\", and \"record_id\" are required.' } }];\n  try {\n    const r = await req('DELETE', '/' + encodeURIComponent(baseId) + '/' + encodeURIComponent(table) + '/' + encodeURIComponent(recId));\n    return [{ json: { result: 'Deleted record ' + (r.id || recId) } }];\n  } catch (e) { return [{ json: { error: 'delete_record failed: ' + e.message } }]; }\n}\n\nreturn [{ json: { error: 'Unknown action: ' + action + '. Available: list_bases, list_tables, list_records, get_record, create_record, update_record, delete_record.' } }];\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Airtable Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Airtable",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "airtable"
+        }
+      },
+      {
+        "id": "tool-list-bases",
+        "name": "list_bases",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "list_bases",
+          "description": "List all Airtable bases accessible with the configured PAT. Returns base IDs, names, and permission levels.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_bases" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-tables",
+        "name": "list_tables",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "list_tables",
+          "description": "List tables in an Airtable base with their fields, types, and views. Parameter: base_id (required, app... ID from list_bases).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_tables",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID (appXXXX)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-records",
+        "name": "list_records",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "list_records",
+          "description": "List records from a table. Parameters: base_id (required), table (required, table name or ID), max_records (optional, default 10), view (optional view name), filter_by_formula (optional Airtable formula, e.g. {Status}='Done'), sort_field (optional field name to sort by), sort_desc ('true' for descending).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_records",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID', 'string') }}",
+              "table": "={{ $fromAI('table', 'Table name or ID', 'string') }}",
+              "max_records": "={{ $fromAI('max_records', 'Max records (default 10)', 'string') }}",
+              "view": "={{ $fromAI('view', 'View name (optional)', 'string') }}",
+              "filter_by_formula": "={{ $fromAI('filter_by_formula', 'Airtable formula filter (optional)', 'string') }}",
+              "sort_field": "={{ $fromAI('sort_field', 'Field to sort by (optional)', 'string') }}",
+              "sort_desc": "={{ $fromAI('sort_desc', 'true for descending sort (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true },
+              { "id": "table", "displayName": "table", "type": "string", "description": "Table name or ID", "required": true },
+              { "id": "max_records", "displayName": "max_records", "type": "string", "description": "Max records", "required": false },
+              { "id": "view", "displayName": "view", "type": "string", "description": "View name", "required": false },
+              { "id": "filter_by_formula", "displayName": "filter_by_formula", "type": "string", "description": "Formula filter", "required": false },
+              { "id": "sort_field", "displayName": "sort_field", "type": "string", "description": "Sort field", "required": false },
+              { "id": "sort_desc", "displayName": "sort_desc", "type": "string", "description": "Descending sort", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-record",
+        "name": "get_record",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "get_record",
+          "description": "Get a single record by ID. Parameters: base_id (required), table (required), record_id (required, rec... ID).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_record",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID', 'string') }}",
+              "table": "={{ $fromAI('table', 'Table name or ID', 'string') }}",
+              "record_id": "={{ $fromAI('record_id', 'Record ID (recXXXX)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true },
+              { "id": "table", "displayName": "table", "type": "string", "description": "Table", "required": true },
+              { "id": "record_id", "displayName": "record_id", "type": "string", "description": "Record ID", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-create-record",
+        "name": "create_record",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 600],
+        "parameters": {
+          "name": "create_record",
+          "description": "Create a new record. Parameters: base_id (required), table (required), fields (required, JSON string with field values, e.g. '{\"Name\":\"New task\",\"Status\":\"To Do\"}'). Linked records use arrays of record IDs.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_record",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID', 'string') }}",
+              "table": "={{ $fromAI('table', 'Table name or ID', 'string') }}",
+              "fields": "={{ $fromAI('fields', 'JSON object with field names and values', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true },
+              { "id": "table", "displayName": "table", "type": "string", "description": "Table", "required": true },
+              { "id": "fields", "displayName": "fields", "type": "string", "description": "JSON fields object", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-update-record",
+        "name": "update_record",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 600],
+        "parameters": {
+          "name": "update_record",
+          "description": "Update fields on an existing record (partial update — only specified fields change). Parameters: base_id (required), table (required), record_id (required), fields (required, JSON string with fields to update).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_record",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID', 'string') }}",
+              "table": "={{ $fromAI('table', 'Table name or ID', 'string') }}",
+              "record_id": "={{ $fromAI('record_id', 'Record ID (recXXXX)', 'string') }}",
+              "fields": "={{ $fromAI('fields', 'JSON object with fields to update', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true },
+              { "id": "table", "displayName": "table", "type": "string", "description": "Table", "required": true },
+              { "id": "record_id", "displayName": "record_id", "type": "string", "description": "Record ID", "required": true },
+              { "id": "fields", "displayName": "fields", "type": "string", "description": "JSON fields", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-delete-record",
+        "name": "delete_record",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 600],
+        "parameters": {
+          "name": "delete_record",
+          "description": "Delete a record by ID. Parameters: base_id (required), table (required), record_id (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_record",
+              "base_id": "={{ $fromAI('base_id', 'Airtable base ID', 'string') }}",
+              "table": "={{ $fromAI('table', 'Table name or ID', 'string') }}",
+              "record_id": "={{ $fromAI('record_id', 'Record ID (recXXXX)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "base_id", "displayName": "base_id", "type": "string", "description": "Base ID", "required": true },
+              { "id": "table", "displayName": "table", "type": "string", "description": "Table", "required": true },
+              { "id": "record_id", "displayName": "record_id", "type": "string", "description": "Record ID", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_bases": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_tables": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_records": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_record": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_record": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "update_record": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "delete_record": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

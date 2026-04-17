@@ -574,6 +574,17 @@
         { "key": "ha_token", "label": "Long-Lived Access Token" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "type": "native",
+      "category": "productivity",
+      "description": "Work with Airtable bases and records: list bases/tables, search with formulas, create/update/delete rows. WARNING: Free plan has 1,000 API calls/month.",
+      "credentials_required": [
+        { "key": "airtable_pat", "label": "Airtable Personal Access Token" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
