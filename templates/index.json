@@ -644,11 +644,11 @@
       "name": "Asana",
       "type": "native",
       "category": "productivity",
-      "description": "Asana project management: list workspaces/projects/sections, create/update/complete tasks, add comments. Personal Access Token auth.",
+      "description": "Asana project management (16 tools): workspaces, projects, sections, tasks (incl. subtasks, comments, Kanban moves) and typeahead search for users and tasks. Personal Access Token auth.",
       "credentials_required": [
         { "key": "asana_pat", "label": "Asana Personal Access Token" }
       ],
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

@@ -172,7 +172,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [Asana](https://asana.com/) | Manage Asana projects and tasks: list workspaces/projects/sections, create/update/complete tasks, add comments | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [Asana](https://asana.com/) | Full Asana CRUD (16 tools): workspaces, projects, sections, tasks incl. subtasks, comments, Kanban section moves, typeahead search for users and tasks | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 

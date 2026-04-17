@@ -1,11 +1,11 @@
 {
   "id": "asana",
   "name": "Asana",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "productivity",
-  "description": "Asana project management: manage workspaces, projects, tasks, sections and comments via Personal Access Token.",
+  "description": "Asana project management: workspaces, projects, sections, tasks (incl. subtasks, comments, moves) and typeahead search for users and tasks. Personal Access Token auth.",
   "credentials_required": [
     {
       "key": "asana_pat",
@@ -53,6 +53,30 @@
     {
       "name": "add_comment_to_task",
       "description": "Add a comment (story) to a task"
+    },
+    {
+      "name": "list_comments",
+      "description": "List comments on a task (stories of type comment)"
+    },
+    {
+      "name": "list_subtasks",
+      "description": "List subtasks of a parent task"
+    },
+    {
+      "name": "create_subtask",
+      "description": "Create a subtask under a parent task"
+    },
+    {
+      "name": "move_task_to_section",
+      "description": "Move a task into a specific section of a project"
+    },
+    {
+      "name": "search_users",
+      "description": "Typeahead search for users in a workspace by name or email (returns gid + name)"
+    },
+    {
+      "name": "search_tasks",
+      "description": "Typeahead search for tasks in a workspace by name fragment"
     }
   ],
   "author": "freddy-schuetz",
