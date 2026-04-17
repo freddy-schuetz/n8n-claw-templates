@@ -1,0 +1,456 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Confluence Cloud",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Confluence Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.confluence&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.atlassian_email || !creds.atlassian_api_token || !creds.atlassian_site) {\n  return [{ json: { error: 'Confluence credentials not configured. Need atlassian_email, atlassian_api_token, atlassian_site. If Jira is installed, these are shared automatically.' } }];\n}\n\nconst site = creds.atlassian_site.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');\nconst V2 = 'https://' + site + '/wiki/api/v2';\nconst V1 = 'https://' + site + '/wiki/rest/api';\nconst basic = Buffer.from(creds.atlassian_email + ':' + creds.atlassian_api_token).toString('base64');\nconst authHeaders = { 'Authorization': 'Basic ' + basic, 'Accept': 'application/json' };\nconst jsonHeaders = { ...authHeaders, 'Content-Type': 'application/json' };\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction pageUrl(id) {\n  return 'https://' + site + '/wiki/spaces/_/pages/' + id;\n}\n\nfunction stripHtml(html) {\n  if (!html) return '';\n  return String(html)\n    .replace(/<br\\s*\\/?>(\\n)?/gi, '\\n')\n    .replace(/<\\/(p|h[1-6]|li|div)>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\n// === list_spaces ===\nif (action === 'list_spaces') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces?limit=100', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No spaces found.' } }];\n    let out = 'Spaces (' + items.length + '):\\n';\n    for (const s of items) {\n      out += '  [' + s.id + '] ' + (s.key || '?') + ' \u2014 ' + (s.name || '') + ' (' + (s.type || 'space') + ')\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_spaces failed: ' + err.message } }];\n  }\n\n// === list_pages_in_space ===\n} else if (action === 'list_pages_in_space') {\n  const spaceId = input.space_id;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces/' + encodeURIComponent(spaceId) + '/pages?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages in space ' + spaceId + '.' } }];\n    let out = 'Pages in space ' + spaceId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_pages_in_space failed: ' + err.message } }];\n  }\n\n// === search_pages ===\n} else if (action === 'search_pages') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Use CQL (e.g. \\'text ~ \"onboarding\"\\', \\'space = MARKETING AND type = page\\') or plain text (auto-wrapped as text~query).' } }];\n  const limit = Math.min(parseInt(input.limit) || 10, 50);\n  let cql = query;\n  if (!/[=~]|\\bAND\\b|\\bOR\\b/i.test(cql)) cql = 'type = page AND text ~ \"' + cql.replace(/\"/g, '\\\\\"') + '\"';\n  try {\n    const qs = new URLSearchParams({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs.toString(), headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages matched CQL: ' + cql + '. Note: Confluence search index may lag on newly created pages \u2014 try list_pages_in_space as fallback.' } }];\n    let out = 'Pages matched (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_pages failed: ' + err.message } }];\n  }\n\n// === get_page ===\n} else if (action === 'get_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    let out = '**' + (r.title || '') + '** [id: ' + r.id + ']\\n';\n    if (r.spaceId) out += 'Space id: ' + r.spaceId + '\\n';\n    if (r.parentId) out += 'Parent id: ' + r.parentId + '\\n';\n    if (r.version) out += 'Version: ' + r.version.number + '\\n';\n    if (r.authorId) out += 'Author id: ' + r.authorId + '\\n';\n    if (r.createdAt) out += 'Created: ' + r.createdAt.substring(0, 10) + '\\n';\n    const body = r.body && r.body.storage ? r.body.storage.value : '';\n    if (body) out += '\\nBody:\\n' + stripHtml(body) + '\\n';\n    out += '\\n' + pageUrl(r.id);\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page failed: ' + err.message } }];\n  }\n\n// === get_page_by_title ===\n} else if (action === 'get_page_by_title') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required (exact title, ASCII works best).' } }];\n  const spaceId = input.space_id;\n  try {\n    let url = V2 + '/pages?title=' + encodeURIComponent(title);\n    if (spaceId) url += '&space-id=' + encodeURIComponent(spaceId);\n    const r = await helpers.httpRequest({ method: 'GET', url, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No page with title \"' + title + '\"' + (spaceId ? ' in space ' + spaceId : '') + '. Titles with em-dashes or diacritics may not match \u2014 try search_pages instead.' } }];\n    let out = 'Pages matching title \"' + title + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (space: ' + (p.spaceId || '?') + ', v' + (p.version ? p.version.number : '?') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page_by_title failed: ' + err.message } }];\n  }\n\n// === list_children ===\n} else if (action === 'list_children') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/children?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'Page ' + pageId + ' has no child pages.' } }];\n    let out = 'Children of ' + pageId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_children failed: ' + err.message } }];\n  }\n\n// === create_page ===\n} else if (action === 'create_page') {\n  const spaceId = input.space_id;\n  const title = input.title;\n  const body = input.body;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  if (!body) return [{ json: { error: 'Parameter \"body\" is required (HTML in storage format, e.g. \"<p>Hello</p>\").' } }];\n  const payload = {\n    spaceId: String(spaceId),\n    status: 'current',\n    title: String(title),\n    body: { representation: 'storage', value: String(body) }\n  };\n  if (input.parent_id) payload.parentId = String(input.parent_id);\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/pages', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page created [id: ' + r.id + ']: ' + r.title + '\\n' + pageUrl(r.id) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence create_page failed: ' + msg } }];\n  }\n\n// === update_page ===\n} else if (action === 'update_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!input.title && !input.body) return [{ json: { error: 'Provide at least one of: title, body.' } }];\n  try {\n    const current = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    const nextVersion = (current.version && current.version.number ? current.version.number : 1) + 1;\n    const payload = {\n      id: String(pageId),\n      status: 'current',\n      title: input.title || current.title,\n      body: { representation: 'storage', value: input.body || (current.body && current.body.storage ? current.body.storage.value : '') },\n      version: { number: nextVersion }\n    };\n    const r = await helpers.httpRequest({ method: 'PUT', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page ' + pageId + ' updated to v' + nextVersion + ': ' + r.title + '\\n' + pageUrl(pageId) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence update_page failed: ' + msg } }];\n  }\n\n// === delete_page ===\n} else if (action === 'delete_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: authHeaders });\n    return [{ json: { result: 'Page ' + pageId + ' deleted.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence delete_page failed: ' + err.message } }];\n  }\n\n// === add_comment_to_page ===\n} else if (action === 'add_comment_to_page') {\n  const pageId = input.page_id;\n  const text = input.text;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required.' } }];\n  const value = /<[a-z][^>]*>/i.test(text) ? text : '<p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';\n  const payload = {\n    pageId: String(pageId),\n    body: { representation: 'storage', value }\n  };\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/footer-comments', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Comment added to page ' + pageId + ' (comment id: ' + r.id + ').' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_comment_to_page failed: ' + msg } }];\n  }\n\n// === list_comments_on_page ===\n} else if (action === 'list_comments_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/footer-comments?body-format=storage&limit=50', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No comments on page ' + pageId + '.' } }];\n    let out = 'Comments on page ' + pageId + ' (' + items.length + '):\\n\\n';\n    for (const c of items) {\n      const body = c.body && c.body.storage ? stripHtml(c.body.storage.value) : '';\n      out += '  [' + c.id + '] ' + body + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_comments_on_page failed: ' + err.message } }];\n  }\n\n// === add_label_to_page ===\n} else if (action === 'add_label_to_page') {\n  const pageId = input.page_id;\n  const label = input.label;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required (e.g. \"meeting-notes\", \"onboarding\").' } }];\n  const body = [{ prefix: 'global', name: String(label) }];\n  try {\n    await helpers.httpRequest({ method: 'POST', url: V1 + '/content/' + encodeURIComponent(pageId) + '/label', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Label \"' + label + '\" added to page ' + pageId + '.' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_label_to_page failed: ' + msg } }];\n  }\n\n// === list_labels_on_page ===\n} else if (action === 'list_labels_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/labels', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No labels on page ' + pageId + '.' } }];\n    let out = 'Labels on page ' + pageId + ' (' + items.length + '):\\n';\n    for (const l of items) out += '  ' + (l.name || '') + ' (prefix: ' + (l.prefix || 'global') + ')\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_labels_on_page failed: ' + err.message } }];\n  }\n\n// === search_by_label ===\n} else if (action === 'search_by_label') {\n  const label = input.label;\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  const cql = 'label = \"' + String(label).replace(/\"/g, '\\\\\"') + '\"';\n  try {\n    const qs = new URLSearchParams({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs.toString(), headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No content matched label \"' + label + '\". Note: search index may lag on newly labeled pages.' } }];\n    let out = 'Content with label \"' + label + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_by_label failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_spaces, list_pages_in_space, search_pages, get_page, get_page_by_title, list_children, create_page, update_page, delete_page, add_comment_to_page, list_comments_on_page, add_label_to_page, list_labels_on_page, search_by_label.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "Confluence Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Confluence Cloud",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "confluence"
+        }
+      },
+      {
+        "id": "t-list-spaces",
+        "name": "list_spaces",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "list_spaces",
+          "description": "List all Confluence spaces (id, key, name, type). No parameters. Use this first to find a space_id for other operations.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_spaces" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-pages",
+        "name": "list_pages_in_space",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "list_pages_in_space",
+          "description": "List pages in a space by space_id. Reliable fallback when CQL full-text search returns no results (new spaces, indexing lag). Parameters: space_id (required), limit (optional default 25).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_pages_in_space",
+              "space_id": "={{ $fromAI('space_id', 'Space numeric id', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max pages (default 25)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "space_id", "displayName": "space_id", "type": "string", "description": "Space id", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-pages",
+        "name": "search_pages",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "search_pages",
+          "description": "Full-text search using CQL. Examples: 'text ~ \"onboarding\"', 'space = MARKETING AND type = page', 'creator = currentUser()'. Plain text is auto-wrapped as text~query. Parameters: query (required), limit (optional default 10).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_pages",
+              "query": "={{ $fromAI('query', 'CQL query or plain text', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max results (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "description": "Query", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-page",
+        "name": "get_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "get_page",
+          "description": "Fetch a page by id with full body (storage format HTML), version, space. Parameters: page_id (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-get-by-title",
+        "name": "get_page_by_title",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "get_page_by_title",
+          "description": "Find a page by exact title (ASCII titles work reliably). Parameters: title (required), space_id (optional, scopes search to one space).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_page_by_title",
+              "title": "={{ $fromAI('title', 'Exact page title', 'string') }}",
+              "space_id": "={{ $fromAI('space_id', 'Optional space id filter', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Title", "required": true },
+              { "id": "space_id", "displayName": "space_id", "type": "string", "description": "Space id", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-children",
+        "name": "list_children",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1250, 300],
+        "parameters": {
+          "name": "list_children",
+          "description": "List direct child pages of a parent page. Parameters: page_id (required), limit (optional).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_children",
+              "page_id": "={{ $fromAI('page_id', 'Parent page id', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max children (default 25)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Parent page id", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-create-page",
+        "name": "create_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 550],
+        "parameters": {
+          "name": "create_page",
+          "description": "Create a new page. Body MUST be storage-format HTML (e.g. '<p>Hello</p><h2>Section</h2><ul><li>item</li></ul>'). Parameters: space_id (required), title (required), body (required), parent_id (optional).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_page",
+              "space_id": "={{ $fromAI('space_id', 'Space numeric id', 'string') }}",
+              "title": "={{ $fromAI('title', 'Page title', 'string') }}",
+              "body": "={{ $fromAI('body', 'HTML body in storage format', 'string') }}",
+              "parent_id": "={{ $fromAI('parent_id', 'Optional parent page id', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "space_id", "displayName": "space_id", "type": "string", "description": "Space id", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Title", "required": true },
+              { "id": "body", "displayName": "body", "type": "string", "description": "HTML body", "required": true },
+              { "id": "parent_id", "displayName": "parent_id", "type": "string", "description": "Parent page id", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-update-page",
+        "name": "update_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 550],
+        "parameters": {
+          "name": "update_page",
+          "description": "Update page title and/or body. Body must be storage-format HTML. Version is auto-bumped. Parameters: page_id (required), title (optional), body (optional).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}",
+              "title": "={{ $fromAI('title', 'New title (optional)', 'string') }}",
+              "body": "={{ $fromAI('body', 'New HTML body (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Title", "required": false },
+              { "id": "body", "displayName": "body", "type": "string", "description": "Body", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-delete-page",
+        "name": "delete_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 550],
+        "parameters": {
+          "name": "delete_page",
+          "description": "Delete a page by id. Parameters: page_id (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-add-comment",
+        "name": "add_comment_to_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 550],
+        "parameters": {
+          "name": "add_comment_to_page",
+          "description": "Add a footer comment to a page. Plain text is auto-wrapped in <p>; HTML is passed through. Parameters: page_id (required), text (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "add_comment_to_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}",
+              "text": "={{ $fromAI('text', 'Comment text', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true },
+              { "id": "text", "displayName": "text", "type": "string", "description": "Comment text", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-comments",
+        "name": "list_comments_on_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 550],
+        "parameters": {
+          "name": "list_comments_on_page",
+          "description": "List footer comments on a page. Parameters: page_id (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_comments_on_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-add-label",
+        "name": "add_label_to_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1250, 550],
+        "parameters": {
+          "name": "add_label_to_page",
+          "description": "Add a label to a page for categorization. Label names should be lowercase with hyphens (e.g. 'meeting-notes'). Parameters: page_id (required), label (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "add_label_to_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}",
+              "label": "={{ $fromAI('label', 'Label name', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true },
+              { "id": "label", "displayName": "label", "type": "string", "description": "Label name", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-list-labels",
+        "name": "list_labels_on_page",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 800],
+        "parameters": {
+          "name": "list_labels_on_page",
+          "description": "List all labels on a page. Parameters: page_id (required).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_labels_on_page",
+              "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "page_id", "displayName": "page_id", "type": "string", "description": "Page id", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "t-search-label",
+        "name": "search_by_label",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 800],
+        "parameters": {
+          "name": "search_by_label",
+          "description": "Find pages tagged with a specific label. Parameters: label (required), limit (optional default 25).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_by_label",
+              "label": "={{ $fromAI('label', 'Label name', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max results (default 25)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
+              { "id": "label", "displayName": "label", "type": "string", "description": "Label name", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_spaces": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_pages_in_space": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "search_pages": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_page_by_title": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_children": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "create_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "update_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "delete_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "add_comment_to_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_comments_on_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "add_label_to_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_labels_on_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "search_by_label": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

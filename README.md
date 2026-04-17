@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (59)
+## Available Skills (60)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -23,7 +23,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
-| [Notes & CRM](#notes--crm) | 3 | Airtable, NocoDB, Notion |
+| [Notes & CRM](#notes--crm) | 4 | Airtable, Confluence Cloud, NocoDB, Notion |
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Smart Home](#smart-home) | 1 | Home Assistant |
 | [Tasks](#tasks) | 4 | Asana, Jira Cloud, Todoist, Vikunja |
@@ -151,6 +151,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Airtable](https://airtable.com/) | Work with Airtable bases and records: list bases/tables, search with formulas, CRUD rows. Free plan has 1,000 API calls/month — Team plan recommended for active use | Airtable PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Confluence Cloud](https://www.atlassian.com/software/confluence) | Confluence wiki (14 tools): CQL search, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
 | [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 

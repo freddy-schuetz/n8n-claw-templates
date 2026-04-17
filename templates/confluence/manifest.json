@@ -1,0 +1,90 @@
+{
+  "id": "confluence",
+  "name": "Confluence Cloud",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "productivity",
+  "description": "Confluence Cloud wiki: search pages, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira skill.",
+  "credentials_required": [
+    {
+      "key": "atlassian_email",
+      "label": "Atlassian Email",
+      "shared_id": "atlassian-api-token",
+      "hint": "Your Atlassian account email (same across Jira + Confluence)."
+    },
+    {
+      "key": "atlassian_api_token",
+      "label": "Atlassian API Token",
+      "shared_id": "atlassian-api-token",
+      "hint": "Create at id.atlassian.com/manage-profile/security/api-tokens. NOTE: Atlassian enforces token expiry (1-365 days) — you will need to rotate it manually."
+    },
+    {
+      "key": "atlassian_site",
+      "label": "Atlassian Site URL",
+      "shared_id": "atlassian-api-token",
+      "hint": "Your site subdomain, e.g. 'your-org.atlassian.net' (without https:// prefix)."
+    }
+  ],
+  "tools": [
+    {
+      "name": "list_spaces",
+      "description": "List all Confluence spaces (id, key, name, type)"
+    },
+    {
+      "name": "list_pages_in_space",
+      "description": "List pages in a space by space id (reliable fallback when CQL search is not indexed yet)"
+    },
+    {
+      "name": "search_pages",
+      "description": "Full-text search across pages using CQL (e.g. 'text ~ \"onboarding\"', 'space = MARKETING AND text ~ \"launch\"')"
+    },
+    {
+      "name": "get_page",
+      "description": "Get page by id — full body (storage format), version, space"
+    },
+    {
+      "name": "get_page_by_title",
+      "description": "Find a page by exact title (optionally scoped to a space-id). Note: exact ASCII titles work reliably; titles with em-dashes or diacritics may not match."
+    },
+    {
+      "name": "list_children",
+      "description": "List direct child pages of a parent page"
+    },
+    {
+      "name": "create_page",
+      "description": "Create a new page with space-id, title, body (storage format HTML), optional parent-id"
+    },
+    {
+      "name": "update_page",
+      "description": "Update page title/body (auto version-bumps)"
+    },
+    {
+      "name": "delete_page",
+      "description": "Delete a page by id"
+    },
+    {
+      "name": "add_comment_to_page",
+      "description": "Add a footer comment to a page"
+    },
+    {
+      "name": "list_comments_on_page",
+      "description": "List footer comments on a page"
+    },
+    {
+      "name": "add_label_to_page",
+      "description": "Add a label to a page (for categorization and label-based search)"
+    },
+    {
+      "name": "list_labels_on_page",
+      "description": "List all labels on a page"
+    },
+    {
+      "name": "search_by_label",
+      "description": "Find pages by label (e.g. 'meeting-notes', 'onboarding')"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
