@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (48)
+## Available Skills (49)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -18,6 +18,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Finance](#finance) | 4 | Crypto, currencies, banking, Lexware |
 | [Knowledge](#knowledge) | 4 | DeepWiki, food facts, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
+| [Maps](#maps) | 1 | OpenStreetMap / Overpass POI search |
 | [Marketing](#marketing) | 1 | Google Ads |
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
@@ -105,6 +106,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|:------:|
 | [DeepL Translate](https://www.deepl.com/) | Translate text between 30+ languages and detect languages | DeepL API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Dictionary](https://dictionaryapi.dev/) | English word definitions, phonetics, and examples | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+
+### Maps
+
+| Skill | Description | Credentials | Author | Tested |
+|-------|-------------|-------------|--------|:------:|
+| [Overpass (OpenStreetMap)](https://overpass-api.de/) | Search places and POIs on OSM: restaurants, hotels, hiking huts, drinking water, EV charging (28 preset categories). Geocoding via Nominatim | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Marketing
 

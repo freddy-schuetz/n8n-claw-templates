@@ -542,6 +542,15 @@
       "description": "AI-powered documentation search for any public GitHub repository via Devin DeepWiki (external MCP server, free, no auth)",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "overpass-osm",
+      "name": "Overpass (OpenStreetMap)",
+      "type": "native",
+      "category": "maps",
+      "description": "Search places and POIs on OpenStreetMap: restaurants, hotels, hiking huts, drinking water, EV charging, 28 preset categories. Geocoding via Nominatim, free, no auth.",
+      "credentials_required": [],
+      "version": "1.0.0"
     }
   ]
 }

@@ -1,0 +1,34 @@
+{
+  "id": "overpass-osm",
+  "name": "Overpass (OpenStreetMap)",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "maps",
+  "description": "Search places and points of interest on OpenStreetMap (restaurants, hotels, hiking huts, drinking water, EV charging, and 25+ more presets). Geocoding via Nominatim, POI search via Overpass API.",
+  "credentials_required": [],
+  "credentials_optional": [
+    {
+      "key": "overpass_endpoint",
+      "label": "Overpass API Endpoint",
+      "hint": "Override the default public endpoint. Use https://overpass.kumi.systems/api/interpreter as an alternative mirror if the public API is rate-limited. Default: https://overpass-api.de/api/interpreter"
+    }
+  ],
+  "tools": [
+    {
+      "name": "geocode_place",
+      "description": "Convert a place name, address, or city into latitude/longitude coordinates (via Nominatim)"
+    },
+    {
+      "name": "find_nearby",
+      "description": "Find points of interest near a location by preset category (28 categories: food, accommodation, shopping, tourism, transport, outdoor/hiking, utilities)"
+    },
+    {
+      "name": "search_custom",
+      "description": "Run a custom Overpass QL query for advanced use cases (power users)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
