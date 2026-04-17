@@ -41,7 +41,7 @@ The Library Manager imports `sub` first, gets its ID, patches `REPLACE_SUB_WORKF
 
 Use one of these existing categories. If none fit, open an issue to propose a new one.
 
-`analytics` · `communication` · `creativity` · `entertainment` · `finance` · `knowledge` · `language` · `marketing` · `meetings` · `network` · `news` · `productivity` · `reference` · `tourism` · `transport` · `utilities` · `weather`
+`analytics` · `communication` · `creativity` · `entertainment` · `finance` · `knowledge` · `language` · `maps` · `marketing` · `meetings` · `network` · `news` · `productivity` · `reference` · `smart-home` · `tourism` · `transport` · `utilities` · `weather`
 
 ---
 
@@ -301,7 +301,7 @@ Key difference: OAuth2 entries add `"credential_type": "oauth2"` and credentials
 ## Checklist for New Templates
 
 - [ ] Template ID is lowercase with hyphens only
-- [ ] Category is one of the 15 valid categories listed above
+- [ ] Category is one of the 19 valid categories listed above
 - [ ] `manifest.json` has all required fields (see `TEMPLATE_EXAMPLE.md`)
 - [ ] `workflow.json` uses format `n8n-claw-template` with `sub` and `server` keys
 - [ ] Code uses `helpers.httpRequest()` (NOT `$helpers`)
