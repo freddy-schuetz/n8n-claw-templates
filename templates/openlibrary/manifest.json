@@ -1,0 +1,27 @@
+{
+  "id": "openlibrary",
+  "name": "Open Library",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "knowledge",
+  "description": "Search 40M+ books by title, author or ISBN and fetch book/author details (Open Library, free, no auth)",
+  "credentials_required": [],
+  "tools": [
+    {
+      "name": "search_books",
+      "description": "Search books by title, author, subject or ISBN"
+    },
+    {
+      "name": "get_book",
+      "description": "Get detailed info about a specific book (by Work key or ISBN)"
+    },
+    {
+      "name": "get_author",
+      "description": "Get author profile plus a list of their works"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

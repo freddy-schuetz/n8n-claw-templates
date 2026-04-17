@@ -585,6 +585,15 @@
         { "key": "airtable_pat", "label": "Airtable Personal Access Token" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "openlibrary",
+      "name": "Open Library",
+      "type": "native",
+      "category": "knowledge",
+      "description": "Search 40M+ books by title, author or ISBN and fetch book/author details (Open Library, free, no auth)",
+      "credentials_required": [],
+      "version": "1.0.0"
     }
   ]
 }
