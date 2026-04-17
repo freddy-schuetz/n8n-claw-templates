@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (54)
+## Available Skills (55)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -30,7 +30,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
 | [Transport](#transport) | 5 | Deutsche Bahn, ÖBB, SBB, ÖPNV Deutschland, Wiener Linien |
 | [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
-| [Weather](#weather) | 1 | Open-Meteo forecasts |
+| [Weather](#weather) | 2 | Open-Meteo forecasts, OpenAQ air quality |
 
 > **Tested column** — A ✓ in the *Tested* column means the skill has been verified end-to-end on at least one live n8n-claw instance (install + tool call working as expected). An empty cell means the skill is published but has not been hands-on verified yet.
 
@@ -201,6 +201,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
+| [OpenAQ Air Quality](https://openaq.org/) | Current air quality (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide; supports city names or coordinates | OpenAQ API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Weather](https://open-meteo.com/) | Current weather and 3-day forecast for any city | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ---

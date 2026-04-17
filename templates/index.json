@@ -605,6 +605,17 @@
         { "key": "unsplash_access_key", "label": "Unsplash Access Key" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "openaq",
+      "name": "OpenAQ Air Quality",
+      "type": "native",
+      "category": "weather",
+      "description": "Air quality data (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide via OpenAQ v3 API. Supports city names (auto-geocoded) or coordinates.",
+      "credentials_required": [
+        { "key": "openaq_api_key", "label": "OpenAQ API Key" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

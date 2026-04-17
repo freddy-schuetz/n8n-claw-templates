@@ -1,0 +1,163 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: OpenAQ Air Quality",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "OpenAQ Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.openaq&cred_key=eq.openaq_api_key&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || !creds[0] || !creds[0].cred_value) {\n  return [{ json: { error: 'OpenAQ API Key not configured. Use add_credential to set it up.' } }];\n}\nconst apiKey = creds[0].cred_value;\nconst API = 'https://api.openaq.org/v3';\nconst authHeaders = { 'X-API-Key': apiKey };\nconst NOMINATIM = 'https://nominatim.openstreetmap.org';\nconst UA = { 'User-Agent': 'n8n-claw-openaq/1.0' };\n\nasync function geocode(city) {\n  const data = await helpers.httpRequest({\n    method: 'GET',\n    url: NOMINATIM + '/search?q=' + encodeURIComponent(city) + '&format=json&limit=1',\n    headers: UA\n  });\n  if (!data || data.length === 0) return null;\n  return {\n    lat: parseFloat(data[0].lat),\n    lon: parseFloat(data[0].lon),\n    name: data[0].display_name\n  };\n}\n\nfunction formatTimestamp(dt) {\n  if (!dt) return '';\n  if (typeof dt === 'string') return dt;\n  if (dt.local) return dt.local;\n  if (dt.utc) return dt.utc;\n  return '';\n}\n\nfunction healthHint(param, value) {\n  if (value == null) return '';\n  if (param === 'pm25') {\n    if (value <= 15) return 'good';\n    if (value <= 25) return 'moderate';\n    if (value <= 50) return 'poor';\n    return 'unhealthy';\n  }\n  if (param === 'pm10') {\n    if (value <= 25) return 'good';\n    if (value <= 50) return 'moderate';\n    if (value <= 90) return 'poor';\n    return 'unhealthy';\n  }\n  if (param === 'no2') {\n    if (value <= 40) return 'good';\n    if (value <= 100) return 'moderate';\n    return 'poor';\n  }\n  if (param === 'o3') {\n    if (value <= 100) return 'good';\n    if (value <= 180) return 'moderate';\n    return 'poor';\n  }\n  return '';\n}\n\nasync function resolveCoords(input) {\n  if (input.lat && input.lon) {\n    return { lat: parseFloat(input.lat), lon: parseFloat(input.lon), name: input.lat + ',' + input.lon };\n  }\n  if (input.city) {\n    const g = await geocode(input.city);\n    if (!g) return null;\n    return g;\n  }\n  return null;\n}\n\n// === get_air_quality ===\nif (action === 'get_air_quality') {\n  if (!input.city && !(input.lat && input.lon)) {\n    return [{ json: { error: 'Provide either \"city\" (e.g. Berlin, Essen) or both \"lat\" and \"lon\".' } }];\n  }\n  const radius = Math.min(parseInt(input.radius) || 25000, 25000);\n  const coords = await resolveCoords(input);\n  if (!coords) return [{ json: { error: 'Could not resolve location: ' + (input.city || input.lat + ',' + input.lon) } }];\n\n  try {\n    const locData = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/locations?coordinates=' + coords.lat + ',' + coords.lon + '&radius=' + radius + '&limit=1',\n      headers: authHeaders\n    });\n    const loc = locData.results && locData.results[0];\n    if (!loc) {\n      return [{ json: { result: 'No monitoring station found within ' + (radius / 1000) + 'km of ' + coords.name + '.' } }];\n    }\n\n    const sensorMap = {};\n    for (const s of (loc.sensors || [])) {\n      sensorMap[s.id] = s.parameter;\n    }\n\n    const latest = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/locations/' + loc.id + '/latest',\n      headers: authHeaders\n    });\n\n    let result = 'Air quality near ' + coords.name + '\\n';\n    result += 'Station: ' + loc.name + (loc.locality ? ' (' + loc.locality + ')' : '') + ' \u2014 Location ID ' + loc.id + '\\n';\n    if (loc.provider && loc.provider.name) result += 'Provider: ' + loc.provider.name + '\\n';\n    result += '\\nCurrent measurements:\\n';\n\n    const entries = (latest.results || []).map(r => {\n      const p = sensorMap[r.sensorsId];\n      return { param: p ? p.name : ('sensor-' + r.sensorsId), displayName: p ? p.displayName : null, units: p ? p.units : '', value: r.value, ts: formatTimestamp(r.datetime) };\n    });\n\n    const order = ['pm25', 'pm10', 'no2', 'o3', 'so2', 'co', 'no'];\n    entries.sort((a, b) => {\n      const ai = order.indexOf(a.param);\n      const bi = order.indexOf(b.param);\n      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);\n    });\n\n    if (entries.length === 0) {\n      result += '(no recent measurements reported)\\n';\n    } else {\n      for (const e of entries) {\n        const label = e.displayName || e.param.toUpperCase();\n        const hint = healthHint(e.param, e.value);\n        result += '\u2022 ' + label + ': ' + e.value + ' ' + e.units + (hint ? ' (' + hint + ')' : '') + ' \u2014 ' + e.ts + '\\n';\n      }\n    }\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'OpenAQ request failed: ' + err.message } }];\n  }\n\n// === find_stations ===\n} else if (action === 'find_stations') {\n  if (!input.city && !(input.lat && input.lon)) {\n    return [{ json: { error: 'Provide either \"city\" or both \"lat\" and \"lon\".' } }];\n  }\n  const radius = Math.min(parseInt(input.radius) || 25000, 25000);\n  const limit = Math.min(parseInt(input.limit) || 5, 20);\n  const coords = await resolveCoords(input);\n  if (!coords) return [{ json: { error: 'Could not resolve location: ' + (input.city || input.lat + ',' + input.lon) } }];\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/locations?coordinates=' + coords.lat + ',' + coords.lon + '&radius=' + radius + '&limit=' + limit,\n      headers: authHeaders\n    });\n    const results = data.results || [];\n    if (results.length === 0) {\n      return [{ json: { result: 'No stations found within ' + (radius / 1000) + 'km of ' + coords.name + '.' } }];\n    }\n    let out = 'Found ' + (data.meta && data.meta.found ? data.meta.found : results.length) + ' stations near ' + coords.name + ' (showing ' + results.length + '):\\n\\n';\n    for (const loc of results) {\n      out += '**' + loc.name + '** \u2014 ID ' + loc.id + '\\n';\n      if (loc.locality) out += '  Locality: ' + loc.locality + '\\n';\n      if (loc.country && loc.country.name) out += '  Country: ' + loc.country.name + '\\n';\n      if (loc.provider && loc.provider.name) out += '  Provider: ' + loc.provider.name + '\\n';\n      const params = (loc.sensors || []).map(s => s.parameter && s.parameter.name).filter(Boolean);\n      if (params.length > 0) out += '  Parameters: ' + params.join(', ') + '\\n';\n      out += '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'OpenAQ request failed: ' + err.message } }];\n  }\n\n// === get_station_history ===\n} else if (action === 'get_station_history') {\n  const locationId = input.location_id;\n  const param = (input.parameter || 'pm25').toLowerCase();\n  const days = Math.min(parseInt(input.days) || 7, 7);\n  if (!locationId) {\n    return [{ json: { error: 'Parameter \"location_id\" is required (use find_stations to get IDs).' } }];\n  }\n\n  try {\n    const locData = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/locations/' + encodeURIComponent(locationId),\n      headers: authHeaders\n    });\n    const loc = locData.results && locData.results[0];\n    if (!loc) return [{ json: { error: 'Station not found: ' + locationId } }];\n\n    const sensor = (loc.sensors || []).find(s => s.parameter && s.parameter.name === param);\n    if (!sensor) {\n      const available = (loc.sensors || []).map(s => s.parameter && s.parameter.name).filter(Boolean);\n      return [{ json: { error: 'Parameter \"' + param + '\" not available at station ' + loc.name + '. Available: ' + available.join(', ') + '.' } }];\n    }\n\n    const now = new Date();\n    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);\n    const dateFrom = from.toISOString().substring(0, 10);\n    const dateTo = now.toISOString().substring(0, 10);\n\n    const hist = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/sensors/' + sensor.id + '/days?date_from=' + dateFrom + '&date_to=' + dateTo + '&limit=' + days,\n      headers: authHeaders\n    });\n    const rows = hist.results || [];\n    if (rows.length === 0) {\n      return [{ json: { result: 'No daily data for ' + param + ' at ' + loc.name + ' between ' + dateFrom + ' and ' + dateTo + '.' } }];\n    }\n\n    let out = param.toUpperCase() + ' daily values at ' + loc.name + ' (last ' + rows.length + ' days):\\n\\n';\n    for (const r of rows) {\n      const date = r.period && r.period.datetimeFrom ? (r.period.datetimeFrom.local || r.period.datetimeFrom.utc || '').substring(0, 10) : '';\n      const units = r.parameter && r.parameter.units ? r.parameter.units : '';\n      const summary = r.summary || {};\n      out += date + ': avg ' + r.value + ' ' + units;\n      if (summary.min != null && summary.median != null) {\n        out += ' (min ' + summary.min.toFixed(1) + ', median ' + summary.median.toFixed(1) + ', q75 ' + (summary.q75 != null ? summary.q75.toFixed(1) : '-') + ')';\n      }\n      out += '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'OpenAQ history request failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: get_air_quality, find_stations, get_station_history.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "OpenAQ Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: OpenAQ Air Quality",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "openaq"
+        }
+      },
+      {
+        "id": "tool-get-aq",
+        "name": "get_air_quality",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "get_air_quality",
+          "description": "Current air quality (PM2.5, PM10, NO2, O3, SO2) at the nearest station. Provide either city (auto-geocoded via Nominatim) or lat+lon. Parameters: city (optional), lat+lon (optional), radius (meters, default 25000, max 25000).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_air_quality",
+              "city": "={{ $fromAI('city', 'City or place name (alternative to lat/lon)', 'string') }}",
+              "lat": "={{ $fromAI('lat', 'Latitude (alternative to city)', 'string') }}",
+              "lon": "={{ $fromAI('lon', 'Longitude (alternative to city)', 'string') }}",
+              "radius": "={{ $fromAI('radius', 'Search radius in meters (default 25000, max 25000)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "city", "displayName": "city", "type": "string", "description": "City name", "required": false },
+              { "id": "lat", "displayName": "lat", "type": "string", "description": "Latitude", "required": false },
+              { "id": "lon", "displayName": "lon", "type": "string", "description": "Longitude", "required": false },
+              { "id": "radius", "displayName": "radius", "type": "string", "description": "Search radius meters", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-find-stations",
+        "name": "find_stations",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "find_stations",
+          "description": "List air quality monitoring stations near a location. Use when the user wants to compare multiple stations or find station IDs for history lookups. Parameters: city (optional), lat+lon (optional), radius (meters, default 25000), limit (default 5, max 20).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "find_stations",
+              "city": "={{ $fromAI('city', 'City name (alternative to lat/lon)', 'string') }}",
+              "lat": "={{ $fromAI('lat', 'Latitude (alternative to city)', 'string') }}",
+              "lon": "={{ $fromAI('lon', 'Longitude (alternative to city)', 'string') }}",
+              "radius": "={{ $fromAI('radius', 'Search radius in meters (default 25000, max 25000)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Number of stations (default 5, max 20)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "city", "displayName": "city", "type": "string", "description": "City name", "required": false },
+              { "id": "lat", "displayName": "lat", "type": "string", "description": "Latitude", "required": false },
+              { "id": "lon", "displayName": "lon", "type": "string", "description": "Longitude", "required": false },
+              { "id": "radius", "displayName": "radius", "type": "string", "description": "Search radius meters", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Result limit", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-history",
+        "name": "get_station_history",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "get_station_history",
+          "description": "Daily mean values for one parameter at a specific station over the last N days. Parameters: location_id (required, from find_stations), parameter (pm25|pm10|no2|o3|so2|co, default pm25), days (default 7, max 7).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_station_history",
+              "location_id": "={{ $fromAI('location_id', 'OpenAQ station ID (from find_stations)', 'string') }}",
+              "parameter": "={{ $fromAI('parameter', 'Pollutant parameter: pm25, pm10, no2, o3, so2, co (default pm25)', 'string') }}",
+              "days": "={{ $fromAI('days', 'Number of days (default 7, max 7)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "location_id", "displayName": "location_id", "type": "string", "description": "Station ID", "required": true },
+              { "id": "parameter", "displayName": "parameter", "type": "string", "description": "Pollutant parameter", "required": false },
+              { "id": "days", "displayName": "days", "type": "string", "description": "Number of days", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "get_air_quality": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "find_stations": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_station_history": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}

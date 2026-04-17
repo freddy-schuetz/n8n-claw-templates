@@ -1,0 +1,33 @@
+{
+  "id": "openaq",
+  "name": "OpenAQ Air Quality",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "weather",
+  "description": "Air quality data (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide via OpenAQ v3 API. Supports city names (auto-geocoded) or coordinates.",
+  "credentials_required": [
+    {
+      "key": "openaq_api_key",
+      "label": "OpenAQ API Key",
+      "hint": "Free via https://explore.openaq.org/register \u2014 sign up, then go to account/API Keys."
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_air_quality",
+      "description": "Current air quality (PM2.5, PM10, NO2, O3, etc.) at a city or coordinates"
+    },
+    {
+      "name": "find_stations",
+      "description": "List nearby air quality monitoring stations"
+    },
+    {
+      "name": "get_station_history",
+      "description": "Daily mean values for a parameter at a station (last N days)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
