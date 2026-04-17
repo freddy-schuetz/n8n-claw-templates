@@ -627,6 +627,17 @@
         { "key": "finnhub_api_key", "label": "Finnhub API Key" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube Data",
+      "type": "native",
+      "category": "entertainment",
+      "description": "Search YouTube videos, fetch video/channel metadata and list a channel's latest uploads. Search/metadata only \u2014 does NOT download transcripts or videos.",
+      "credentials_required": [
+        { "key": "youtube_api_key", "label": "YouTube Data API v3 Key" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (56)
+## Available Skills (57)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -14,7 +14,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Communication](#communication) | 4 | Email, Gmail, ntfy, OpenClaw |
 | [Creativity](#creativity) | 2 | AI image & video generation, Unsplash photos |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
-| [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
+| [Entertainment](#entertainment) | 4 | Recipes, movies, trivia, YouTube |
 | [Finance](#finance) | 5 | Crypto, currencies, banking, Finnhub stocks, Lexware |
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
@@ -84,6 +84,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Recipes](https://www.themealdb.com/) | Search recipes or get a random recipe with ingredients and instructions | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [TMDB Movies & TV](https://www.themoviedb.org/) | Search movies and TV shows, discover trending titles | TMDB API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Trivia](https://opentdb.com/) | Random trivia questions with answers from various categories | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [YouTube Data](https://developers.google.com/youtube/v3) | Search YouTube videos, fetch video/channel metadata, list a channel's recent uploads (search/metadata only, no transcripts) | YouTube Data API v3 Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 
 ### Finance
 

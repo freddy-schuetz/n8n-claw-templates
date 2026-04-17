@@ -1,0 +1,184 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: YouTube Data",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "YouTube Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.youtube&cred_key=eq.youtube_api_key&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || !creds[0] || !creds[0].cred_value) {\n  return [{ json: { error: 'YouTube API key not configured. Use add_credential to set it up.' } }];\n}\nconst key = creds[0].cred_value;\nconst API = 'https://www.googleapis.com/youtube/v3';\n\nfunction formatDuration(iso) {\n  if (!iso) return '';\n  const m = iso.match(/^PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?$/);\n  if (!m) return iso;\n  const h = parseInt(m[1] || '0');\n  const mm = parseInt(m[2] || '0');\n  const s = parseInt(m[3] || '0');\n  if (h > 0) return h + 'h ' + mm + 'm ' + s + 's';\n  if (mm > 0) return mm + 'm ' + s + 's';\n  return s + 's';\n}\n\nfunction formatNum(n) {\n  if (n == null) return '';\n  const num = parseInt(n);\n  if (isNaN(num)) return String(n);\n  if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';\n  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';\n  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';\n  return String(num);\n}\n\nasync function resolveChannelId(idOrHandle) {\n  if (!idOrHandle) return null;\n  const s = String(idOrHandle).trim();\n  if (s.startsWith('UC') && s.length === 24) return s;\n  const handle = s.startsWith('@') ? s : '@' + s;\n  const data = await helpers.httpRequest({\n    method: 'GET',\n    url: API + '/channels?part=id&forHandle=' + encodeURIComponent(handle) + '&key=' + key\n  });\n  if (data.items && data.items[0]) return data.items[0].id;\n  return null;\n}\n\n// === search_videos ===\nif (action === 'search_videos') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 5, 25);\n  const order = ['relevance', 'date', 'viewCount', 'rating'].includes(input.order) ? input.order : 'relevance';\n\n  try {\n    const url = API + '/search?part=snippet&type=video&q=' + encodeURIComponent(query) + '&maxResults=' + limit + '&order=' + order + '&key=' + key;\n    const data = await helpers.httpRequest({ method: 'GET', url });\n    const items = data.items || [];\n    if (items.length === 0) return [{ json: { result: 'No videos found for: ' + query } }];\n\n    let out = 'Top ' + items.length + ' videos for \"' + query + '\" (' + (data.pageInfo && data.pageInfo.totalResults || '?') + ' total, sort: ' + order + '):\\n\\n';\n    for (const it of items) {\n      const s = it.snippet;\n      const vid = it.id && it.id.videoId;\n      out += '**' + s.title + '**\\n';\n      out += '  Channel: ' + s.channelTitle + '\\n';\n      out += '  Published: ' + s.publishedAt.substring(0, 10) + '\\n';\n      out += '  ID: ' + vid + '\\n';\n      out += '  URL: https://youtube.com/watch?v=' + vid + '\\n';\n      if (s.description) {\n        const desc = s.description.substring(0, 150);\n        if (desc) out += '  ' + desc + (s.description.length > 150 ? '...' : '') + '\\n';\n      }\n      out += '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'YouTube search failed: ' + (err.message || err) } }];\n  }\n\n// === get_video ===\n} else if (action === 'get_video') {\n  const videoId = input.video_id;\n  if (!videoId) return [{ json: { error: 'Parameter \"video_id\" is required (e.g. vcvRVlc_VFg from search_videos or the v= part of a YouTube URL).' } }];\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/videos?part=snippet,statistics,contentDetails&id=' + encodeURIComponent(videoId) + '&key=' + key\n    });\n    const v = data.items && data.items[0];\n    if (!v) return [{ json: { error: 'Video not found: ' + videoId } }];\n    const s = v.snippet, st = v.statistics || {}, cd = v.contentDetails || {};\n    let out = '**' + s.title + '**\\n';\n    out += 'Channel: ' + s.channelTitle + ' (' + s.channelId + ')\\n';\n    out += 'Published: ' + s.publishedAt + '\\n';\n    out += 'Duration: ' + formatDuration(cd.duration) + '\\n';\n    out += 'Views: ' + formatNum(st.viewCount) + '\\n';\n    if (st.likeCount) out += 'Likes: ' + formatNum(st.likeCount) + '\\n';\n    if (st.commentCount) out += 'Comments: ' + formatNum(st.commentCount) + '\\n';\n    out += 'URL: https://youtube.com/watch?v=' + v.id + '\\n';\n    if (s.tags && s.tags.length > 0) out += 'Tags: ' + s.tags.slice(0, 10).join(', ') + '\\n';\n    if (s.description) {\n      const desc = s.description.length > 2000 ? s.description.substring(0, 2000) + '...' : s.description;\n      out += '\\nDescription:\\n' + desc + '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'YouTube get_video failed: ' + (err.message || err) } }];\n  }\n\n// === get_channel ===\n} else if (action === 'get_channel') {\n  const ch = input.channel_id || input.handle;\n  if (!ch) return [{ json: { error: 'Provide either \"channel_id\" (UC...) or \"handle\" (@...).' } }];\n  const isHandle = String(ch).startsWith('@') || (!String(ch).startsWith('UC'));\n  const param = isHandle ? ('forHandle=' + encodeURIComponent(String(ch).startsWith('@') ? ch : '@' + ch)) : ('id=' + encodeURIComponent(ch));\n\n  try {\n    const data = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/channels?part=snippet,statistics,contentDetails&' + param + '&key=' + key\n    });\n    const c = data.items && data.items[0];\n    if (!c) return [{ json: { error: 'Channel not found: ' + ch } }];\n    const st = c.statistics || {};\n    let out = '**' + c.snippet.title + '**\\n';\n    out += 'ID: ' + c.id + '\\n';\n    if (c.snippet.customUrl) out += 'Handle: ' + c.snippet.customUrl + '\\n';\n    if (c.snippet.country) out += 'Country: ' + c.snippet.country + '\\n';\n    out += 'Published: ' + c.snippet.publishedAt.substring(0, 10) + '\\n';\n    if (st.subscriberCount) out += 'Subscribers: ' + formatNum(st.subscriberCount) + '\\n';\n    if (st.viewCount) out += 'Total views: ' + formatNum(st.viewCount) + '\\n';\n    if (st.videoCount) out += 'Video count: ' + st.videoCount + '\\n';\n    out += 'URL: https://youtube.com/channel/' + c.id + '\\n';\n    if (c.snippet.description) {\n      const desc = c.snippet.description.length > 1000 ? c.snippet.description.substring(0, 1000) + '...' : c.snippet.description;\n      out += '\\nAbout:\\n' + desc + '\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'YouTube get_channel failed: ' + (err.message || err) } }];\n  }\n\n// === list_channel_videos ===\n} else if (action === 'list_channel_videos') {\n  const ch = input.channel_id || input.handle;\n  if (!ch) return [{ json: { error: 'Provide either \"channel_id\" (UC...) or \"handle\" (@...).' } }];\n  const limit = Math.min(parseInt(input.limit) || 5, 20);\n\n  try {\n    const channelId = await resolveChannelId(ch);\n    if (!channelId) return [{ json: { error: 'Channel not found: ' + ch } }];\n\n    const chData = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/channels?part=snippet,contentDetails&id=' + channelId + '&key=' + key\n    });\n    const c = chData.items && chData.items[0];\n    if (!c) return [{ json: { error: 'Channel not found: ' + ch } }];\n    const uploads = c.contentDetails && c.contentDetails.relatedPlaylists && c.contentDetails.relatedPlaylists.uploads;\n    if (!uploads) return [{ json: { error: 'No uploads playlist for channel ' + channelId + '.' } }];\n\n    const pl = await helpers.httpRequest({\n      method: 'GET',\n      url: API + '/playlistItems?part=snippet&playlistId=' + uploads + '&maxResults=' + limit + '&key=' + key\n    });\n    const items = pl.items || [];\n    if (items.length === 0) return [{ json: { result: 'No videos on channel ' + c.snippet.title + '.' } }];\n\n    let out = 'Latest ' + items.length + ' videos from **' + c.snippet.title + '**:\\n\\n';\n    for (const it of items) {\n      const s = it.snippet;\n      const vid = s.resourceId && s.resourceId.videoId;\n      out += '[' + s.publishedAt.substring(0, 10) + '] ' + s.title + '\\n';\n      out += '  ID: ' + vid + '\\n';\n      out += '  URL: https://youtube.com/watch?v=' + vid + '\\n\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'YouTube list_channel_videos failed: ' + (err.message || err) } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: search_videos, get_video, get_channel, list_channel_videos.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "YouTube Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: YouTube Data",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "youtube"
+        }
+      },
+      {
+        "id": "tool-search",
+        "name": "search_videos",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "search_videos",
+          "description": "Search YouTube for videos. QUOTA WARNING: costs 100 units per call (100 calls/day on free tier). Parameters: query (required), limit (default 5, max 25), order (relevance|date|viewCount|rating, default relevance).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_videos",
+              "query": "={{ $fromAI('query', 'Search keywords', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Number of results (default 5, max 25)', 'string') }}",
+              "order": "={{ $fromAI('order', 'Sort order: relevance, date, viewCount, rating', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "query", "displayName": "query", "type": "string", "description": "Search keywords", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Number of results", "required": false },
+              { "id": "order", "displayName": "order", "type": "string", "description": "Sort order", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-video",
+        "name": "get_video",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "get_video",
+          "description": "Get video details: stats (views, likes, comments), duration, tags, full description. Only costs 1 quota unit. Parameters: video_id (required, e.g. vcvRVlc_VFg \u2014 the v= part of a YouTube URL).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_video",
+              "video_id": "={{ $fromAI('video_id', 'YouTube video ID (the v= part of the URL)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "video_id", "displayName": "video_id", "type": "string", "description": "Video ID", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-channel",
+        "name": "get_channel",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "get_channel",
+          "description": "Get YouTube channel profile and stats (subs, views, video count). Parameters: channel_id (UC...) OR handle (@username). One is required.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_channel",
+              "channel_id": "={{ $fromAI('channel_id', 'Channel ID starting with UC (alternative to handle)', 'string') }}",
+              "handle": "={{ $fromAI('handle', 'Channel handle starting with @ (alternative to channel_id)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "channel_id", "displayName": "channel_id", "type": "string", "description": "Channel ID", "required": false },
+              { "id": "handle", "displayName": "handle", "type": "string", "description": "Channel handle", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-videos",
+        "name": "list_channel_videos",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "list_channel_videos",
+          "description": "List most recent uploads from a specific YouTube channel. Parameters: channel_id (UC...) OR handle (@username) \u2014 one required; limit (default 5, max 20).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_channel_videos",
+              "channel_id": "={{ $fromAI('channel_id', 'Channel ID starting with UC (alternative to handle)', 'string') }}",
+              "handle": "={{ $fromAI('handle', 'Channel handle starting with @ (alternative to channel_id)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Number of videos (default 5, max 20)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "channel_id", "displayName": "channel_id", "type": "string", "description": "Channel ID", "required": false },
+              { "id": "handle", "displayName": "handle", "type": "string", "description": "Channel handle", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Number of videos", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "search_videos": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_video": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "get_channel": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      },
+      "list_channel_videos": {
+        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+      }
+    }
+  }
+}

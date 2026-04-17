@@ -1,0 +1,37 @@
+{
+  "id": "youtube",
+  "name": "YouTube Data",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "entertainment",
+  "description": "Search YouTube videos, fetch video/channel metadata and list a channel's latest uploads. Search/metadata only \u2014 does NOT download transcripts or videos.",
+  "credentials_required": [
+    {
+      "key": "youtube_api_key",
+      "label": "YouTube Data API v3 Key",
+      "hint": "Create in Google Cloud Console: Enable YouTube Data API v3, then Credentials \u2192 API Key. Free quota: 10,000 units/day. search_videos costs 100 units per call, others 1 unit."
+    }
+  ],
+  "tools": [
+    {
+      "name": "search_videos",
+      "description": "Search YouTube for videos by keyword (costs 100 units/call)"
+    },
+    {
+      "name": "get_video",
+      "description": "Get video metadata (title, stats, duration, description) by video ID"
+    },
+    {
+      "name": "get_channel",
+      "description": "Get channel profile and stats by channel ID or @handle"
+    },
+    {
+      "name": "list_channel_videos",
+      "description": "List a channel's most recent uploads (by channel ID or @handle)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}
