@@ -1,7 +1,7 @@
 {
   "id": "zoho-crm",
   "name": "Zoho CRM",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "marketing",
@@ -23,9 +23,9 @@
       "hint": "Same Self-Client card as Client ID. Click 'Client Secret' -> Copy. Long hex string."
     },
     {
-      "key": "zoho_refresh_token",
-      "label": "Refresh Token",
-      "hint": "One-time step: In the Self-Client console, tab 'Generate Code' -> Scope: 'ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.coql.READ,ZohoCRM.users.READ' -> Time Duration 10 minutes -> Create. Copy the Grant Code, then run in terminal (within 10 min!): curl -X POST 'https://accounts.zoho.{region}/oauth/v2/token' -d 'grant_type=authorization_code' -d 'client_id=YOUR_ID' -d 'client_secret=YOUR_SECRET' -d 'code=YOUR_GRANT'. The response contains 'refresh_token' — paste it here. The refresh token does not expire (unless revoked). Starts with '1000.XXXX...'."
+      "key": "zoho_grant_code",
+      "label": "Grant Code (one-time)",
+      "hint": "In the Self-Client console, tab 'Generate Code' -> Scope: 'ZohoCRM.modules.ALL,ZohoCRM.settings.ALL,ZohoCRM.coql.READ,ZohoCRM.users.READ' -> Time Duration 10 minutes -> Create -> Copy the Grant Code (starts with '1000.XXXX...'). Paste it here within 10 minutes — the skill automatically exchanges it for a long-lived refresh token on first use (no terminal / curl needed). The grant code is single-use and deleted after exchange. If it expired or was already used, just generate a new one and re-add via add_credential."
     }
   ],
   "tools": [
