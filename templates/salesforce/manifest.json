@@ -1,7 +1,7 @@
 {
   "id": "salesforce",
   "name": "Salesforce CRM",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "updated": "2026-04-17",
   "type": "native",
   "category": "marketing",
@@ -24,41 +24,146 @@
     }
   ],
   "tools": [
-    { "name": "list_contacts", "description": "List recent Contacts. Optional: limit (1-200, default 10)" },
-    { "name": "search_contacts", "description": "Search Contacts by any field via SOQL WHERE. Params: field (default Name), operator (=, LIKE, !=), value. Example: field=Email, operator=LIKE, value=%@edge.com" },
-    { "name": "get_contact", "description": "Get Contact by Id (15 or 18 char)" },
-    { "name": "create_contact", "description": "Create Contact. LastName required. Optional: FirstName, Email, Phone, Title, AccountId, MailingCity, MailingCountry, custom_fields (JSON-string for *__c fields)" },
-    { "name": "update_contact", "description": "Update Contact by Id. Any of: FirstName, LastName, Email, Phone, Title, AccountId, MailingCity, MailingCountry, custom_fields (JSON-string)" },
-    { "name": "delete_contact", "description": "Delete Contact by Id (moves to Recycle Bin, restorable for 15 days)" },
-    { "name": "list_accounts", "description": "List recent Accounts (companies). Optional: limit (1-200, default 10)" },
-    { "name": "search_accounts", "description": "Search Accounts by any field. Params: field (default Name), operator (=, LIKE), value" },
-    { "name": "get_account", "description": "Get Account by Id (incl. Industry, Phone, Website, BillingCity/Country)" },
-    { "name": "create_account", "description": "Create Account. Name required. Optional: Phone, Website, Industry, BillingCity, BillingCountry, Description, NumberOfEmployees, AnnualRevenue, custom_fields (JSON-string)" },
-    { "name": "update_account", "description": "Update Account by Id. Any of: Name, Phone, Website, Industry, BillingCity, BillingCountry, Description, NumberOfEmployees, AnnualRevenue, custom_fields" },
-    { "name": "delete_account", "description": "Delete Account by Id" },
-    { "name": "list_leads", "description": "List recent Leads (unconverted by default). Optional: limit, include_converted (true|false)" },
-    { "name": "search_leads", "description": "Search Leads by field. Params: field (default Name), operator, value. Common: Status, Company, LeadSource, Rating" },
-    { "name": "get_lead", "description": "Get Lead by Id" },
-    { "name": "create_lead", "description": "Create Lead. LastName + Company required. Optional: FirstName, Email, Phone, Title, Status, LeadSource, Rating, Industry, custom_fields" },
-    { "name": "update_lead", "description": "Update Lead by Id. Any of: FirstName, LastName, Company, Email, Phone, Title, Status, LeadSource, Rating, Industry, custom_fields" },
-    { "name": "delete_lead", "description": "Delete Lead by Id. NOTE: Lead conversion (Lead -> Account+Contact+Opportunity) is not supported via REST in all editions — use Salesforce UI 'Convert' button" },
-    { "name": "list_opportunities", "description": "List recent Opportunities. Optional: limit, open_only (true=exclude Closed Won/Lost)" },
-    { "name": "search_opportunities", "description": "Search Opportunities by field. Params: field (default Name), operator, value. Common: StageName, Amount, CloseDate, OwnerId" },
-    { "name": "get_opportunity", "description": "Get Opportunity by Id (incl. Account, Amount, Stage, Probability, CloseDate)" },
-    { "name": "create_opportunity", "description": "Create Opportunity. Name + StageName + CloseDate (YYYY-MM-DD) required. Optional: Amount, AccountId, Probability, Type, LeadSource, Description, custom_fields" },
-    { "name": "update_opportunity", "description": "Update Opportunity by Id. Any of: Name, StageName, CloseDate, Amount, AccountId, Probability, Type, LeadSource, Description, custom_fields" },
-    { "name": "delete_opportunity", "description": "Delete Opportunity by Id" },
-    { "name": "list_cases", "description": "List recent Cases (Service Cloud). Optional: limit, open_only (exclude Closed)" },
-    { "name": "get_case", "description": "Get Case by Id (incl. CaseNumber, Status, Priority, ContactId, AccountId)" },
-    { "name": "create_case", "description": "Create Case. Subject required. Optional: Description, Status, Priority (Low/Medium/High), Origin, ContactId, AccountId, custom_fields" },
-    { "name": "update_case", "description": "Update Case by Id. Any of: Subject, Description, Status, Priority, Origin, ContactId, AccountId, custom_fields" },
-    { "name": "delete_case", "description": "Delete Case by Id" },
-    { "name": "list_tasks", "description": "List recent Tasks. Optional: limit, open_only (exclude Completed), who_id (ContactId/LeadId filter)" },
-    { "name": "create_task", "description": "Create Task. Subject required. Optional: Description, Status (Not Started/In Progress/Completed), Priority (Low/Normal/High), ActivityDate (YYYY-MM-DD), WhoId (Contact/Lead), WhatId (Account/Opp/Case), OwnerId, custom_fields" },
-    { "name": "update_task", "description": "Update Task by Id. Any of: Subject, Description, Status, Priority, ActivityDate, WhoId, WhatId, OwnerId, custom_fields" },
-    { "name": "soql_query", "description": "Run a custom SOQL query. Param: query (full SOQL string, e.g. 'SELECT Id, Name, Email FROM Contact WHERE Email LIKE %@edge.com%25 LIMIT 10'). Escape % as %25 in URLs — this tool handles encoding." },
-    { "name": "sosl_search", "description": "Full-text search across multiple objects via SOSL. Param: query (search term) — searches Contact, Account, Lead, Opportunity, Case by default. Optional: sobjects (comma-separated override, e.g. 'Contact,Lead')" },
-    { "name": "describe_object", "description": "Get metadata for an SObject type (fields, types, picklist values). Param: object_type (e.g. Contact, Account, Opportunity). Useful to discover custom fields (*__c) before create/update." }
+    {
+      "name": "list_contacts",
+      "description": "List recent Contacts. Optional: limit (1-200, default 10)"
+    },
+    {
+      "name": "search_contacts",
+      "description": "Search Contacts by any field via SOQL WHERE. Params: field (default Name), operator (=, LIKE, !=), value. Example: field=Email, operator=LIKE, value=%@edge.com"
+    },
+    {
+      "name": "get_contact",
+      "description": "Get Contact by Id (15 or 18 char)"
+    },
+    {
+      "name": "create_contact",
+      "description": "Create Contact. LastName required. Optional: FirstName, Email, Phone, Title, AccountId, MailingCity, MailingCountry, custom_fields (JSON-string for *__c fields)"
+    },
+    {
+      "name": "update_contact",
+      "description": "Update Contact by Id. Any of: FirstName, LastName, Email, Phone, Title, AccountId, MailingCity, MailingCountry, custom_fields (JSON-string)"
+    },
+    {
+      "name": "delete_contact",
+      "description": "Delete Contact by Id (moves to Recycle Bin, restorable for 15 days)"
+    },
+    {
+      "name": "list_accounts",
+      "description": "List recent Accounts (companies). Optional: limit (1-200, default 10)"
+    },
+    {
+      "name": "search_accounts",
+      "description": "Search Accounts by any field. Params: field (default Name), operator (=, LIKE), value"
+    },
+    {
+      "name": "get_account",
+      "description": "Get Account by Id (incl. Industry, Phone, Website, BillingCity/Country)"
+    },
+    {
+      "name": "create_account",
+      "description": "Create Account. Name required. Optional: Phone, Website, Industry, BillingCity, BillingCountry, Description, NumberOfEmployees, AnnualRevenue, custom_fields (JSON-string)"
+    },
+    {
+      "name": "update_account",
+      "description": "Update Account by Id. Any of: Name, Phone, Website, Industry, BillingCity, BillingCountry, Description, NumberOfEmployees, AnnualRevenue, custom_fields"
+    },
+    {
+      "name": "delete_account",
+      "description": "Delete Account by Id"
+    },
+    {
+      "name": "list_leads",
+      "description": "List recent Leads (unconverted by default). Optional: limit, include_converted (true|false)"
+    },
+    {
+      "name": "search_leads",
+      "description": "Search Leads by field. Params: field (default Name), operator, value. Common: Status, Company, LeadSource, Rating"
+    },
+    {
+      "name": "get_lead",
+      "description": "Get Lead by Id"
+    },
+    {
+      "name": "create_lead",
+      "description": "Create Lead. LastName + Company required. Optional: FirstName, Email, Phone, Title, Status, LeadSource, Rating, Industry, custom_fields"
+    },
+    {
+      "name": "update_lead",
+      "description": "Update Lead by Id. Any of: FirstName, LastName, Company, Email, Phone, Title, Status, LeadSource, Rating, Industry, custom_fields"
+    },
+    {
+      "name": "delete_lead",
+      "description": "Delete Lead by Id. NOTE: Lead conversion (Lead -> Account+Contact+Opportunity) is not supported via REST in all editions — use Salesforce UI 'Convert' button"
+    },
+    {
+      "name": "list_opportunities",
+      "description": "List recent Opportunities. Optional: limit, open_only (true=exclude Closed Won/Lost)"
+    },
+    {
+      "name": "search_opportunities",
+      "description": "Search Opportunities by field. Params: field (default Name), operator, value. Common: StageName, Amount, CloseDate, OwnerId"
+    },
+    {
+      "name": "get_opportunity",
+      "description": "Get Opportunity by Id (incl. Account, Amount, Stage, Probability, CloseDate)"
+    },
+    {
+      "name": "create_opportunity",
+      "description": "Create Opportunity. Name + StageName + CloseDate (YYYY-MM-DD) required. Optional: Amount, AccountId, Probability, Type, LeadSource, Description, custom_fields"
+    },
+    {
+      "name": "update_opportunity",
+      "description": "Update Opportunity by Id. Any of: Name, StageName, CloseDate, Amount, AccountId, Probability, Type, LeadSource, Description, custom_fields"
+    },
+    {
+      "name": "delete_opportunity",
+      "description": "Delete Opportunity by Id"
+    },
+    {
+      "name": "list_cases",
+      "description": "List recent Cases (Service Cloud). Optional: limit, open_only (exclude Closed)"
+    },
+    {
+      "name": "get_case",
+      "description": "Get Case by Id (incl. CaseNumber, Status, Priority, ContactId, AccountId)"
+    },
+    {
+      "name": "create_case",
+      "description": "Create Case. Subject required. Optional: Description, Status, Priority (Low/Medium/High), Origin, ContactId, AccountId, custom_fields"
+    },
+    {
+      "name": "update_case",
+      "description": "Update Case by Id. Any of: Subject, Description, Status, Priority, Origin, ContactId, AccountId, custom_fields"
+    },
+    {
+      "name": "delete_case",
+      "description": "Delete Case by Id"
+    },
+    {
+      "name": "list_tasks",
+      "description": "List recent Tasks. Optional: limit, open_only (exclude Completed), who_id (ContactId/LeadId filter)"
+    },
+    {
+      "name": "create_task",
+      "description": "Create Task. Subject required. Optional: Description, Status (Not Started/In Progress/Completed), Priority (Low/Normal/High), ActivityDate (YYYY-MM-DD), WhoId (Contact/Lead), WhatId (Account/Opp/Case), OwnerId, custom_fields"
+    },
+    {
+      "name": "update_task",
+      "description": "Update Task by Id. Any of: Subject, Description, Status, Priority, ActivityDate, WhoId, WhatId, OwnerId, custom_fields"
+    },
+    {
+      "name": "soql_query",
+      "description": "Run a custom SOQL query. Param: query (full SOQL string, e.g. 'SELECT Id, Name, Email FROM Contact WHERE Email LIKE %@edge.com%25 LIMIT 10'). Escape % as %25 in URLs — this tool handles encoding."
+    },
+    {
+      "name": "sosl_search",
+      "description": "Full-text search across multiple objects via SOSL. Param: query (search term) — searches Contact, Account, Lead, Opportunity, Case by default. Optional: sobjects (comma-separated override, e.g. 'Contact,Lead')"
+    },
+    {
+      "name": "describe_object",
+      "description": "Get metadata for an SObject type (fields, types, picklist values). Param: object_type (e.g. Contact, Account, Opportunity). Useful to discover custom fields (*__c) before create/update."
+    }
   ],
   "author": "freddy-schuetz",
   "license": "MIT",
