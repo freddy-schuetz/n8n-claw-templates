@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "updated": "2026-03-30",
   "type": "native",
-  "category": "transport",
+  "category": "maps",
   "description": "Plan hiking, cycling, and walking routes with GPX output, geocoding, POI search, elevation profiles, and isochrones (OpenRouteService + BRouter)",
   "credentials_required": [
     {

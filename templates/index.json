@@ -110,7 +110,7 @@
       "id": "route-planner",
       "name": "Route Planner (OpenRouteService)",
       "type": "native",
-      "category": "transport",
+      "category": "maps",
       "description": "Plan hiking, cycling, and walking routes with GPX output, geocoding, POI search, elevation profiles, and isochrones (OpenRouteService + BRouter)",
       "credentials_required": [
         {
