@@ -13,7 +13,10 @@
         "name": "Execute Workflow Trigger",
         "type": "n8n-nodes-base.executeWorkflowTrigger",
         "typeVersion": 1.1,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "inputSource": "passthrough"
         }
@@ -23,15 +26,26 @@
         "name": "Jira Logic",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [256, 0],
+        "position": [
+          256,
+          0
+        ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.jira&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.atlassian_email || !creds.atlassian_api_token || !creds.atlassian_site) {\n  return [{ json: { error: 'Jira credentials not configured. Need atlassian_email, atlassian_api_token, atlassian_site.' } }];\n}\n\nconst site = creds.atlassian_site.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');\nconst API = 'https://' + site + '/rest/api/3';\nconst basic = Buffer.from(creds.atlassian_email + ':' + creds.atlassian_api_token).toString('base64');\nconst authHeaders = { 'Authorization': 'Basic ' + basic, 'Accept': 'application/json' };\nconst jsonHeaders = { ...authHeaders, 'Content-Type': 'application/json' };\n\nfunction textToAdf(text) {\n  if (!text) return null;\n  return { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: String(text) }] }] };\n}\n\nfunction adfToText(adf) {\n  if (!adf) return '';\n  if (typeof adf === 'string') return adf;\n  let out = '';\n  function walk(n) {\n    if (!n) return;\n    if (n.type === 'text' && n.text) out += n.text;\n    if (n.type === 'hardBreak') out += '\\n';\n    if (Array.isArray(n.content)) n.content.forEach(walk);\n    if (n.type === 'paragraph' || n.type === 'heading') out += '\\n';\n  }\n  walk(adf);\n  return out.trim();\n}\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction issueUrl(key) {\n  return 'https://' + site + '/browse/' + key;\n}\n\nfunction fmtIssueLine(iss) {\n  const f = iss.fields || {};\n  const status = f.status ? f.status.name : '?';\n  const type = f.issuetype ? f.issuetype.name : '?';\n  const assignee = f.assignee ? f.assignee.displayName : 'unassigned';\n  return iss.key + ' [' + status + '] [' + type + '] ' + (f.summary || '') + ' (@' + assignee + ')';\n}\n\n// === list_projects ===\nif (action === 'list_projects') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/project/search?maxResults=50&expand=lead', headers: authHeaders });\n    const items = r.values || [];\n    if (items.length === 0) return [{ json: { result: 'No projects.' } }];\n    let out = 'Projects (' + items.length + (r.total ? ' of ' + r.total : '') + '):\\n';\n    for (const p of items) {\n      out += '  ' + p.key + ' \u2014 ' + p.name + ' (' + (p.projectTypeKey || '?') + ')';\n      if (p.lead && p.lead.displayName) out += ' lead: ' + p.lead.displayName;\n      out += '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_projects failed: ' + err.message } }];\n  }\n\n// === search_issues ===\n} else if (action === 'search_issues') {\n  const jql = input.jql;\n  if (!jql) return [{ json: { error: 'Parameter \"jql\" is required. Examples: \"assignee = currentUser() AND status != Done\", \"project = KAN ORDER BY created DESC\".' } }];\n  const limit = Math.min(parseInt(input.limit) || 20, 100);\n  const fields = input.fields || 'summary,status,assignee,priority,issuetype,created,updated';\n  try {\n    const qs = new URLSearchParams({ jql, maxResults: String(limit), fields });\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/search/jql?' + qs.toString(), headers: authHeaders });\n    const items = r.issues || [];\n    if (items.length === 0) return [{ json: { result: 'No issues matched JQL: ' + jql } }];\n    let out = 'Issues (' + items.length + '):\\n';\n    for (const it of items) out += fmtIssueLine(it) + '\\n';\n    if (r.nextPageToken) out += '\\n(more results available \u2014 refine JQL or increase limit)\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira search_issues failed: ' + msg } }];\n  }\n\n// === get_issue ===\n} else if (action === 'get_issue') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required (e.g. KAN-1).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '?fields=summary,description,status,assignee,reporter,priority,issuetype,labels,created,updated,comment,issuelinks,parent', headers: authHeaders });\n    const f = r.fields || {};\n    let out = '**' + r.key + '** \u2014 ' + (f.summary || '') + '\\n';\n    out += 'Status: ' + (f.status ? f.status.name : '?') + '\\n';\n    out += 'Type: ' + (f.issuetype ? f.issuetype.name : '?') + '\\n';\n    if (f.assignee) out += 'Assignee: ' + f.assignee.displayName + ' (accountId: ' + f.assignee.accountId + ')\\n';\n    else out += 'Assignee: unassigned\\n';\n    if (f.reporter) out += 'Reporter: ' + f.reporter.displayName + '\\n';\n    if (f.priority) out += 'Priority: ' + f.priority.name + '\\n';\n    if (f.labels && f.labels.length) out += 'Labels: ' + f.labels.join(', ') + '\\n';\n    if (f.parent) out += 'Parent: ' + f.parent.key + ' \u2014 ' + (f.parent.fields ? f.parent.fields.summary : '') + '\\n';\n    if (f.created) out += 'Created: ' + f.created.substring(0, 10) + '\\n';\n    if (f.updated) out += 'Updated: ' + f.updated.substring(0, 10) + '\\n';\n    const desc = adfToText(f.description);\n    if (desc) out += '\\nDescription:\\n' + desc + '\\n';\n    if (f.issuelinks && f.issuelinks.length) {\n      out += '\\nLinks:\\n';\n      for (const l of f.issuelinks) {\n        const other = l.outwardIssue || l.inwardIssue;\n        const dir = l.outwardIssue ? l.type.outward : l.type.inward;\n        if (other) out += '  ' + dir + ' ' + other.key + ' \u2014 ' + (other.fields ? other.fields.summary : '') + '\\n';\n      }\n    }\n    if (f.comment && f.comment.comments && f.comment.comments.length) {\n      out += '\\nComments (' + f.comment.comments.length + '):\\n';\n      for (const c of f.comment.comments.slice(0, 5)) {\n        const who = c.author ? c.author.displayName : 'unknown';\n        out += '  ' + who + ' (' + (c.created || '').substring(0, 10) + '): ' + adfToText(c.body).substring(0, 200) + '\\n';\n      }\n      if (f.comment.comments.length > 5) out += '  ... (' + (f.comment.comments.length - 5) + ' more \u2014 use list_comments)\\n';\n    }\n    out += '\\n' + issueUrl(r.key);\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira get_issue failed: ' + err.message } }];\n  }\n\n// === create_issue ===\n} else if (action === 'create_issue') {\n  const project = input.project;\n  const summary = input.summary;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project key, e.g. KAN).' } }];\n  if (!summary) return [{ json: { error: 'Parameter \"summary\" is required.' } }];\n  const issuetype = input.issuetype || 'Task';\n  const fields = { project: { key: project.toUpperCase() }, summary, issuetype: { name: issuetype } };\n  if (input.description) fields.description = textToAdf(input.description);\n  if (input.assignee) fields.assignee = { accountId: input.assignee };\n  if (input.priority) fields.priority = { name: input.priority };\n  if (input.labels) fields.labels = String(input.labels).split(',').map(l => l.trim()).filter(Boolean);\n  if (input.parent) fields.parent = { key: input.parent };\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/issue', headers: jsonHeaders, body: JSON.stringify({ fields }) });\n    return [{ json: { result: 'Issue created: ' + r.key + '\\n' + issueUrl(r.key) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira create_issue failed: ' + msg } }];\n  }\n\n// === update_issue ===\n} else if (action === 'update_issue') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required (e.g. KAN-1).' } }];\n  const fields = {};\n  if (input.summary) fields.summary = input.summary;\n  if (input.description) fields.description = textToAdf(input.description);\n  if (input.assignee !== undefined) fields.assignee = input.assignee ? { accountId: input.assignee } : null;\n  if (input.priority) fields.priority = { name: input.priority };\n  if (input.labels) fields.labels = String(input.labels).split(',').map(l => l.trim()).filter(Boolean);\n  if (Object.keys(fields).length === 0) return [{ json: { error: 'Provide at least one field: summary, description, assignee (accountId), priority, labels.' } }];\n  try {\n    await helpers.httpRequest({ method: 'PUT', url: API + '/issue/' + encodeURIComponent(key), headers: jsonHeaders, body: JSON.stringify({ fields }) });\n    return [{ json: { result: 'Issue ' + key + ' updated.\\n' + issueUrl(key) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira update_issue failed: ' + msg } }];\n  }\n\n// === add_comment ===\n} else if (action === 'add_comment') {\n  const key = input.key;\n  const text = input.text;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/issue/' + encodeURIComponent(key) + '/comment', headers: jsonHeaders, body: JSON.stringify({ body: textToAdf(text) }) });\n    return [{ json: { result: 'Comment added to ' + key + ' (id: ' + r.id + ')' } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira add_comment failed: ' + err.message } }];\n  }\n\n// === list_comments ===\n} else if (action === 'list_comments') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/comment?maxResults=50', headers: authHeaders });\n    const items = r.comments || [];\n    if (items.length === 0) return [{ json: { result: 'No comments on ' + key + '.' } }];\n    let out = 'Comments on ' + key + ' (' + items.length + '):\\n\\n';\n    for (const c of items) {\n      const who = c.author ? c.author.displayName : 'unknown';\n      const when = (c.created || '').substring(0, 10);\n      out += who + ' (' + when + '):\\n  ' + adfToText(c.body) + '\\n\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_comments failed: ' + err.message } }];\n  }\n\n// === transition_issue ===\n} else if (action === 'transition_issue') {\n  const key = input.key;\n  const target = input.transition;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  if (!target) return [{ json: { error: 'Parameter \"transition\" is required (status name or transition id). Use list_transitions to see options.' } }];\n  try {\n    const tList = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: authHeaders });\n    const transitions = tList.transitions || [];\n    let match = transitions.find(t => t.id === String(target));\n    if (!match) {\n      const t = String(target).toLowerCase();\n      match = transitions.find(x => x.name.toLowerCase() === t) || transitions.find(x => x.to && x.to.name.toLowerCase() === t) || transitions.find(x => x.name.toLowerCase().includes(t));\n    }\n    if (!match) {\n      const names = transitions.map(x => x.name).join(', ');\n      return [{ json: { error: 'No transition matching \"' + target + '\". Available: ' + names } }];\n    }\n    await helpers.httpRequest({ method: 'POST', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: jsonHeaders, body: JSON.stringify({ transition: { id: match.id } }) });\n    return [{ json: { result: key + ' transitioned via \"' + match.name + '\" -> ' + match.to.name + '.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira transition_issue failed: ' + err.message } }];\n  }\n\n// === list_transitions ===\n} else if (action === 'list_transitions') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: authHeaders });\n    const items = r.transitions || [];\n    if (items.length === 0) return [{ json: { result: 'No transitions available from current state.' } }];\n    let out = 'Available transitions for ' + key + ':\\n';\n    for (const t of items) out += '  [' + t.id + '] \"' + t.name + '\" \u2014 moves to: ' + t.to.name + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_transitions failed: ' + err.message } }];\n  }\n\n// === list_issue_types ===\n} else if (action === 'list_issue_types') {\n  const project = input.project;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project key, e.g. KAN).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/createmeta/' + encodeURIComponent(project.toUpperCase()) + '/issuetypes', headers: authHeaders });\n    const items = r.issueTypes || r.values || [];\n    if (items.length === 0) return [{ json: { result: 'No issue types for project ' + project + '.' } }];\n    let out = 'Issue types for ' + project.toUpperCase() + ':\\n';\n    for (const t of items) out += '  ' + t.name + (t.subtask ? ' (subtask)' : '') + (t.description ? ' \u2014 ' + t.description : '') + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_issue_types failed: ' + err.message } }];\n  }\n\n// === link_issues ===\n} else if (action === 'link_issues') {\n  const from = input.from;\n  const to = input.to;\n  const type = input.type || 'Relates';\n  if (!from || !to) return [{ json: { error: 'Parameters \"from\" and \"to\" are required (issue keys, e.g. KAN-1 and KAN-2).' } }];\n  try {\n    const body = { type: { name: type }, inwardIssue: { key: to }, outwardIssue: { key: from } };\n    await helpers.httpRequest({ method: 'POST', url: API + '/issueLink', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: from + ' linked to ' + to + ' (type: ' + type + ').' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira link_issues failed: ' + msg + '. Valid types: Blocks, Duplicate, Relates, Cloners.' } }];\n  }\n\n// === list_users ===\n} else if (action === 'list_users') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required (name or email fragment).' } }];\n  const limit = Math.min(parseInt(input.limit) || 10, 50);\n  try {\n    const qs = new URLSearchParams({ query, maxResults: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/user/search?' + qs.toString(), headers: authHeaders });\n    const items = Array.isArray(r) ? r : [];\n    if (items.length === 0) return [{ json: { result: 'No users matched \"' + query + '\".' } }];\n    let out = 'Users (' + items.length + '):\\n';\n    for (const u of items) {\n      out += '  ' + u.displayName + ' (accountId: ' + u.accountId + (u.emailAddress ? ', ' + u.emailAddress : '') + ')\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_users failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_projects, search_issues, get_issue, create_issue, update_issue, add_comment, transition_issue, list_users, list_comments, list_transitions, list_issue_types, link_issues.' } }];\n}\n"
+          "jsCode": "const input = $input.first().json;\nfunction buildQs(obj) { return Object.entries(obj).filter(([k,v]) => v !== undefined && v !== null).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v))).join('&'); }\n\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.jira&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.atlassian_email || !creds.atlassian_api_token || !creds.atlassian_site) {\n  return [{ json: { error: 'Jira credentials not configured. Need atlassian_email, atlassian_api_token, atlassian_site.' } }];\n}\n\nconst site = creds.atlassian_site.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');\nconst API = 'https://' + site + '/rest/api/3';\nconst basic = Buffer.from(creds.atlassian_email + ':' + creds.atlassian_api_token).toString('base64');\nconst authHeaders = { 'Authorization': 'Basic ' + basic, 'Accept': 'application/json' };\nconst jsonHeaders = { ...authHeaders, 'Content-Type': 'application/json' };\n\nfunction textToAdf(text) {\n  if (!text) return null;\n  return { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: String(text) }] }] };\n}\n\nfunction adfToText(adf) {\n  if (!adf) return '';\n  if (typeof adf === 'string') return adf;\n  let out = '';\n  function walk(n) {\n    if (!n) return;\n    if (n.type === 'text' && n.text) out += n.text;\n    if (n.type === 'hardBreak') out += '\\n';\n    if (Array.isArray(n.content)) n.content.forEach(walk);\n    if (n.type === 'paragraph' || n.type === 'heading') out += '\\n';\n  }\n  walk(adf);\n  return out.trim();\n}\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction issueUrl(key) {\n  return 'https://' + site + '/browse/' + key;\n}\n\nfunction fmtIssueLine(iss) {\n  const f = iss.fields || {};\n  const status = f.status ? f.status.name : '?';\n  const type = f.issuetype ? f.issuetype.name : '?';\n  const assignee = f.assignee ? f.assignee.displayName : 'unassigned';\n  return iss.key + ' [' + status + '] [' + type + '] ' + (f.summary || '') + ' (@' + assignee + ')';\n}\n\n// === list_projects ===\nif (action === 'list_projects') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/project/search?maxResults=50&expand=lead', headers: authHeaders });\n    const items = r.values || [];\n    if (items.length === 0) return [{ json: { result: 'No projects.' } }];\n    let out = 'Projects (' + items.length + (r.total ? ' of ' + r.total : '') + '):\\n';\n    for (const p of items) {\n      out += '  ' + p.key + ' — ' + p.name + ' (' + (p.projectTypeKey || '?') + ')';\n      if (p.lead && p.lead.displayName) out += ' lead: ' + p.lead.displayName;\n      out += '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_projects failed: ' + err.message } }];\n  }\n\n// === search_issues ===\n} else if (action === 'search_issues') {\n  const jql = input.jql;\n  if (!jql) return [{ json: { error: 'Parameter \"jql\" is required. Examples: \"assignee = currentUser() AND status != Done\", \"project = KAN ORDER BY created DESC\".' } }];\n  const limit = Math.min(parseInt(input.limit) || 20, 100);\n  const fields = input.fields || 'summary,status,assignee,priority,issuetype,created,updated';\n  try {\n    const qs = buildQs({ jql, maxResults: String(limit), fields });\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/search/jql?' + qs, headers: authHeaders });\n    const items = r.issues || [];\n    if (items.length === 0) return [{ json: { result: 'No issues matched JQL: ' + jql } }];\n    let out = 'Issues (' + items.length + '):\\n';\n    for (const it of items) out += fmtIssueLine(it) + '\\n';\n    if (r.nextPageToken) out += '\\n(more results available — refine JQL or increase limit)\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira search_issues failed: ' + msg } }];\n  }\n\n// === get_issue ===\n} else if (action === 'get_issue') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required (e.g. KAN-1).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '?fields=summary,description,status,assignee,reporter,priority,issuetype,labels,created,updated,comment,issuelinks,parent', headers: authHeaders });\n    const f = r.fields || {};\n    let out = '**' + r.key + '** — ' + (f.summary || '') + '\\n';\n    out += 'Status: ' + (f.status ? f.status.name : '?') + '\\n';\n    out += 'Type: ' + (f.issuetype ? f.issuetype.name : '?') + '\\n';\n    if (f.assignee) out += 'Assignee: ' + f.assignee.displayName + ' (accountId: ' + f.assignee.accountId + ')\\n';\n    else out += 'Assignee: unassigned\\n';\n    if (f.reporter) out += 'Reporter: ' + f.reporter.displayName + '\\n';\n    if (f.priority) out += 'Priority: ' + f.priority.name + '\\n';\n    if (f.labels && f.labels.length) out += 'Labels: ' + f.labels.join(', ') + '\\n';\n    if (f.parent) out += 'Parent: ' + f.parent.key + ' — ' + (f.parent.fields ? f.parent.fields.summary : '') + '\\n';\n    if (f.created) out += 'Created: ' + f.created.substring(0, 10) + '\\n';\n    if (f.updated) out += 'Updated: ' + f.updated.substring(0, 10) + '\\n';\n    const desc = adfToText(f.description);\n    if (desc) out += '\\nDescription:\\n' + desc + '\\n';\n    if (f.issuelinks && f.issuelinks.length) {\n      out += '\\nLinks:\\n';\n      for (const l of f.issuelinks) {\n        const other = l.outwardIssue || l.inwardIssue;\n        const dir = l.outwardIssue ? l.type.outward : l.type.inward;\n        if (other) out += '  ' + dir + ' ' + other.key + ' — ' + (other.fields ? other.fields.summary : '') + '\\n';\n      }\n    }\n    if (f.comment && f.comment.comments && f.comment.comments.length) {\n      out += '\\nComments (' + f.comment.comments.length + '):\\n';\n      for (const c of f.comment.comments.slice(0, 5)) {\n        const who = c.author ? c.author.displayName : 'unknown';\n        out += '  ' + who + ' (' + (c.created || '').substring(0, 10) + '): ' + adfToText(c.body).substring(0, 200) + '\\n';\n      }\n      if (f.comment.comments.length > 5) out += '  ... (' + (f.comment.comments.length - 5) + ' more — use list_comments)\\n';\n    }\n    out += '\\n' + issueUrl(r.key);\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira get_issue failed: ' + err.message } }];\n  }\n\n// === create_issue ===\n} else if (action === 'create_issue') {\n  const project = input.project;\n  const summary = input.summary;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project key, e.g. KAN).' } }];\n  if (!summary) return [{ json: { error: 'Parameter \"summary\" is required.' } }];\n  const issuetype = input.issuetype || 'Task';\n  const fields = { project: { key: project.toUpperCase() }, summary, issuetype: { name: issuetype } };\n  if (input.description) fields.description = textToAdf(input.description);\n  if (input.assignee) fields.assignee = { accountId: input.assignee };\n  if (input.priority) fields.priority = { name: input.priority };\n  if (input.labels) fields.labels = String(input.labels).split(',').map(l => l.trim()).filter(Boolean);\n  if (input.parent) fields.parent = { key: input.parent };\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/issue', headers: jsonHeaders, body: JSON.stringify({ fields }) });\n    return [{ json: { result: 'Issue created: ' + r.key + '\\n' + issueUrl(r.key) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira create_issue failed: ' + msg } }];\n  }\n\n// === update_issue ===\n} else if (action === 'update_issue') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required (e.g. KAN-1).' } }];\n  const fields = {};\n  if (input.summary) fields.summary = input.summary;\n  if (input.description) fields.description = textToAdf(input.description);\n  if (input.assignee !== undefined) fields.assignee = input.assignee ? { accountId: input.assignee } : null;\n  if (input.priority) fields.priority = { name: input.priority };\n  if (input.labels) fields.labels = String(input.labels).split(',').map(l => l.trim()).filter(Boolean);\n  if (Object.keys(fields).length === 0) return [{ json: { error: 'Provide at least one field: summary, description, assignee (accountId), priority, labels.' } }];\n  try {\n    await helpers.httpRequest({ method: 'PUT', url: API + '/issue/' + encodeURIComponent(key), headers: jsonHeaders, body: JSON.stringify({ fields }) });\n    return [{ json: { result: 'Issue ' + key + ' updated.\\n' + issueUrl(key) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira update_issue failed: ' + msg } }];\n  }\n\n// === add_comment ===\n} else if (action === 'add_comment') {\n  const key = input.key;\n  const text = input.text;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: API + '/issue/' + encodeURIComponent(key) + '/comment', headers: jsonHeaders, body: JSON.stringify({ body: textToAdf(text) }) });\n    return [{ json: { result: 'Comment added to ' + key + ' (id: ' + r.id + ')' } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira add_comment failed: ' + err.message } }];\n  }\n\n// === list_comments ===\n} else if (action === 'list_comments') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/comment?maxResults=50', headers: authHeaders });\n    const items = r.comments || [];\n    if (items.length === 0) return [{ json: { result: 'No comments on ' + key + '.' } }];\n    let out = 'Comments on ' + key + ' (' + items.length + '):\\n\\n';\n    for (const c of items) {\n      const who = c.author ? c.author.displayName : 'unknown';\n      const when = (c.created || '').substring(0, 10);\n      out += who + ' (' + when + '):\\n  ' + adfToText(c.body) + '\\n\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_comments failed: ' + err.message } }];\n  }\n\n// === transition_issue ===\n} else if (action === 'transition_issue') {\n  const key = input.key;\n  const target = input.transition;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  if (!target) return [{ json: { error: 'Parameter \"transition\" is required (status name or transition id). Use list_transitions to see options.' } }];\n  try {\n    const tList = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: authHeaders });\n    const transitions = tList.transitions || [];\n    let match = transitions.find(t => t.id === String(target));\n    if (!match) {\n      const t = String(target).toLowerCase();\n      match = transitions.find(x => x.name.toLowerCase() === t) || transitions.find(x => x.to && x.to.name.toLowerCase() === t) || transitions.find(x => x.name.toLowerCase().includes(t));\n    }\n    if (!match) {\n      const names = transitions.map(x => x.name).join(', ');\n      return [{ json: { error: 'No transition matching \"' + target + '\". Available: ' + names } }];\n    }\n    await helpers.httpRequest({ method: 'POST', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: jsonHeaders, body: JSON.stringify({ transition: { id: match.id } }) });\n    return [{ json: { result: key + ' transitioned via \"' + match.name + '\" -> ' + match.to.name + '.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira transition_issue failed: ' + err.message } }];\n  }\n\n// === list_transitions ===\n} else if (action === 'list_transitions') {\n  const key = input.key;\n  if (!key) return [{ json: { error: 'Parameter \"key\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/' + encodeURIComponent(key) + '/transitions', headers: authHeaders });\n    const items = r.transitions || [];\n    if (items.length === 0) return [{ json: { result: 'No transitions available from current state.' } }];\n    let out = 'Available transitions for ' + key + ':\\n';\n    for (const t of items) out += '  [' + t.id + '] \"' + t.name + '\" — moves to: ' + t.to.name + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_transitions failed: ' + err.message } }];\n  }\n\n// === list_issue_types ===\n} else if (action === 'list_issue_types') {\n  const project = input.project;\n  if (!project) return [{ json: { error: 'Parameter \"project\" is required (project key, e.g. KAN).' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/issue/createmeta/' + encodeURIComponent(project.toUpperCase()) + '/issuetypes', headers: authHeaders });\n    const items = r.issueTypes || r.values || [];\n    if (items.length === 0) return [{ json: { result: 'No issue types for project ' + project + '.' } }];\n    let out = 'Issue types for ' + project.toUpperCase() + ':\\n';\n    for (const t of items) out += '  ' + t.name + (t.subtask ? ' (subtask)' : '') + (t.description ? ' — ' + t.description : '') + '\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_issue_types failed: ' + err.message } }];\n  }\n\n// === link_issues ===\n} else if (action === 'link_issues') {\n  const from = input.from;\n  const to = input.to;\n  const type = input.type || 'Relates';\n  if (!from || !to) return [{ json: { error: 'Parameters \"from\" and \"to\" are required (issue keys, e.g. KAN-1 and KAN-2).' } }];\n  try {\n    const body = { type: { name: type }, inwardIssue: { key: to }, outwardIssue: { key: from } };\n    await helpers.httpRequest({ method: 'POST', url: API + '/issueLink', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: from + ' linked to ' + to + ' (type: ' + type + ').' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Jira link_issues failed: ' + msg + '. Valid types: Blocks, Duplicate, Relates, Cloners.' } }];\n  }\n\n// === list_users ===\n} else if (action === 'list_users') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required (name or email fragment).' } }];\n  const limit = Math.min(parseInt(input.limit) || 10, 50);\n  try {\n    const qs = buildQs({ query, maxResults: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: API + '/user/search?' + qs, headers: authHeaders });\n    const items = Array.isArray(r) ? r : [];\n    if (items.length === 0) return [{ json: { result: 'No users matched \"' + query + '\".' } }];\n    let out = 'Users (' + items.length + '):\\n';\n    for (const u of items) {\n      out += '  ' + u.displayName + ' (accountId: ' + u.accountId + (u.emailAddress ? ', ' + u.emailAddress : '') + ')\\n';\n    }\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Jira list_users failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_projects, search_issues, get_issue, create_issue, update_issue, add_comment, transition_issue, list_users, list_comments, list_transitions, list_issue_types, link_issues.' } }];\n}\n"
         }
       }
     ],
     "connections": {
       "Execute Workflow Trigger": {
-        "main": [[{ "node": "Jira Logic", "type": "main", "index": 0 }]]
+        "main": [
+          [
+            {
+              "node": "Jira Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   },
@@ -46,7 +60,10 @@
         "name": "MCP Server Trigger",
         "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
         "typeVersion": 2,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "path": "jira"
         }
@@ -56,17 +73,32 @@
         "name": "list_projects",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 300],
+        "position": [
+          0,
+          300
+        ],
         "parameters": {
           "name": "list_projects",
           "description": "List all Jira projects accessible with the token. No parameters. Use this first to find a project key before other operations.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
-            "value": { "action": "list_projects" },
+            "value": {
+              "action": "list_projects"
+            },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -78,11 +110,18 @@
         "name": "search_issues",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 300],
+        "position": [
+          250,
+          300
+        ],
         "parameters": {
           "name": "search_issues",
           "description": "Search issues with JQL. Examples: 'assignee = currentUser() AND status != Done', 'project = KAN ORDER BY created DESC', 'text ~ \\\"login bug\\\"'. Parameters: jql (required), limit (optional default 20), fields (optional comma list).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -93,10 +132,34 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "jql", "displayName": "jql", "type": "string", "description": "JQL query", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Result limit", "required": false },
-              { "id": "fields", "displayName": "fields", "type": "string", "description": "Fields", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "jql",
+                "displayName": "jql",
+                "type": "string",
+                "description": "JQL query",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Result limit",
+                "required": false
+              },
+              {
+                "id": "fields",
+                "displayName": "fields",
+                "type": "string",
+                "description": "Fields",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -108,11 +171,18 @@
         "name": "get_issue",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 300],
+        "position": [
+          500,
+          300
+        ],
         "parameters": {
           "name": "get_issue",
           "description": "Get full issue detail by key (e.g. KAN-1). Returns summary, status, type, assignee, description, labels, links, recent comments. Parameters: key (required).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -121,8 +191,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -134,11 +216,18 @@
         "name": "create_issue",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 300],
+        "position": [
+          750,
+          300
+        ],
         "parameters": {
           "name": "create_issue",
           "description": "Create a new issue. Parameters: project (required, key like KAN), summary (required), issuetype (optional, default Task - use list_issue_types to see valid types), description, assignee (accountId from list_users), priority (e.g. Highest, High, Medium, Low), labels (comma-separated), parent (for subtasks, parent issue key).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -154,15 +243,69 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "project", "displayName": "project", "type": "string", "description": "Project key", "required": true },
-              { "id": "summary", "displayName": "summary", "type": "string", "description": "Summary", "required": true },
-              { "id": "issuetype", "displayName": "issuetype", "type": "string", "description": "Issue type", "required": false },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Description", "required": false },
-              { "id": "assignee", "displayName": "assignee", "type": "string", "description": "Assignee accountId", "required": false },
-              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority", "required": false },
-              { "id": "labels", "displayName": "labels", "type": "string", "description": "Labels", "required": false },
-              { "id": "parent", "displayName": "parent", "type": "string", "description": "Parent key", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "project",
+                "displayName": "project",
+                "type": "string",
+                "description": "Project key",
+                "required": true
+              },
+              {
+                "id": "summary",
+                "displayName": "summary",
+                "type": "string",
+                "description": "Summary",
+                "required": true
+              },
+              {
+                "id": "issuetype",
+                "displayName": "issuetype",
+                "type": "string",
+                "description": "Issue type",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "assignee",
+                "displayName": "assignee",
+                "type": "string",
+                "description": "Assignee accountId",
+                "required": false
+              },
+              {
+                "id": "priority",
+                "displayName": "priority",
+                "type": "string",
+                "description": "Priority",
+                "required": false
+              },
+              {
+                "id": "labels",
+                "displayName": "labels",
+                "type": "string",
+                "description": "Labels",
+                "required": false
+              },
+              {
+                "id": "parent",
+                "displayName": "parent",
+                "type": "string",
+                "description": "Parent key",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -174,11 +317,18 @@
         "name": "update_issue",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [1000, 300],
+        "position": [
+          1000,
+          300
+        ],
         "parameters": {
           "name": "update_issue",
           "description": "Update issue fields. Parameters: key (required), plus at least one of: summary, description, assignee (accountId; pass empty string to unassign), priority, labels (comma-separated). To change status use transition_issue instead.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -192,13 +342,55 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true },
-              { "id": "summary", "displayName": "summary", "type": "string", "description": "Summary", "required": false },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Description", "required": false },
-              { "id": "assignee", "displayName": "assignee", "type": "string", "description": "Assignee", "required": false },
-              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority", "required": false },
-              { "id": "labels", "displayName": "labels", "type": "string", "description": "Labels", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              },
+              {
+                "id": "summary",
+                "displayName": "summary",
+                "type": "string",
+                "description": "Summary",
+                "required": false
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "assignee",
+                "displayName": "assignee",
+                "type": "string",
+                "description": "Assignee",
+                "required": false
+              },
+              {
+                "id": "priority",
+                "displayName": "priority",
+                "type": "string",
+                "description": "Priority",
+                "required": false
+              },
+              {
+                "id": "labels",
+                "displayName": "labels",
+                "type": "string",
+                "description": "Labels",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -210,11 +402,18 @@
         "name": "add_comment",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 600],
+        "position": [
+          0,
+          600
+        ],
         "parameters": {
           "name": "add_comment",
           "description": "Add a comment to an issue. Parameters: key (required), text (required, plain text).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -224,9 +423,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true },
-              { "id": "text", "displayName": "text", "type": "string", "description": "Comment text", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              },
+              {
+                "id": "text",
+                "displayName": "text",
+                "type": "string",
+                "description": "Comment text",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -238,11 +455,18 @@
         "name": "list_comments",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 600],
+        "position": [
+          250,
+          600
+        ],
         "parameters": {
           "name": "list_comments",
           "description": "List all comments on an issue. Parameters: key (required).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -251,8 +475,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -264,11 +500,18 @@
         "name": "transition_issue",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 600],
+        "position": [
+          500,
+          600
+        ],
         "parameters": {
           "name": "transition_issue",
           "description": "Change issue status. Parameters: key (required), transition (required, status name like 'Done', 'In Progress' or transition id). Status names are localized per workspace - use list_transitions first if unsure.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -278,9 +521,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true },
-              { "id": "transition", "displayName": "transition", "type": "string", "description": "Target transition", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              },
+              {
+                "id": "transition",
+                "displayName": "transition",
+                "type": "string",
+                "description": "Target transition",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -292,11 +553,18 @@
         "name": "list_transitions",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 600],
+        "position": [
+          750,
+          600
+        ],
         "parameters": {
           "name": "list_transitions",
           "description": "List available status transitions for an issue from its current state. Parameters: key (required).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -305,8 +573,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "key", "displayName": "key", "type": "string", "description": "Issue key", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "key",
+                "displayName": "key",
+                "type": "string",
+                "description": "Issue key",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -318,11 +598,18 @@
         "name": "list_issue_types",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [1000, 600],
+        "position": [
+          1000,
+          600
+        ],
         "parameters": {
           "name": "list_issue_types",
           "description": "List valid issue types for a project. Parameters: project (required, project key).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -331,8 +618,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "project", "displayName": "project", "type": "string", "description": "Project key", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "project",
+                "displayName": "project",
+                "type": "string",
+                "description": "Project key",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -344,11 +643,18 @@
         "name": "link_issues",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 900],
+        "position": [
+          0,
+          900
+        ],
         "parameters": {
           "name": "link_issues",
           "description": "Create a relationship between two issues. Parameters: from (required, issue key), to (required, issue key), type (optional, default 'Relates'; also 'Blocks', 'Duplicate', 'Cloners'). Example: from=KAN-1 to=KAN-2 type=Blocks means KAN-1 blocks KAN-2.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -359,10 +665,34 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "from", "displayName": "from", "type": "string", "description": "Source issue key", "required": true },
-              { "id": "to", "displayName": "to", "type": "string", "description": "Target issue key", "required": true },
-              { "id": "type", "displayName": "type", "type": "string", "description": "Link type", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "from",
+                "displayName": "from",
+                "type": "string",
+                "description": "Source issue key",
+                "required": true
+              },
+              {
+                "id": "to",
+                "displayName": "to",
+                "type": "string",
+                "description": "Target issue key",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "Link type",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -374,11 +704,18 @@
         "name": "list_users",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 900],
+        "position": [
+          250,
+          900
+        ],
         "parameters": {
           "name": "list_users",
           "description": "Search Atlassian users by name or email. Use before assignee fields to find accountId. Parameters: query (required, name/email fragment), limit (optional, default 10).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -388,9 +725,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action", "required": true },
-              { "id": "query", "displayName": "query", "type": "string", "description": "Search query", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Result limit", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search query",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Result limit",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -399,18 +754,138 @@
       }
     ],
     "connections": {
-      "list_projects": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "search_issues": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_issue": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_issue": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "update_issue": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "add_comment": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_comments": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "transition_issue": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_transitions": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_issue_types": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "link_issues": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_users": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+      "list_projects": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_issues": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_issue": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_issue": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_issue": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "add_comment": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_comments": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "transition_issue": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_transitions": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_issue_types": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "link_issues": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_users": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
     }
   }
 }

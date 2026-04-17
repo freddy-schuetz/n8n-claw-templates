@@ -1,7 +1,7 @@
 {
   "id": "jira",
   "name": "Jira Cloud",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "updated": "2026-04-17",
   "type": "native",
   "category": "productivity",
@@ -17,7 +17,7 @@
       "key": "atlassian_api_token",
       "label": "Atlassian API Token",
       "shared_id": "atlassian-api-token",
-      "hint": "Create at id.atlassian.com/manage-profile/security/api-tokens. NOTE: Atlassian enforces token expiry (1-365 days) \u2014 you will need to rotate it manually."
+      "hint": "Create at id.atlassian.com/manage-profile/security/api-tokens. NOTE: Atlassian enforces token expiry (1-365 days) — you will need to rotate it manually."
     },
     {
       "key": "atlassian_site",
