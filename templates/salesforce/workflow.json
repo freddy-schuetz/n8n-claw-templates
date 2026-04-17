@@ -1,0 +1,3239 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Salesforce CRM",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Salesforce Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.salesforce&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.salesforce_instance_url || !creds.salesforce_consumer_key || !creds.salesforce_consumer_secret) {\n  return [{ json: { error: 'Salesforce credentials missing. Need: salesforce_instance_url, salesforce_consumer_key, salesforce_consumer_secret. Create a \"Externe Client-Anwendung\" in Setup, enable OAuth with scope \"api\", enable Client Credentials Flow with a Run-As user, then copy Consumer Key + Secret.' } }];\n}\n\nconst INSTANCE = String(creds.salesforce_instance_url).replace(/\\/+$/, '');\nconst API_VERSION = 'v60.0';\nconst API = INSTANCE + '/services/data/' + API_VERSION;\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction errMsg(err) {\n  if (err.response && err.response.body) {\n    const b = err.response.body;\n    if (typeof b === 'string') return b;\n    if (Array.isArray(b) && b[0]) {\n      const e = b[0];\n      return (e.errorCode ? e.errorCode + ': ' : '') + (e.message || JSON.stringify(e));\n    }\n    if (b.error_description) return b.error || b.error_description;\n    if (b.message) return b.message;\n    return JSON.stringify(b);\n  }\n  if (err.message) return err.message;\n  return String(err);\n}\n\n// --- Auth: fetch access token via Client Credentials Flow ---\nlet accessToken;\ntry {\n  const tokenResp = await helpers.httpRequest({\n    method: 'POST',\n    url: INSTANCE + '/services/oauth2/token',\n    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n    body: 'grant_type=client_credentials&client_id=' + encodeURIComponent(creds.salesforce_consumer_key) + '&client_secret=' + encodeURIComponent(creds.salesforce_consumer_secret),\n    json: true\n  });\n  accessToken = tokenResp.access_token;\n  if (!accessToken) return [{ json: { error: 'Salesforce auth failed: no access_token in response: ' + JSON.stringify(tokenResp) } }];\n} catch (err) {\n  return [{ json: { error: 'Salesforce auth failed: ' + errMsg(err) + '. Check instance URL, Consumer Key/Secret, and that \"Flow for Client Credentials\" is enabled with a valid Run-As user in the External Client App.' } }];\n}\n\nconst authHeaders = { 'Authorization': 'Bearer ' + accessToken };\nconst jsonHeaders = Object.assign({}, authHeaders, { 'Content-Type': 'application/json' });\n\nasync function sfGet(path) {\n  return await helpers.httpRequest({ method: 'GET', url: API + path, headers: authHeaders, json: true });\n}\nasync function sfPost(path, body) {\n  return await helpers.httpRequest({ method: 'POST', url: API + path, headers: jsonHeaders, body: body, json: true });\n}\nasync function sfPatch(path, body) {\n  // Salesforce PATCH returns 204 No Content — don't try to parse JSON\n  return await helpers.httpRequest({ method: 'PATCH', url: API + path, headers: jsonHeaders, body: body, json: true, returnFullResponse: false });\n}\nasync function sfDelete(path) {\n  return await helpers.httpRequest({ method: 'DELETE', url: API + path, headers: authHeaders });\n}\nasync function sfSoql(query) {\n  return await helpers.httpRequest({\n    method: 'GET',\n    url: API + '/query?q=' + encodeURIComponent(query),\n    headers: authHeaders,\n    json: true\n  });\n}\nasync function sfSosl(query) {\n  return await helpers.httpRequest({\n    method: 'GET',\n    url: API + '/search?q=' + encodeURIComponent(query),\n    headers: authHeaders,\n    json: true\n  });\n}\n\nfunction mergeCustomFields(props, raw) {\n  if (!raw) return props;\n  let obj;\n  try { obj = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return props; }\n  if (obj && typeof obj === 'object') Object.assign(props, obj);\n  return props;\n}\n\nfunction buildProps(input, allowed) {\n  const props = {};\n  for (const f of allowed) if (input[f] !== undefined && input[f] !== '' && input[f] !== null) props[f] = input[f];\n  mergeCustomFields(props, input.custom_fields);\n  return props;\n}\n\nfunction normOp(op) {\n  const o = String(op || '=').toUpperCase();\n  if (['=', '!=', '<', '>', '<=', '>=', 'LIKE'].indexOf(o) >= 0) return o;\n  return '=';\n}\n\nfunction soqlEscape(s) {\n  return String(s).replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\n}\n\nfunction ymd(s) { return s ? String(s).substring(0, 10) : ''; }\n\n// === CONTACTS ===\nif (action === 'list_contacts') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  try {\n    const r = await sfSoql('SELECT Id, Name, Email, Phone, Title, Account.Name FROM Contact ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No contacts.' } }];\n    let out = 'Contacts (' + items.length + '):\\n';\n    for (const c of items) {\n      out += '  ' + c.Id + ' - ' + (c.Name || '(no name)') + (c.Email ? ' <' + c.Email + '>' : '') + (c.Account && c.Account.Name ? ' @ ' + c.Account.Name : '') + (c.Title ? ' [' + c.Title + ']' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_contacts: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_contacts') {\n  const value = input.value;\n  if (!value) return [{ json: { error: 'Parameter \"value\" is required. Default search on Name. Override via \"field\" (e.g. Email, Phone, Title) and \"operator\" (=, LIKE, !=). Use % wildcards with LIKE (e.g. value=%edge%).' } }];\n  const field = input.field || 'Name';\n  const op = normOp(input.operator);\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const soql = 'SELECT Id, Name, Email, Phone, Title, Account.Name FROM Contact WHERE ' + field + ' ' + op + \" '\" + soqlEscape(value) + \"' ORDER BY LastModifiedDate DESC LIMIT \" + limit;\n  try {\n    const r = await sfSoql(soql);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + field + ' ' + op + ' \"' + value + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const c of items) {\n      out += '  ' + c.Id + ' - ' + (c.Name || '(no name)') + (c.Email ? ' <' + c.Email + '>' : '') + (c.Account && c.Account.Name ? ' @ ' + c.Account.Name : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce search_contacts: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_contact') {\n  const id = input.contact_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"contact_id\" is required.' } }];\n  try {\n    const c = await sfGet('/sobjects/Contact/' + encodeURIComponent(id));\n    let out = 'Contact ' + c.Id + ' - ' + (c.Name || '(no name)') + '\\n';\n    if (c.Email) out += 'Email: ' + c.Email + '\\n';\n    if (c.Phone) out += 'Phone: ' + c.Phone + '\\n';\n    if (c.Title) out += 'Title: ' + c.Title + '\\n';\n    if (c.AccountId) out += 'Account: ' + c.AccountId + '\\n';\n    if (c.MailingCity || c.MailingCountry) out += 'Mailing: ' + [c.MailingCity, c.MailingCountry].filter(Boolean).join(', ') + '\\n';\n    if (c.Department) out += 'Department: ' + c.Department + '\\n';\n    if (c.CreatedDate) out += 'Created: ' + ymd(c.CreatedDate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce get_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_contact') {\n  if (!input.LastName && !input.lastname) return [{ json: { error: 'Parameter \"LastName\" is required (Salesforce mandatory field).' } }];\n  const aliased = Object.assign({}, input);\n  if (input.lastname && !input.LastName) aliased.LastName = input.lastname;\n  if (input.firstname && !input.FirstName) aliased.FirstName = input.firstname;\n  if (input.email && !input.Email) aliased.Email = input.email;\n  if (input.phone && !input.Phone) aliased.Phone = input.phone;\n  const props = buildProps(aliased, ['FirstName', 'LastName', 'Email', 'Phone', 'Title', 'AccountId', 'MailingCity', 'MailingCountry', 'MailingState', 'MailingStreet', 'MailingPostalCode', 'Department', 'Description']);\n  try {\n    const r = await sfPost('/sobjects/Contact', props);\n    return [{ json: { result: 'Contact created: ' + r.id + ' - ' + (props.FirstName ? props.FirstName + ' ' : '') + props.LastName } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_contact') {\n  const id = input.contact_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"contact_id\" is required.' } }];\n  const props = buildProps(input, ['FirstName', 'LastName', 'Email', 'Phone', 'Title', 'AccountId', 'MailingCity', 'MailingCountry', 'MailingState', 'MailingStreet', 'MailingPostalCode', 'Department', 'Description']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field (FirstName, LastName, Email, Phone, Title, AccountId, MailingCity, MailingCountry, ...) or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Contact/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Contact ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_contact: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_contact') {\n  const id = input.contact_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"contact_id\" is required.' } }];\n  try {\n    await sfDelete('/sobjects/Contact/' + encodeURIComponent(id));\n    return [{ json: { result: 'Contact ' + id + ' deleted (moved to Recycle Bin, restorable for 15 days).' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce delete_contact: ' + errMsg(err) } }]; }\n\n// === ACCOUNTS ===\n} else if (action === 'list_accounts') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  try {\n    const r = await sfSoql('SELECT Id, Name, Industry, Phone, Website, BillingCity, BillingCountry FROM Account ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No accounts.' } }];\n    let out = 'Accounts (' + items.length + '):\\n';\n    for (const a of items) {\n      out += '  ' + a.Id + ' - ' + (a.Name || '(no name)') + (a.Industry ? ' [' + a.Industry + ']' : '') + (a.BillingCountry ? ' ' + a.BillingCountry : '') + (a.Website ? ' ' + a.Website : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_accounts: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_accounts') {\n  const value = input.value;\n  if (!value) return [{ json: { error: 'Parameter \"value\" is required. Default search on Name. Override via \"field\" and \"operator\".' } }];\n  const field = input.field || 'Name';\n  const op = normOp(input.operator);\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const soql = 'SELECT Id, Name, Industry, Phone, Website, BillingCountry FROM Account WHERE ' + field + ' ' + op + \" '\" + soqlEscape(value) + \"' ORDER BY LastModifiedDate DESC LIMIT \" + limit;\n  try {\n    const r = await sfSoql(soql);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + field + ' ' + op + ' \"' + value + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const a of items) {\n      out += '  ' + a.Id + ' - ' + (a.Name || '(no name)') + (a.Industry ? ' [' + a.Industry + ']' : '') + (a.BillingCountry ? ' ' + a.BillingCountry : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce search_accounts: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_account') {\n  const id = input.account_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"account_id\" is required.' } }];\n  try {\n    const a = await sfGet('/sobjects/Account/' + encodeURIComponent(id));\n    let out = 'Account ' + a.Id + ' - ' + (a.Name || '(no name)') + '\\n';\n    if (a.Industry) out += 'Industry: ' + a.Industry + '\\n';\n    if (a.Phone) out += 'Phone: ' + a.Phone + '\\n';\n    if (a.Website) out += 'Website: ' + a.Website + '\\n';\n    const loc = [a.BillingCity, a.BillingState, a.BillingCountry].filter(Boolean).join(', ');\n    if (loc) out += 'Billing: ' + loc + '\\n';\n    if (a.NumberOfEmployees) out += 'Employees: ' + a.NumberOfEmployees + '\\n';\n    if (a.AnnualRevenue) out += 'Revenue: ' + a.AnnualRevenue + '\\n';\n    if (a.Type) out += 'Type: ' + a.Type + '\\n';\n    if (a.Description) out += 'Description: ' + String(a.Description).substring(0, 300) + '\\n';\n    if (a.CreatedDate) out += 'Created: ' + ymd(a.CreatedDate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce get_account: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_account') {\n  if (!input.Name && !input.name) return [{ json: { error: 'Parameter \"Name\" is required.' } }];\n  const aliased = Object.assign({}, input);\n  if (input.name && !input.Name) aliased.Name = input.name;\n  const props = buildProps(aliased, ['Name', 'Phone', 'Website', 'Industry', 'BillingCity', 'BillingState', 'BillingCountry', 'BillingStreet', 'BillingPostalCode', 'Description', 'NumberOfEmployees', 'AnnualRevenue', 'Type']);\n  try {\n    const r = await sfPost('/sobjects/Account', props);\n    return [{ json: { result: 'Account created: ' + r.id + ' - ' + props.Name } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_account: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_account') {\n  const id = input.account_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"account_id\" is required.' } }];\n  const props = buildProps(input, ['Name', 'Phone', 'Website', 'Industry', 'BillingCity', 'BillingState', 'BillingCountry', 'BillingStreet', 'BillingPostalCode', 'Description', 'NumberOfEmployees', 'AnnualRevenue', 'Type']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Account/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Account ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_account: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_account') {\n  const id = input.account_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"account_id\" is required.' } }];\n  try {\n    await sfDelete('/sobjects/Account/' + encodeURIComponent(id));\n    return [{ json: { result: 'Account ' + id + ' deleted (moved to Recycle Bin).' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce delete_account: ' + errMsg(err) } }]; }\n\n// === LEADS ===\n} else if (action === 'list_leads') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const includeConverted = String(input.include_converted || '').toLowerCase() === 'true';\n  const where = includeConverted ? '' : ' WHERE IsConverted = false';\n  try {\n    const r = await sfSoql('SELECT Id, Name, Company, Email, Phone, Status, LeadSource, IsConverted FROM Lead' + where + ' ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No leads.' } }];\n    let out = 'Leads (' + items.length + '):\\n';\n    for (const l of items) {\n      out += '  ' + l.Id + ' - ' + (l.Name || '(no name)') + (l.Company ? ' @ ' + l.Company : '') + (l.Status ? ' [' + l.Status + ']' : '') + (l.Email ? ' <' + l.Email + '>' : '') + (l.IsConverted ? ' (converted)' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_leads: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_leads') {\n  const value = input.value;\n  if (!value) return [{ json: { error: 'Parameter \"value\" is required. Common fields: Name, Company, Email, Status, LeadSource, Rating.' } }];\n  const field = input.field || 'Name';\n  const op = normOp(input.operator);\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const soql = 'SELECT Id, Name, Company, Email, Phone, Status, LeadSource, Rating, IsConverted FROM Lead WHERE ' + field + ' ' + op + \" '\" + soqlEscape(value) + \"' ORDER BY LastModifiedDate DESC LIMIT \" + limit;\n  try {\n    const r = await sfSoql(soql);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + field + ' ' + op + ' \"' + value + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const l of items) {\n      out += '  ' + l.Id + ' - ' + (l.Name || '(no name)') + (l.Company ? ' @ ' + l.Company : '') + (l.Status ? ' [' + l.Status + ']' : '') + (l.Email ? ' <' + l.Email + '>' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce search_leads: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_lead') {\n  const id = input.lead_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"lead_id\" is required.' } }];\n  try {\n    const l = await sfGet('/sobjects/Lead/' + encodeURIComponent(id));\n    let out = 'Lead ' + l.Id + ' - ' + (l.Name || '(no name)') + '\\n';\n    if (l.Company) out += 'Company: ' + l.Company + '\\n';\n    if (l.Email) out += 'Email: ' + l.Email + '\\n';\n    if (l.Phone) out += 'Phone: ' + l.Phone + '\\n';\n    if (l.Title) out += 'Title: ' + l.Title + '\\n';\n    if (l.Status) out += 'Status: ' + l.Status + '\\n';\n    if (l.LeadSource) out += 'Source: ' + l.LeadSource + '\\n';\n    if (l.Rating) out += 'Rating: ' + l.Rating + '\\n';\n    if (l.Industry) out += 'Industry: ' + l.Industry + '\\n';\n    if (typeof l.IsConverted !== 'undefined') out += 'Converted: ' + (l.IsConverted ? 'yes' : 'no') + '\\n';\n    if (l.CreatedDate) out += 'Created: ' + ymd(l.CreatedDate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce get_lead: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_lead') {\n  const aliased = Object.assign({}, input);\n  if (input.lastname && !input.LastName) aliased.LastName = input.lastname;\n  if (input.firstname && !input.FirstName) aliased.FirstName = input.firstname;\n  if (input.company && !input.Company) aliased.Company = input.company;\n  if (input.email && !input.Email) aliased.Email = input.email;\n  if (!aliased.LastName) return [{ json: { error: 'Parameter \"LastName\" is required.' } }];\n  if (!aliased.Company) return [{ json: { error: 'Parameter \"Company\" is required for Lead.' } }];\n  const props = buildProps(aliased, ['FirstName', 'LastName', 'Company', 'Email', 'Phone', 'Title', 'Status', 'LeadSource', 'Rating', 'Industry', 'Street', 'City', 'State', 'Country', 'PostalCode', 'Description', 'NumberOfEmployees', 'AnnualRevenue']);\n  try {\n    const r = await sfPost('/sobjects/Lead', props);\n    return [{ json: { result: 'Lead created: ' + r.id + ' - ' + (props.FirstName ? props.FirstName + ' ' : '') + props.LastName + ' @ ' + props.Company } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_lead: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_lead') {\n  const id = input.lead_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"lead_id\" is required.' } }];\n  const props = buildProps(input, ['FirstName', 'LastName', 'Company', 'Email', 'Phone', 'Title', 'Status', 'LeadSource', 'Rating', 'Industry', 'Street', 'City', 'State', 'Country', 'PostalCode', 'Description']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Lead/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Lead ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_lead: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_lead') {\n  const id = input.lead_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"lead_id\" is required.' } }];\n  try {\n    await sfDelete('/sobjects/Lead/' + encodeURIComponent(id));\n    return [{ json: { result: 'Lead ' + id + ' deleted (moved to Recycle Bin).' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce delete_lead: ' + errMsg(err) } }]; }\n\n// === OPPORTUNITIES ===\n} else if (action === 'list_opportunities') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const openOnly = String(input.open_only || '').toLowerCase() === 'true';\n  const where = openOnly ? \" WHERE IsClosed = false\" : '';\n  try {\n    const r = await sfSoql('SELECT Id, Name, StageName, Amount, CloseDate, Probability, Account.Name FROM Opportunity' + where + ' ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No opportunities.' } }];\n    let out = 'Opportunities (' + items.length + '):\\n';\n    for (const o of items) {\n      out += '  ' + o.Id + ' - ' + (o.Name || '(no name)') + (o.Amount ? ' ' + o.Amount : '') + (o.StageName ? ' [' + o.StageName + ']' : '') + (o.CloseDate ? ' close: ' + ymd(o.CloseDate) : '') + (o.Account && o.Account.Name ? ' @ ' + o.Account.Name : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_opportunities: ' + errMsg(err) } }]; }\n\n} else if (action === 'search_opportunities') {\n  const value = input.value;\n  if (!value) return [{ json: { error: 'Parameter \"value\" is required. Common fields: Name, StageName, Amount, CloseDate, OwnerId.' } }];\n  const field = input.field || 'Name';\n  const op = normOp(input.operator);\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  // Numeric fields like Amount shouldn't be wrapped in quotes\n  const isNumeric = ['Amount', 'Probability', 'ExpectedRevenue', 'NumberOfEmployees'].indexOf(field) >= 0;\n  const quoted = isNumeric ? String(value) : \"'\" + soqlEscape(value) + \"'\";\n  const soql = 'SELECT Id, Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity WHERE ' + field + ' ' + op + ' ' + quoted + ' ORDER BY LastModifiedDate DESC LIMIT ' + limit;\n  try {\n    const r = await sfSoql(soql);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No matches for ' + field + ' ' + op + ' \"' + value + '\".' } }];\n    let out = 'Matches (' + items.length + '):\\n';\n    for (const o of items) {\n      out += '  ' + o.Id + ' - ' + (o.Name || '(no name)') + (o.Amount ? ' ' + o.Amount : '') + (o.StageName ? ' [' + o.StageName + ']' : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce search_opportunities: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_opportunity') {\n  const id = input.opportunity_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"opportunity_id\" is required.' } }];\n  try {\n    const o = await sfGet('/sobjects/Opportunity/' + encodeURIComponent(id));\n    let out = 'Opportunity ' + o.Id + ' - ' + (o.Name || '(no name)') + '\\n';\n    if (o.Amount) out += 'Amount: ' + o.Amount + '\\n';\n    if (o.StageName) out += 'Stage: ' + o.StageName + '\\n';\n    if (typeof o.Probability !== 'undefined' && o.Probability !== null) out += 'Probability: ' + o.Probability + '%\\n';\n    if (o.CloseDate) out += 'Close date: ' + ymd(o.CloseDate) + '\\n';\n    if (o.AccountId) out += 'Account: ' + o.AccountId + '\\n';\n    if (o.OwnerId) out += 'Owner: ' + o.OwnerId + '\\n';\n    if (o.Type) out += 'Type: ' + o.Type + '\\n';\n    if (o.LeadSource) out += 'Source: ' + o.LeadSource + '\\n';\n    if (typeof o.IsClosed !== 'undefined') out += 'Closed: ' + (o.IsClosed ? 'yes' : 'no') + (o.IsWon ? ' (won)' : '') + '\\n';\n    if (o.Description) out += 'Description: ' + String(o.Description).substring(0, 300) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce get_opportunity: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_opportunity') {\n  const aliased = Object.assign({}, input);\n  if (input.name && !input.Name) aliased.Name = input.name;\n  if (input.stagename && !input.StageName) aliased.StageName = input.stagename;\n  if (input.closedate && !input.CloseDate) aliased.CloseDate = input.closedate;\n  if (input.amount && !input.Amount) aliased.Amount = input.amount;\n  if (!aliased.Name) return [{ json: { error: 'Parameter \"Name\" is required.' } }];\n  if (!aliased.StageName) return [{ json: { error: 'Parameter \"StageName\" is required (use describe_object Opportunity -> StageName picklist for valid values).' } }];\n  if (!aliased.CloseDate) return [{ json: { error: 'Parameter \"CloseDate\" (YYYY-MM-DD) is required.' } }];\n  const props = buildProps(aliased, ['Name', 'StageName', 'CloseDate', 'Amount', 'AccountId', 'Probability', 'Type', 'LeadSource', 'Description', 'OwnerId', 'NextStep']);\n  try {\n    const r = await sfPost('/sobjects/Opportunity', props);\n    return [{ json: { result: 'Opportunity created: ' + r.id + ' - ' + props.Name + ' [' + props.StageName + ']' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_opportunity: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_opportunity') {\n  const id = input.opportunity_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"opportunity_id\" is required.' } }];\n  const props = buildProps(input, ['Name', 'StageName', 'CloseDate', 'Amount', 'AccountId', 'Probability', 'Type', 'LeadSource', 'Description', 'OwnerId', 'NextStep']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Opportunity/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Opportunity ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_opportunity: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_opportunity') {\n  const id = input.opportunity_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"opportunity_id\" is required.' } }];\n  try {\n    await sfDelete('/sobjects/Opportunity/' + encodeURIComponent(id));\n    return [{ json: { result: 'Opportunity ' + id + ' deleted (moved to Recycle Bin).' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce delete_opportunity: ' + errMsg(err) } }]; }\n\n// === CASES ===\n} else if (action === 'list_cases') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const openOnly = String(input.open_only || '').toLowerCase() === 'true';\n  const where = openOnly ? \" WHERE IsClosed = false\" : '';\n  try {\n    const r = await sfSoql('SELECT Id, CaseNumber, Subject, Status, Priority, Origin, Account.Name FROM Case' + where + ' ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No cases.' } }];\n    let out = 'Cases (' + items.length + '):\\n';\n    for (const c of items) {\n      out += '  ' + c.Id + ' #' + (c.CaseNumber || '') + ' - ' + (c.Subject || '(no subject)') + (c.Status ? ' [' + c.Status + ']' : '') + (c.Priority ? ' ' + c.Priority : '') + (c.Account && c.Account.Name ? ' @ ' + c.Account.Name : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_cases: ' + errMsg(err) } }]; }\n\n} else if (action === 'get_case') {\n  const id = input.case_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"case_id\" is required.' } }];\n  try {\n    const c = await sfGet('/sobjects/Case/' + encodeURIComponent(id));\n    let out = 'Case ' + c.Id + ' #' + (c.CaseNumber || '') + '\\n';\n    if (c.Subject) out += 'Subject: ' + c.Subject + '\\n';\n    if (c.Status) out += 'Status: ' + c.Status + '\\n';\n    if (c.Priority) out += 'Priority: ' + c.Priority + '\\n';\n    if (c.Origin) out += 'Origin: ' + c.Origin + '\\n';\n    if (c.Type) out += 'Type: ' + c.Type + '\\n';\n    if (c.Reason) out += 'Reason: ' + c.Reason + '\\n';\n    if (c.ContactId) out += 'Contact: ' + c.ContactId + '\\n';\n    if (c.AccountId) out += 'Account: ' + c.AccountId + '\\n';\n    if (c.OwnerId) out += 'Owner: ' + c.OwnerId + '\\n';\n    if (c.Description) out += 'Description: ' + String(c.Description).substring(0, 500) + '\\n';\n    if (c.CreatedDate) out += 'Created: ' + ymd(c.CreatedDate) + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce get_case: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_case') {\n  if (!input.Subject && !input.subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  const aliased = Object.assign({}, input);\n  if (input.subject && !input.Subject) aliased.Subject = input.subject;\n  if (input.description && !input.Description) aliased.Description = input.description;\n  const props = buildProps(aliased, ['Subject', 'Description', 'Status', 'Priority', 'Origin', 'Type', 'Reason', 'ContactId', 'AccountId', 'OwnerId']);\n  try {\n    const r = await sfPost('/sobjects/Case', props);\n    return [{ json: { result: 'Case created: ' + r.id + ' - ' + props.Subject } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_case: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_case') {\n  const id = input.case_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"case_id\" is required.' } }];\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'Origin', 'Type', 'Reason', 'ContactId', 'AccountId', 'OwnerId']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Case/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Case ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_case: ' + errMsg(err) } }]; }\n\n} else if (action === 'delete_case') {\n  const id = input.case_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"case_id\" is required.' } }];\n  try {\n    await sfDelete('/sobjects/Case/' + encodeURIComponent(id));\n    return [{ json: { result: 'Case ' + id + ' deleted (moved to Recycle Bin).' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce delete_case: ' + errMsg(err) } }]; }\n\n// === TASKS ===\n} else if (action === 'list_tasks') {\n  const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 200);\n  const openOnly = String(input.open_only || '').toLowerCase() === 'true';\n  const whoId = input.who_id;\n  const wheres = [];\n  if (openOnly) wheres.push(\"Status != 'Completed'\");\n  if (whoId) wheres.push(\"WhoId = '\" + soqlEscape(whoId) + \"'\");\n  const where = wheres.length ? ' WHERE ' + wheres.join(' AND ') : '';\n  try {\n    const r = await sfSoql('SELECT Id, Subject, Status, Priority, ActivityDate, WhoId, WhatId, OwnerId FROM Task' + where + ' ORDER BY LastModifiedDate DESC LIMIT ' + limit);\n    const items = r.records || [];\n    if (items.length === 0) return [{ json: { result: 'No tasks.' } }];\n    let out = 'Tasks (' + items.length + '):\\n';\n    for (const t of items) {\n      out += '  ' + t.Id + ' - ' + (t.Subject || '(no subject)') + (t.Status ? ' [' + t.Status + ']' : '') + (t.Priority ? ' ' + t.Priority : '') + (t.ActivityDate ? ' due: ' + ymd(t.ActivityDate) : '') + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce list_tasks: ' + errMsg(err) } }]; }\n\n} else if (action === 'create_task') {\n  if (!input.Subject && !input.subject) return [{ json: { error: 'Parameter \"Subject\" is required.' } }];\n  const aliased = Object.assign({}, input);\n  if (input.subject && !input.Subject) aliased.Subject = input.subject;\n  if (input.description && !input.Description) aliased.Description = input.description;\n  const props = buildProps(aliased, ['Subject', 'Description', 'Status', 'Priority', 'ActivityDate', 'WhoId', 'WhatId', 'OwnerId', 'Type']);\n  try {\n    const r = await sfPost('/sobjects/Task', props);\n    return [{ json: { result: 'Task created: ' + r.id + ' - ' + props.Subject } }];\n  } catch (err) { return [{ json: { error: 'Salesforce create_task: ' + errMsg(err) } }]; }\n\n} else if (action === 'update_task') {\n  const id = input.task_id || input.id;\n  if (!id) return [{ json: { error: 'Parameter \"task_id\" is required.' } }];\n  const props = buildProps(input, ['Subject', 'Description', 'Status', 'Priority', 'ActivityDate', 'WhoId', 'WhatId', 'OwnerId', 'Type']);\n  if (Object.keys(props).length === 0) return [{ json: { error: 'Provide at least one updatable field or custom_fields.' } }];\n  try {\n    await sfPatch('/sobjects/Task/' + encodeURIComponent(id), props);\n    return [{ json: { result: 'Task ' + id + ' updated.' } }];\n  } catch (err) { return [{ json: { error: 'Salesforce update_task: ' + errMsg(err) } }]; }\n\n// === GENERIC ===\n} else if (action === 'soql_query') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Full SOQL string, e.g. \"SELECT Id, Name FROM Contact WHERE Email LIKE \\'%@edge.com\\' LIMIT 10\".' } }];\n  try {\n    const r = await sfSoql(query);\n    const items = r.records || [];\n    const total = r.totalSize || items.length;\n    if (items.length === 0) return [{ json: { result: 'Query returned 0 records.' } }];\n    let out = 'Query returned ' + items.length + (total > items.length ? ' of ' + total : '') + ' records:\\n';\n    for (const rec of items) {\n      const kv = [];\n      for (const k of Object.keys(rec)) {\n        if (k === 'attributes') continue;\n        const v = rec[k];\n        if (v === null || v === undefined) continue;\n        if (typeof v === 'object') kv.push(k + '=' + JSON.stringify(v));\n        else kv.push(k + '=' + v);\n      }\n      out += '  ' + kv.join(' | ') + '\\n';\n    }\n    if (!r.done) out += '\\n(more results available, use LIMIT/OFFSET to paginate)';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce soql_query: ' + errMsg(err) } }]; }\n\n} else if (action === 'sosl_search') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required (search term).' } }];\n  const sobjects = input.sobjects || 'Contact,Account,Lead,Opportunity,Case';\n  const parts = String(sobjects).split(',').map(function(s){ return s.trim(); }).filter(Boolean);\n  const returning = parts.map(function(o){\n    if (o === 'Contact') return 'Contact(Id, Name, Email)';\n    if (o === 'Account') return 'Account(Id, Name, Industry)';\n    if (o === 'Lead') return 'Lead(Id, Name, Company, Status)';\n    if (o === 'Opportunity') return 'Opportunity(Id, Name, StageName, Amount)';\n    if (o === 'Case') return 'Case(Id, CaseNumber, Subject, Status)';\n    return o + '(Id, Name)';\n  }).join(', ');\n  const sosl = 'FIND {' + String(query).replace(/[{}]/g, '') + '} IN ALL FIELDS RETURNING ' + returning;\n  try {\n    const r = await sfSosl(sosl);\n    const recs = r.searchRecords || [];\n    if (recs.length === 0) return [{ json: { result: 'No matches for \"' + query + '\" across ' + parts.join(', ') + '.' } }];\n    let out = 'Search results (' + recs.length + '):\\n';\n    const byType = {};\n    for (const rec of recs) {\n      const t = (rec.attributes && rec.attributes.type) || 'Other';\n      if (!byType[t]) byType[t] = [];\n      byType[t].push(rec);\n    }\n    for (const t of Object.keys(byType)) {\n      out += '\\n' + t + ' (' + byType[t].length + '):\\n';\n      for (const rec of byType[t]) {\n        const kv = [];\n        for (const k of Object.keys(rec)) {\n          if (k === 'attributes') continue;\n          const v = rec[k];\n          if (v === null || v === undefined) continue;\n          kv.push(k + '=' + v);\n        }\n        out += '  ' + kv.join(' | ') + '\\n';\n      }\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce sosl_search: ' + errMsg(err) } }]; }\n\n} else if (action === 'describe_object') {\n  const objectType = input.object_type || input.sobject;\n  if (!objectType) return [{ json: { error: 'Parameter \"object_type\" is required (e.g. Contact, Account, Opportunity, Lead, Case, Task, or a custom object like MyObject__c).' } }];\n  try {\n    const d = await sfGet('/sobjects/' + encodeURIComponent(objectType) + '/describe');\n    let out = 'SObject: ' + d.name + ' (label: ' + d.label + ')\\n';\n    out += 'Custom: ' + (d.custom ? 'yes' : 'no') + ' | Createable: ' + d.createable + ' | Updateable: ' + d.updateable + ' | Deletable: ' + d.deletable + '\\n';\n    out += 'Fields (' + (d.fields || []).length + '):\\n';\n    for (const f of (d.fields || [])) {\n      let line = '  ' + f.name + ' (' + f.type + ')';\n      if (!f.nillable && f.createable && !f.defaultedOnCreate) line += ' REQUIRED';\n      if (f.custom) line += ' [custom]';\n      if (f.type === 'picklist' && f.picklistValues && f.picklistValues.length) {\n        const active = f.picklistValues.filter(function(p){ return p.active; }).map(function(p){ return p.value; });\n        if (active.length) line += ' values=[' + active.slice(0, 10).join(', ') + (active.length > 10 ? ', ...' : '') + ']';\n      }\n      out += line + '\\n';\n    }\n    return [{ json: { result: truncate(out, 8000) } }];\n  } catch (err) { return [{ json: { error: 'Salesforce describe_object: ' + errMsg(err) } }]; }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_contacts, search_contacts, get_contact, create_contact, update_contact, delete_contact, list_accounts, search_accounts, get_account, create_account, update_account, delete_account, list_leads, search_leads, get_lead, create_lead, update_lead, delete_lead, list_opportunities, search_opportunities, get_opportunity, create_opportunity, update_opportunity, delete_opportunity, list_cases, get_case, create_case, update_case, delete_case, list_tasks, create_task, update_task, soql_query, sosl_search, describe_object.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Salesforce Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Salesforce CRM",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "salesforce"
+        }
+      },
+      {
+        "id": "t-list-contacts",
+        "name": "list_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "list_contacts",
+          "description": "List recent Salesforce Contacts.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_contacts",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-contacts",
+        "name": "search_contacts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          300
+        ],
+        "parameters": {
+          "name": "search_contacts",
+          "description": "Search Contacts via SOQL WHERE. Default field=Name, operator==, use LIKE with % wildcards.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_contacts",
+              "field": "={{ $fromAI('field', \"Field to filter on (Name, Email, Phone, Title, ...), default Name\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"SOQL operator: =, !=, LIKE, <, >, <=, >=. Default =\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match. Use % wildcards with LIKE (e.g. %@edge.com)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field to filter on (Name, Email, Phone, Title, ...), default Name"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "SOQL operator: =, !=, LIKE, <, >, <=, >=. Default ="
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match. Use % wildcards with LIKE (e.g. %@edge.com)"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-contact",
+        "name": "get_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          300
+        ],
+        "parameters": {
+          "name": "get_contact",
+          "description": "Get a Salesforce Contact by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Salesforce Contact Id (15 or 18 char)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Contact Id (15 or 18 char)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-contact",
+        "name": "create_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          300
+        ],
+        "parameters": {
+          "name": "create_contact",
+          "description": "Create a Salesforce Contact. LastName required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_contact",
+              "LastName": "={{ $fromAI('LastName', \"Last name (REQUIRED)\", 'string') }}",
+              "FirstName": "={{ $fromAI('FirstName', \"First name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Associated Account Id\", 'string') }}",
+              "MailingCity": "={{ $fromAI('MailingCity', \"City\", 'string') }}",
+              "MailingCountry": "={{ $fromAI('MailingCountry', \"Country\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields, e.g. {'Region__c':'EMEA'}\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "LastName",
+                "displayName": "LastName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name (REQUIRED)"
+              },
+              {
+                "id": "FirstName",
+                "displayName": "FirstName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Associated Account Id"
+              },
+              {
+                "id": "MailingCity",
+                "displayName": "MailingCity",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "MailingCountry",
+                "displayName": "MailingCountry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields, e.g. {\"Region__c\":\"EMEA\"}"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-contact",
+        "name": "update_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          300
+        ],
+        "parameters": {
+          "name": "update_contact",
+          "description": "Update Salesforce Contact by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Salesforce Contact Id\", 'string') }}",
+              "FirstName": "={{ $fromAI('FirstName', \"First name\", 'string') }}",
+              "LastName": "={{ $fromAI('LastName', \"Last name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Associated Account Id\", 'string') }}",
+              "MailingCity": "={{ $fromAI('MailingCity', \"City\", 'string') }}",
+              "MailingCountry": "={{ $fromAI('MailingCountry', \"Country\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Contact Id"
+              },
+              {
+                "id": "FirstName",
+                "displayName": "FirstName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "LastName",
+                "displayName": "LastName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Associated Account Id"
+              },
+              {
+                "id": "MailingCity",
+                "displayName": "MailingCity",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "City"
+              },
+              {
+                "id": "MailingCountry",
+                "displayName": "MailingCountry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Country"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-contact",
+        "name": "delete_contact",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          300
+        ],
+        "parameters": {
+          "name": "delete_contact",
+          "description": "Delete Salesforce Contact by Id (to Recycle Bin).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_contact",
+              "contact_id": "={{ $fromAI('contact_id', \"Salesforce Contact Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "contact_id",
+                "displayName": "contact_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Contact Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-accounts",
+        "name": "list_accounts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          500
+        ],
+        "parameters": {
+          "name": "list_accounts",
+          "description": "List recent Salesforce Accounts (companies).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_accounts",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-accounts",
+        "name": "search_accounts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          500
+        ],
+        "parameters": {
+          "name": "search_accounts",
+          "description": "Search Accounts via SOQL. Default field=Name.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_accounts",
+              "field": "={{ $fromAI('field', \"Field: Name, Industry, BillingCountry, Website, Phone, ...\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"SOQL operator: =, !=, LIKE\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match (% wildcards with LIKE)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field: Name, Industry, BillingCountry, Website, Phone, ..."
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "SOQL operator: =, !=, LIKE"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match (% wildcards with LIKE)"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-account",
+        "name": "get_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          500
+        ],
+        "parameters": {
+          "name": "get_account",
+          "description": "Get a Salesforce Account by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_account",
+              "account_id": "={{ $fromAI('account_id', \"Salesforce Account Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "account_id",
+                "displayName": "account_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Account Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-account",
+        "name": "create_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          500
+        ],
+        "parameters": {
+          "name": "create_account",
+          "description": "Create Salesforce Account. Name required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_account",
+              "Name": "={{ $fromAI('Name', \"Account name (REQUIRED)\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Website": "={{ $fromAI('Website', \"Website URL\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry (e.g. Technology, Retail)\", 'string') }}",
+              "BillingCity": "={{ $fromAI('BillingCity', \"Billing city\", 'string') }}",
+              "BillingCountry": "={{ $fromAI('BillingCountry', \"Billing country\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "NumberOfEmployees": "={{ $fromAI('NumberOfEmployees', \"Employee count\", 'string') }}",
+              "AnnualRevenue": "={{ $fromAI('AnnualRevenue', \"Annual revenue (number)\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Name",
+                "displayName": "Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Account name (REQUIRED)"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Website",
+                "displayName": "Website",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Website URL"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry (e.g. Technology, Retail)"
+              },
+              {
+                "id": "BillingCity",
+                "displayName": "BillingCity",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Billing city"
+              },
+              {
+                "id": "BillingCountry",
+                "displayName": "BillingCountry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Billing country"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "NumberOfEmployees",
+                "displayName": "NumberOfEmployees",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Employee count"
+              },
+              {
+                "id": "AnnualRevenue",
+                "displayName": "AnnualRevenue",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Annual revenue (number)"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-account",
+        "name": "update_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          500
+        ],
+        "parameters": {
+          "name": "update_account",
+          "description": "Update Salesforce Account by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_account",
+              "account_id": "={{ $fromAI('account_id', \"Salesforce Account Id\", 'string') }}",
+              "Name": "={{ $fromAI('Name', \"Account name\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Website": "={{ $fromAI('Website', \"Website URL\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "BillingCity": "={{ $fromAI('BillingCity', \"Billing city\", 'string') }}",
+              "BillingCountry": "={{ $fromAI('BillingCountry', \"Billing country\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "NumberOfEmployees": "={{ $fromAI('NumberOfEmployees', \"Employee count\", 'string') }}",
+              "AnnualRevenue": "={{ $fromAI('AnnualRevenue', \"Annual revenue\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "account_id",
+                "displayName": "account_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Account Id"
+              },
+              {
+                "id": "Name",
+                "displayName": "Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Account name"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Website",
+                "displayName": "Website",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Website URL"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "BillingCity",
+                "displayName": "BillingCity",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Billing city"
+              },
+              {
+                "id": "BillingCountry",
+                "displayName": "BillingCountry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Billing country"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "NumberOfEmployees",
+                "displayName": "NumberOfEmployees",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Employee count"
+              },
+              {
+                "id": "AnnualRevenue",
+                "displayName": "AnnualRevenue",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Annual revenue"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-account",
+        "name": "delete_account",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          500
+        ],
+        "parameters": {
+          "name": "delete_account",
+          "description": "Delete Salesforce Account by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_account",
+              "account_id": "={{ $fromAI('account_id', \"Salesforce Account Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "account_id",
+                "displayName": "account_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Account Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-leads",
+        "name": "list_leads",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          700
+        ],
+        "parameters": {
+          "name": "list_leads",
+          "description": "List recent Salesforce Leads. Unconverted by default.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_leads",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}",
+              "include_converted": "={{ $fromAI('include_converted', \"true to include already converted Leads, default false\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              },
+              {
+                "id": "include_converted",
+                "displayName": "include_converted",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "true to include already converted Leads, default false"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-leads",
+        "name": "search_leads",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          700
+        ],
+        "parameters": {
+          "name": "search_leads",
+          "description": "Search Leads via SOQL. Default field=Name.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_leads",
+              "field": "={{ $fromAI('field', \"Field: Name, Company, Email, Status, LeadSource, Rating\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"SOQL operator: =, LIKE\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field: Name, Company, Email, Status, LeadSource, Rating"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "SOQL operator: =, LIKE"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-lead",
+        "name": "get_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          700
+        ],
+        "parameters": {
+          "name": "get_lead",
+          "description": "Get a Salesforce Lead by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Salesforce Lead Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Lead Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-lead",
+        "name": "create_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          700
+        ],
+        "parameters": {
+          "name": "create_lead",
+          "description": "Create Salesforce Lead. LastName + Company required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_lead",
+              "LastName": "={{ $fromAI('LastName', \"Last name (REQUIRED)\", 'string') }}",
+              "Company": "={{ $fromAI('Company', \"Company name (REQUIRED — Lead must have Company)\", 'string') }}",
+              "FirstName": "={{ $fromAI('FirstName', \"First name\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Lead status (picklist, e.g. Open - Not Contacted)\", 'string') }}",
+              "LeadSource": "={{ $fromAI('LeadSource', \"Source (Web, Phone, Trade Show, ...)\", 'string') }}",
+              "Rating": "={{ $fromAI('Rating', \"Rating (Hot, Warm, Cold)\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "LastName",
+                "displayName": "LastName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name (REQUIRED)"
+              },
+              {
+                "id": "Company",
+                "displayName": "Company",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Company name (REQUIRED — Lead must have Company)"
+              },
+              {
+                "id": "FirstName",
+                "displayName": "FirstName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead status (picklist, e.g. Open - Not Contacted)"
+              },
+              {
+                "id": "LeadSource",
+                "displayName": "LeadSource",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Source (Web, Phone, Trade Show, ...)"
+              },
+              {
+                "id": "Rating",
+                "displayName": "Rating",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Rating (Hot, Warm, Cold)"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-lead",
+        "name": "update_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          700
+        ],
+        "parameters": {
+          "name": "update_lead",
+          "description": "Update Salesforce Lead by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Salesforce Lead Id\", 'string') }}",
+              "FirstName": "={{ $fromAI('FirstName', \"First name\", 'string') }}",
+              "LastName": "={{ $fromAI('LastName', \"Last name\", 'string') }}",
+              "Company": "={{ $fromAI('Company', \"Company\", 'string') }}",
+              "Email": "={{ $fromAI('Email', \"Email\", 'string') }}",
+              "Phone": "={{ $fromAI('Phone', \"Phone\", 'string') }}",
+              "Title": "={{ $fromAI('Title', \"Job title\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status\", 'string') }}",
+              "LeadSource": "={{ $fromAI('LeadSource', \"Lead source\", 'string') }}",
+              "Rating": "={{ $fromAI('Rating', \"Rating\", 'string') }}",
+              "Industry": "={{ $fromAI('Industry', \"Industry\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Lead Id"
+              },
+              {
+                "id": "FirstName",
+                "displayName": "FirstName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "First name"
+              },
+              {
+                "id": "LastName",
+                "displayName": "LastName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Last name"
+              },
+              {
+                "id": "Company",
+                "displayName": "Company",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Company"
+              },
+              {
+                "id": "Email",
+                "displayName": "Email",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Email"
+              },
+              {
+                "id": "Phone",
+                "displayName": "Phone",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Phone"
+              },
+              {
+                "id": "Title",
+                "displayName": "Title",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Job title"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status"
+              },
+              {
+                "id": "LeadSource",
+                "displayName": "LeadSource",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Lead source"
+              },
+              {
+                "id": "Rating",
+                "displayName": "Rating",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Rating"
+              },
+              {
+                "id": "Industry",
+                "displayName": "Industry",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Industry"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-lead",
+        "name": "delete_lead",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          700
+        ],
+        "parameters": {
+          "name": "delete_lead",
+          "description": "Delete Salesforce Lead by Id. Note: Lead conversion via REST is edition-dependent — use SF UI Convert button.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_lead",
+              "lead_id": "={{ $fromAI('lead_id', \"Salesforce Lead Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "lead_id",
+                "displayName": "lead_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Lead Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-opportunities",
+        "name": "list_opportunities",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          900
+        ],
+        "parameters": {
+          "name": "list_opportunities",
+          "description": "List recent Salesforce Opportunities.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_opportunities",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}",
+              "open_only": "={{ $fromAI('open_only', \"true to exclude Closed Won/Lost (default false)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              },
+              {
+                "id": "open_only",
+                "displayName": "open_only",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "true to exclude Closed Won/Lost (default false)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-search-opportunities",
+        "name": "search_opportunities",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          900
+        ],
+        "parameters": {
+          "name": "search_opportunities",
+          "description": "Search Opportunities via SOQL. Default field=Name.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_opportunities",
+              "field": "={{ $fromAI('field', \"Field: Name, StageName, Amount, CloseDate, OwnerId\", 'string') }}",
+              "operator": "={{ $fromAI('operator', \"SOQL operator: =, !=, LIKE, <, >\", 'string') }}",
+              "value": "={{ $fromAI('value', \"Value to match (unquoted for numeric fields like Amount)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results, default 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "field",
+                "displayName": "field",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Field: Name, StageName, Amount, CloseDate, OwnerId"
+              },
+              {
+                "id": "operator",
+                "displayName": "operator",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "SOQL operator: =, !=, LIKE, <, >"
+              },
+              {
+                "id": "value",
+                "displayName": "value",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Value to match (unquoted for numeric fields like Amount)"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results, default 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-opportunity",
+        "name": "get_opportunity",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          900
+        ],
+        "parameters": {
+          "name": "get_opportunity",
+          "description": "Get a Salesforce Opportunity by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_opportunity",
+              "opportunity_id": "={{ $fromAI('opportunity_id', \"Salesforce Opportunity Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "opportunity_id",
+                "displayName": "opportunity_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Opportunity Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-opportunity",
+        "name": "create_opportunity",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          900
+        ],
+        "parameters": {
+          "name": "create_opportunity",
+          "description": "Create Salesforce Opportunity. Name + StageName + CloseDate required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_opportunity",
+              "Name": "={{ $fromAI('Name', \"Opportunity name (REQUIRED)\", 'string') }}",
+              "StageName": "={{ $fromAI('StageName', \"Stage (REQUIRED, picklist e.g. Prospecting, Qualification, Closed Won)\", 'string') }}",
+              "CloseDate": "={{ $fromAI('CloseDate', \"Close date YYYY-MM-DD (REQUIRED)\", 'string') }}",
+              "Amount": "={{ $fromAI('Amount', \"Deal amount (number)\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Associated Account Id\", 'string') }}",
+              "Probability": "={{ $fromAI('Probability', \"Win probability 0-100\", 'string') }}",
+              "Type": "={{ $fromAI('Type', \"Type (New Business, Existing Business)\", 'string') }}",
+              "LeadSource": "={{ $fromAI('LeadSource', \"Source\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Name",
+                "displayName": "Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Opportunity name (REQUIRED)"
+              },
+              {
+                "id": "StageName",
+                "displayName": "StageName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Stage (REQUIRED, picklist e.g. Prospecting, Qualification, Closed Won)"
+              },
+              {
+                "id": "CloseDate",
+                "displayName": "CloseDate",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Close date YYYY-MM-DD (REQUIRED)"
+              },
+              {
+                "id": "Amount",
+                "displayName": "Amount",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal amount (number)"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Associated Account Id"
+              },
+              {
+                "id": "Probability",
+                "displayName": "Probability",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Win probability 0-100"
+              },
+              {
+                "id": "Type",
+                "displayName": "Type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Type (New Business, Existing Business)"
+              },
+              {
+                "id": "LeadSource",
+                "displayName": "LeadSource",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Source"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-opportunity",
+        "name": "update_opportunity",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          900
+        ],
+        "parameters": {
+          "name": "update_opportunity",
+          "description": "Update Salesforce Opportunity by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_opportunity",
+              "opportunity_id": "={{ $fromAI('opportunity_id', \"Salesforce Opportunity Id\", 'string') }}",
+              "Name": "={{ $fromAI('Name', \"Opportunity name\", 'string') }}",
+              "StageName": "={{ $fromAI('StageName', \"Stage\", 'string') }}",
+              "CloseDate": "={{ $fromAI('CloseDate', \"Close date YYYY-MM-DD\", 'string') }}",
+              "Amount": "={{ $fromAI('Amount', \"Deal amount\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Associated Account Id\", 'string') }}",
+              "Probability": "={{ $fromAI('Probability', \"Win probability 0-100\", 'string') }}",
+              "Type": "={{ $fromAI('Type', \"Type\", 'string') }}",
+              "LeadSource": "={{ $fromAI('LeadSource', \"Source\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "opportunity_id",
+                "displayName": "opportunity_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Opportunity Id"
+              },
+              {
+                "id": "Name",
+                "displayName": "Name",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Opportunity name"
+              },
+              {
+                "id": "StageName",
+                "displayName": "StageName",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Stage"
+              },
+              {
+                "id": "CloseDate",
+                "displayName": "CloseDate",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Close date YYYY-MM-DD"
+              },
+              {
+                "id": "Amount",
+                "displayName": "Amount",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Deal amount"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Associated Account Id"
+              },
+              {
+                "id": "Probability",
+                "displayName": "Probability",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Win probability 0-100"
+              },
+              {
+                "id": "Type",
+                "displayName": "Type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Type"
+              },
+              {
+                "id": "LeadSource",
+                "displayName": "LeadSource",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Source"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-opportunity",
+        "name": "delete_opportunity",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          900
+        ],
+        "parameters": {
+          "name": "delete_opportunity",
+          "description": "Delete Salesforce Opportunity by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_opportunity",
+              "opportunity_id": "={{ $fromAI('opportunity_id', \"Salesforce Opportunity Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "opportunity_id",
+                "displayName": "opportunity_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Opportunity Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-cases",
+        "name": "list_cases",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1100
+        ],
+        "parameters": {
+          "name": "list_cases",
+          "description": "List recent Salesforce Cases (Service Cloud).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_cases",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}",
+              "open_only": "={{ $fromAI('open_only', \"true to exclude Closed cases\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              },
+              {
+                "id": "open_only",
+                "displayName": "open_only",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "true to exclude Closed cases"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-get-case",
+        "name": "get_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          1100
+        ],
+        "parameters": {
+          "name": "get_case",
+          "description": "Get a Salesforce Case by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_case",
+              "case_id": "={{ $fromAI('case_id', \"Salesforce Case Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "case_id",
+                "displayName": "case_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Case Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-case",
+        "name": "create_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1100
+        ],
+        "parameters": {
+          "name": "create_case",
+          "description": "Create Salesforce Case. Subject required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_case",
+              "Subject": "={{ $fromAI('Subject', \"Case subject (REQUIRED)\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status (New, Working, Closed, ...)\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority (Low, Medium, High)\", 'string') }}",
+              "Origin": "={{ $fromAI('Origin', \"Origin (Phone, Email, Web, ...)\", 'string') }}",
+              "ContactId": "={{ $fromAI('ContactId', \"Related Contact Id\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Related Account Id\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Case subject (REQUIRED)"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status (New, Working, Closed, ...)"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority (Low, Medium, High)"
+              },
+              {
+                "id": "Origin",
+                "displayName": "Origin",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Origin (Phone, Email, Web, ...)"
+              },
+              {
+                "id": "ContactId",
+                "displayName": "ContactId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Contact Id"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Account Id"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-case",
+        "name": "update_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1100
+        ],
+        "parameters": {
+          "name": "update_case",
+          "description": "Update Salesforce Case by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_case",
+              "case_id": "={{ $fromAI('case_id', \"Salesforce Case Id\", 'string') }}",
+              "Subject": "={{ $fromAI('Subject', \"Subject\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority\", 'string') }}",
+              "Origin": "={{ $fromAI('Origin', \"Origin\", 'string') }}",
+              "ContactId": "={{ $fromAI('ContactId', \"Related Contact Id\", 'string') }}",
+              "AccountId": "={{ $fromAI('AccountId', \"Related Account Id\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "case_id",
+                "displayName": "case_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Case Id"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Subject"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority"
+              },
+              {
+                "id": "Origin",
+                "displayName": "Origin",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Origin"
+              },
+              {
+                "id": "ContactId",
+                "displayName": "ContactId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Contact Id"
+              },
+              {
+                "id": "AccountId",
+                "displayName": "AccountId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Account Id"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-delete-case",
+        "name": "delete_case",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          1100
+        ],
+        "parameters": {
+          "name": "delete_case",
+          "description": "Delete Salesforce Case by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_case",
+              "case_id": "={{ $fromAI('case_id', \"Salesforce Case Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "case_id",
+                "displayName": "case_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Case Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-list-tasks",
+        "name": "list_tasks",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1350,
+          1100
+        ],
+        "parameters": {
+          "name": "list_tasks",
+          "description": "List recent Salesforce Tasks.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_tasks",
+              "limit": "={{ $fromAI('limit', \"Max results 1-200, default 10\", 'string') }}",
+              "open_only": "={{ $fromAI('open_only', \"true to exclude Completed tasks\", 'string') }}",
+              "who_id": "={{ $fromAI('who_id', \"Filter by Contact/Lead Id\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Max results 1-200, default 10"
+              },
+              {
+                "id": "open_only",
+                "displayName": "open_only",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "true to exclude Completed tasks"
+              },
+              {
+                "id": "who_id",
+                "displayName": "who_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Filter by Contact/Lead Id"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-create-task",
+        "name": "create_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1300
+        ],
+        "parameters": {
+          "name": "create_task",
+          "description": "Create Salesforce Task. Subject required.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_task",
+              "Subject": "={{ $fromAI('Subject', \"Task subject (REQUIRED)\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description / comments\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status (Not Started, In Progress, Completed)\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority (Low, Normal, High)\", 'string') }}",
+              "ActivityDate": "={{ $fromAI('ActivityDate', \"Due date YYYY-MM-DD\", 'string') }}",
+              "WhoId": "={{ $fromAI('WhoId', \"Related Contact or Lead Id\", 'string') }}",
+              "WhatId": "={{ $fromAI('WhatId', \"Related Account, Opportunity or Case Id\", 'string') }}",
+              "OwnerId": "={{ $fromAI('OwnerId', \"Owner (User Id)\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Task subject (REQUIRED)"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description / comments"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status (Not Started, In Progress, Completed)"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority (Low, Normal, High)"
+              },
+              {
+                "id": "ActivityDate",
+                "displayName": "ActivityDate",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Due date YYYY-MM-DD"
+              },
+              {
+                "id": "WhoId",
+                "displayName": "WhoId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Contact or Lead Id"
+              },
+              {
+                "id": "WhatId",
+                "displayName": "WhatId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Related Account, Opportunity or Case Id"
+              },
+              {
+                "id": "OwnerId",
+                "displayName": "OwnerId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Owner (User Id)"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-update-task",
+        "name": "update_task",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          270,
+          1300
+        ],
+        "parameters": {
+          "name": "update_task",
+          "description": "Update Salesforce Task by Id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_task",
+              "task_id": "={{ $fromAI('task_id', \"Salesforce Task Id\", 'string') }}",
+              "Subject": "={{ $fromAI('Subject', \"Subject\", 'string') }}",
+              "Description": "={{ $fromAI('Description', \"Description\", 'string') }}",
+              "Status": "={{ $fromAI('Status', \"Status\", 'string') }}",
+              "Priority": "={{ $fromAI('Priority', \"Priority\", 'string') }}",
+              "ActivityDate": "={{ $fromAI('ActivityDate', \"Due date YYYY-MM-DD\", 'string') }}",
+              "WhoId": "={{ $fromAI('WhoId', \"Contact/Lead Id\", 'string') }}",
+              "WhatId": "={{ $fromAI('WhatId', \"Account/Opp/Case Id\", 'string') }}",
+              "OwnerId": "={{ $fromAI('OwnerId', \"Owner Id\", 'string') }}",
+              "custom_fields": "={{ $fromAI('custom_fields', \"JSON-string of custom *__c fields\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "task_id",
+                "displayName": "task_id",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Salesforce Task Id"
+              },
+              {
+                "id": "Subject",
+                "displayName": "Subject",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Subject"
+              },
+              {
+                "id": "Description",
+                "displayName": "Description",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Description"
+              },
+              {
+                "id": "Status",
+                "displayName": "Status",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Status"
+              },
+              {
+                "id": "Priority",
+                "displayName": "Priority",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Priority"
+              },
+              {
+                "id": "ActivityDate",
+                "displayName": "ActivityDate",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Due date YYYY-MM-DD"
+              },
+              {
+                "id": "WhoId",
+                "displayName": "WhoId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Contact/Lead Id"
+              },
+              {
+                "id": "WhatId",
+                "displayName": "WhatId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Account/Opp/Case Id"
+              },
+              {
+                "id": "OwnerId",
+                "displayName": "OwnerId",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Owner Id"
+              },
+              {
+                "id": "custom_fields",
+                "displayName": "custom_fields",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "JSON-string of custom *__c fields"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-soql-query",
+        "name": "soql_query",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          540,
+          1300
+        ],
+        "parameters": {
+          "name": "soql_query",
+          "description": "Run a custom SOQL query. Param: query (full SOQL string).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "soql_query",
+              "query": "={{ $fromAI('query', \"Full SOQL string, e.g. SELECT Id, Name FROM Contact WHERE Email LIKE %@edge.com LIMIT 10\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Full SOQL string, e.g. SELECT Id, Name FROM Contact WHERE Email LIKE %@edge.com LIMIT 10"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-sosl-search",
+        "name": "sosl_search",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          810,
+          1300
+        ],
+        "parameters": {
+          "name": "sosl_search",
+          "description": "Full-text search across multiple SObjects via SOSL.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "sosl_search",
+              "query": "={{ $fromAI('query', \"Search term (FIND expression)\", 'string') }}",
+              "sobjects": "={{ $fromAI('sobjects', \"Comma-separated SObject list, default 'Contact,Account,Lead,Opportunity,Case'\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Search term (FIND expression)"
+              },
+              {
+                "id": "sobjects",
+                "displayName": "sobjects",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Comma-separated SObject list, default \"Contact,Account,Lead,Opportunity,Case\""
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "t-describe-object",
+        "name": "describe_object",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1080,
+          1300
+        ],
+        "parameters": {
+          "name": "describe_object",
+          "description": "Get schema metadata (fields, types, picklist values) for an SObject.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "describe_object",
+              "object_type": "={{ $fromAI('object_type', \"SObject API name (Contact, Account, Opportunity, Lead, Case, Task, MyObj__c)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "Action"
+              },
+              {
+                "id": "object_type",
+                "displayName": "object_type",
+                "type": "string",
+                "removed": false,
+                "required": false,
+                "description": "SObject API name (Contact, Account, Opportunity, Lead, Case, Task, MyObj__c)"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_contacts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_contact": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_accounts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_accounts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_account": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_leads": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_leads": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_lead": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_opportunities": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search_opportunities": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_opportunity": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_opportunity": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_opportunity": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_opportunity": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_cases": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_case": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_tasks": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_task": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "soql_query": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "sosl_search": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "describe_object": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

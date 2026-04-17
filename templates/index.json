@@ -869,6 +869,28 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "salesforce",
+      "name": "Salesforce CRM",
+      "type": "native",
+      "category": "marketing",
+      "description": "Salesforce CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks + SOQL/SOSL/describe. Client Credentials Flow auth.",
+      "credentials_required": [
+        {
+          "key": "salesforce_instance_url",
+          "label": "Salesforce Instance URL"
+        },
+        {
+          "key": "salesforce_consumer_key",
+          "label": "Consumer Key (Client ID)"
+        },
+        {
+          "key": "salesforce_consumer_secret",
+          "label": "Consumer Secret"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
