@@ -1,0 +1,43 @@
+{
+  "id": "home-assistant",
+  "name": "Home Assistant",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "smart-home",
+  "description": "Control your Home Assistant smart home: list entities, check states, call services (lights, switches, climate, media, scenes, etc.). Requires a publicly reachable HA instance (Nabu Casa, Cloudflare Tunnel, DuckDNS, or Tailscale).",
+  "credentials_required": [
+    {
+      "key": "ha_url",
+      "label": "Home Assistant URL",
+      "hint": "Public URL of your HA instance (e.g. https://abc123.ui.nabu.casa or https://ha.my-domain.com). No trailing /api."
+    },
+    {
+      "key": "ha_token",
+      "label": "Long-Lived Access Token",
+      "hint": "Create in HA: Profile icon -> Security tab -> 'Create Token' at the bottom. Keep this secret — it grants full control of your HA instance."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "list_entities",
+      "description": "List all entities, optionally filtered by domain (light, switch, sensor, climate, etc.)"
+    },
+    {
+      "name": "get_state",
+      "description": "Get the current state and attributes of a specific entity"
+    },
+    {
+      "name": "list_services",
+      "description": "List available services, optionally filtered by domain"
+    },
+    {
+      "name": "call_service",
+      "description": "Call a service (e.g. light.turn_on, switch.toggle, climate.set_temperature)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

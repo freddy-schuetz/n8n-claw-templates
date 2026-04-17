@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (50)
+## Available Skills (51)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -25,6 +25,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [News](#news) | 2 | Hacker News, NewsAPI |
 | [Notes & CRM](#notes--crm) | 2 | NocoDB, Notion |
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
+| [Smart Home](#smart-home) | 1 | Home Assistant |
 | [Tasks](#tasks) | 2 | Todoist, Vikunja |
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
 | [Transport](#transport) | 6 | Deutsche Bahn, ÖBB, SBB, ÖPNV Deutschland, routing, Wiener Linien |
@@ -154,6 +155,12 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+
+### Smart Home
+
+| Skill | Description | Credentials | Author | Tested |
+|-------|-------------|-------------|--------|:------:|
+| [Home Assistant](https://www.home-assistant.io/) | Control your smart home: list entities, check states, call services (lights, switches, climate, media, scenes). Requires publicly reachable HA instance | HA URL, Long-Lived Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Tasks
 

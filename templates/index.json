@@ -562,6 +562,18 @@
         { "key": "ntfy_topic", "label": "ntfy Topic Name" }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "home-assistant",
+      "name": "Home Assistant",
+      "type": "native",
+      "category": "smart-home",
+      "description": "Control your Home Assistant smart home: list entities, check states, call services (lights, switches, climate, media, scenes). Requires publicly reachable HA instance.",
+      "credentials_required": [
+        { "key": "ha_url", "label": "Home Assistant URL" },
+        { "key": "ha_token", "label": "Long-Lived Access Token" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
