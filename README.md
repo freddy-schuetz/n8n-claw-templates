@@ -69,7 +69,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image), generate videos from text with Veo 3.1, and animate user-supplied images into videos (image-to-video) | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [Unsplash](https://unsplash.com/) | Search 3M+ free high-quality photos by keyword, get random or specific photos with required photographer attribution | Unsplash Access Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [Unsplash](https://unsplash.com/) | Search 3M+ free high-quality photos by keyword, get random or specific photos with required photographer attribution | Unsplash Access Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Developer Tools
 
@@ -84,7 +84,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Recipes](https://www.themealdb.com/) | Search recipes or get a random recipe with ingredients and instructions | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [TMDB Movies & TV](https://www.themoviedb.org/) | Search movies and TV shows, discover trending titles | TMDB API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Trivia](https://opentdb.com/) | Random trivia questions with answers from various categories | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [YouTube Data](https://developers.google.com/youtube/v3) | Search YouTube videos, fetch video/channel metadata, list a channel's recent uploads (search/metadata only, no transcripts) | YouTube Data API v3 Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [YouTube Data](https://developers.google.com/youtube/v3) | Search YouTube videos, fetch video/channel metadata, list a channel's recent uploads (search/metadata only, no transcripts) | YouTube Data API v3 Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Finance
 
@@ -92,7 +92,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|:------:|
 | [Crypto Prices](https://www.coingecko.com/) | Get cryptocurrency prices, market cap, and 24h changes | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Exchange Rates](https://www.frankfurter.app/) | Convert currencies using live exchange rates | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [Finnhub Stocks](https://finnhub.io/) | Real-time stock quotes, company profiles, news, symbol search and market-status checks (free tier: 60 calls/min) | Finnhub API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [Finnhub Stocks](https://finnhub.io/) | Real-time stock quotes, company profiles, news, symbol search and market-status checks (free tier: 60 calls/min) | Finnhub API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [KontoFlux](https://kontoflux.io/) | Access German bank accounts and transactions via KontoFlux Open-Banking API (5000+ banks, read-only) | KontoFlux API Key, Workspace ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Lexware Office](https://www.lexware.de/office/) | Full Lexware Office integration: contacts, articles, quotations, invoices, voucher upload, PDF download | Lexware API Token | [@Ranji1908](https://github.com/Ranji1908) | ✓ |
 | [Stripe](https://stripe.com/) | Stripe payments (23 tools): customers, payments, invoices, subscriptions, refunds, payouts, balance, payment links. Test-mode recommended for AI agents | Stripe API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
@@ -102,7 +102,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [DeepWiki](https://deepwiki.com/) | AI-powered documentation search for any public GitHub repository — ask questions about a codebase in plain English (external MCP server, free) | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [Open Library](https://openlibrary.org/) | Search 40M+ books by title, author or ISBN; fetch book and author details including cover images | - | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [Open Library](https://openlibrary.org/) | Search 40M+ books by title, author or ISBN; fetch book and author details including cover images | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [OpenFoodFacts](https://world.openfoodfacts.org/) | Look up food products by barcode or name — nutrition facts, Nutri-Score, allergens, ingredients | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [OpenWebUI Knowledge](https://openwebui.com/) | Manage knowledge collections and RAG files — create collections, upload documents, ingest web pages | OpenWebUI URL, API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Wikipedia](https://www.wikipedia.org/) | Search Wikipedia and get article summaries | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
@@ -126,7 +126,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Google Ads](https://ads.google.com/) | Query campaigns, ad groups, and performance data via GAQL (Beta) | Google OAuth2, Developer Token, Customer ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Salesforce CRM](https://www.salesforce.com/) | Full CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks (CRUD + search) plus SOQL query, SOSL search, describe-object. REST v60.0 via Client Credentials Flow | Instance URL, Consumer Key, Consumer Secret | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Meetings
@@ -154,7 +154,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Airtable](https://airtable.com/) | Work with Airtable bases and records: list bases/tables, search with formulas, CRUD rows. Free plan has 1,000 API calls/month — Team plan recommended for active use | Airtable PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [Confluence Cloud](https://www.atlassian.com/software/confluence) | Confluence wiki (14 tools): CQL search, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [Confluence Cloud](https://www.atlassian.com/software/confluence) | Confluence wiki (14 tools): CQL search, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
@@ -176,7 +176,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [Asana](https://asana.com/) | Full Asana CRUD (16 tools): workspaces, projects, sections, tasks incl. subtasks, comments, Kanban section moves, typeahead search for users and tasks | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [Asana](https://asana.com/) | Full Asana CRUD (16 tools): workspaces, projects, sections, tasks incl. subtasks, comments, Kanban section moves, typeahead search for users and tasks | Asana PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Jira Cloud](https://www.atlassian.com/software/jira) | Jira issue tracking (12 tools): JQL search, CRUD issues, comments, transitions, issue links, user search. Shares Atlassian creds with Confluence | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Todoist](https://todoist.com/) | Manage tasks: list, create, complete, organize with due dates and priorities | Todoist API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Vikunja](https://vikunja.io/) | Manage tasks and projects: list, create, update, delete with due dates and priorities | Vikunja URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
@@ -209,7 +209,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [OpenAQ Air Quality](https://openaq.org/) | Current air quality (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide; supports city names or coordinates | OpenAQ API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [OpenAQ Air Quality](https://openaq.org/) | Current air quality (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide; supports city names or coordinates | OpenAQ API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Weather](https://open-meteo.com/) | Current weather and 3-day forecast for any city | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ---
