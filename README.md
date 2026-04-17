@@ -4,14 +4,14 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (49)
+## Available Skills (50)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
 | [Analytics](#analytics) | 1 | Google Analytics |
 | [Calendar](#calendar) | 2 | CalDAV, Google Calendar |
 | [Cloud Storage](#cloud-storage) | 3 | Google Drive, Nextcloud, Seafile |
-| [Communication](#communication) | 3 | Email, Gmail, OpenClaw |
+| [Communication](#communication) | 4 | Email, Gmail, ntfy, OpenClaw |
 | [Creativity](#creativity) | 1 | AI image & video generation |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 3 | Recipes, movies, trivia |
@@ -60,6 +60,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|:------:|
 | Email (IMAP/SMTP) | Read and send emails via IMAP/SMTP | Email address, password, IMAP host, SMTP host | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Gmail](https://mail.google.com/) | Search, read, send emails and manage drafts via Gmail API | Google OAuth2 | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [ntfy.sh](https://ntfy.sh/) | Send push notifications to your phone (hosted or self-hosted). Title, priority, emoji tags, tap URLs, attachments | ntfy Topic Name | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [OpenClaw](https://openclaw.ai/) | Connect to an OpenClaw autonomous AI agent via Gateway API | Gateway URL, Gateway Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Creativity

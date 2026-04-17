@@ -1,0 +1,37 @@
+{
+  "id": "ntfy",
+  "name": "ntfy.sh",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "communication",
+  "description": "Send push notifications to your phone via ntfy.sh (free hosted or self-hosted). Supports title, priority (1-5), emoji tags, tap-action URLs, and attachments.",
+  "credentials_required": [
+    {
+      "key": "ntfy_topic",
+      "label": "ntfy Topic Name",
+      "hint": "Your private topic name (acts as a password — use a long random string, e.g. 'claw-alerts-ab3f9d21xy'). Install the ntfy app on your phone and subscribe to the same topic to receive notifications."
+    }
+  ],
+  "credentials_optional": [
+    {
+      "key": "ntfy_server_url",
+      "label": "ntfy Server URL",
+      "hint": "Default: https://ntfy.sh. Override for self-hosted ntfy instances (e.g. https://ntfy.my-domain.com)."
+    },
+    {
+      "key": "ntfy_token",
+      "label": "ntfy Access Token",
+      "hint": "Only needed for reserved topics or private self-hosted servers with auth enabled."
+    }
+  ],
+  "tools": [
+    {
+      "name": "send_notification",
+      "description": "Send a push notification (with optional title, priority, tags, tap URL, and attachment URL)"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

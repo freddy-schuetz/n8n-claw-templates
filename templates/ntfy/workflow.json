@@ -1,0 +1,95 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: ntfy",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "ntfy Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.ntfy&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\n\nif (!creds.ntfy_topic) {\n  return [{ json: { error: 'ntfy topic not configured. Use add_credential to set \"ntfy_topic\" (your private topic name, e.g. claw-alerts-ab3f9d21xy).' } }];\n}\n\nconst serverUrl = (creds.ntfy_server_url || 'https://ntfy.sh').replace(/\\/+$/, '');\nconst topic = creds.ntfy_topic.replace(/^\\/+|\\/+$/g, '');\nconst url = serverUrl + '/' + topic;\n\nconst message = input.message;\nif (!message) return [{ json: { error: 'Parameter \"message\" is required (the notification body text).' } }];\n\nconst headers = { 'Content-Type': 'text/plain; charset=utf-8' };\nif (creds.ntfy_token) headers['Authorization'] = 'Bearer ' + creds.ntfy_token;\n\nif (input.title) headers['Title'] = String(input.title);\nif (input.priority) {\n  const p = parseInt(input.priority);\n  if (p >= 1 && p <= 5) headers['Priority'] = String(p);\n}\nif (input.tags) {\n  const tags = Array.isArray(input.tags) ? input.tags.join(',') : String(input.tags);\n  headers['Tags'] = tags;\n}\nif (input.click) headers['Click'] = String(input.click);\nif (input.attach) {\n  headers['Attach'] = String(input.attach);\n  if (input.filename) headers['Filename'] = String(input.filename);\n}\n\ntry {\n  const resp = await helpers.httpRequest({\n    method: 'POST',\n    url: url,\n    headers: headers,\n    body: String(message)\n  });\n  let summary = 'Notification sent to topic \"' + topic + '\"';\n  if (resp && resp.id) summary += ' (id: ' + resp.id + ')';\n  if (input.title) summary += '\\nTitle: ' + input.title;\n  summary += '\\nMessage: ' + message;\n  if (resp && resp.attachment && resp.attachment.url) summary += '\\nAttachment: ' + resp.attachment.url;\n  return [{ json: { result: summary } }];\n} catch (e) {\n  let msg = e.message || String(e);\n  if (msg.includes('403') || msg.includes('401')) {\n    msg = 'Access denied. This topic may be reserved — configure ntfy_token with a valid access token.';\n  } else if (msg.includes('429')) {\n    msg = 'Rate limited. ntfy.sh free tier allows limited messages per hour per IP.';\n  }\n  return [{ json: { error: 'Failed to send notification: ' + msg } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "ntfy Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: ntfy",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "ntfy"
+        }
+      },
+      {
+        "id": "tool-send-notification",
+        "name": "send_notification",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "send_notification",
+          "description": "Send a push notification via ntfy.sh to the user's phone. Parameters: message (required, notification body text), title (optional short title), priority (optional 1-5, 3=default, 5=urgent with sound+vibration, 1=silent), tags (optional comma-separated emoji shortcuts like 'warning,fire' or 'heavy_check_mark'), click (optional URL that opens when tapping the notification), attach (optional URL to an image/file to attach), filename (optional custom filename for attachment).",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "message": "={{ $fromAI('message', 'Notification body text', 'string') }}",
+              "title": "={{ $fromAI('title', 'Short notification title (optional)', 'string') }}",
+              "priority": "={{ $fromAI('priority', 'Priority 1-5 (1=min/silent, 3=default, 5=max/urgent)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated emoji shortcuts (e.g. warning,rotating_light). See https://docs.ntfy.sh/emojis', 'string') }}",
+              "click": "={{ $fromAI('click', 'URL to open when tapping the notification (optional)', 'string') }}",
+              "attach": "={{ $fromAI('attach', 'URL of an image or file to attach (optional)', 'string') }}",
+              "filename": "={{ $fromAI('filename', 'Custom filename for the attachment (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "message", "displayName": "message", "type": "string", "description": "Notification body", "required": true },
+              { "id": "title", "displayName": "title", "type": "string", "description": "Notification title", "required": false },
+              { "id": "priority", "displayName": "priority", "type": "string", "description": "Priority 1-5", "required": false },
+              { "id": "tags", "displayName": "tags", "type": "string", "description": "Comma-separated emoji shortcuts", "required": false },
+              { "id": "click", "displayName": "click", "type": "string", "description": "Tap-action URL", "required": false },
+              { "id": "attach", "displayName": "attach", "type": "string", "description": "Attachment URL", "required": false },
+              { "id": "filename", "displayName": "filename", "type": "string", "description": "Attachment filename", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "send_notification": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

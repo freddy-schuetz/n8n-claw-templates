@@ -551,6 +551,17 @@
       "description": "Search places and POIs on OpenStreetMap: restaurants, hotels, hiking huts, drinking water, EV charging, 28 preset categories. Geocoding via Nominatim, free, no auth.",
       "credentials_required": [],
       "version": "1.0.0"
+    },
+    {
+      "id": "ntfy",
+      "name": "ntfy.sh",
+      "type": "native",
+      "category": "communication",
+      "description": "Send push notifications to your phone via ntfy.sh (hosted or self-hosted). Title, priority, emoji tags, tap URLs, attachments.",
+      "credentials_required": [
+        { "key": "ntfy_topic", "label": "ntfy Topic Name" }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
