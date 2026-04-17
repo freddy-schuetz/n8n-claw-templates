@@ -841,6 +841,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "type": "native",
+      "category": "finance",
+      "description": "Stripe payments (23 tools): customers, payments, invoices, subscriptions, refunds, payouts, balance, payment links. Supports test-mode (sk_test_/rk_test_) and live keys — test-mode strongly recommended for AI agent use.",
+      "credentials_required": [
+        {
+          "key": "stripe_api_key",
+          "label": "Stripe API Key"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

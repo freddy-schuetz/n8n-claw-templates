@@ -1,0 +1,44 @@
+{
+  "id": "stripe",
+  "name": "Stripe",
+  "version": "1.0.0",
+  "updated": "2026-04-17",
+  "type": "native",
+  "category": "finance",
+  "description": "Stripe payments: customers, payments, invoices, subscriptions, refunds, payouts, balance, payment links. Supports test-mode (sk_test_/rk_test_) and live keys — test-mode strongly recommended for AI agent use.",
+  "credentials_required": [
+    {
+      "key": "stripe_api_key",
+      "label": "Stripe API Key",
+      "hint": "Either a Secret Key (sk_test_... / sk_live_...) or Restricted Key (rk_test_... / rk_live_...) from dashboard.stripe.com → Developers → API keys. STRONG RECOMMENDATION: use a test-mode key or a live Restricted Key with least-privilege scopes. Live Secret Keys give the agent full write access including refunds and customer deletion."
+    }
+  ],
+  "tools": [
+    { "name": "list_customers", "description": "List recent customers (paginated)" },
+    { "name": "search_customers", "description": "Search customers by email, name, metadata (Stripe search syntax)" },
+    { "name": "get_customer", "description": "Get a customer by id (cus_...)" },
+    { "name": "create_customer", "description": "Create a new customer (name, email, phone, description, metadata)" },
+    { "name": "update_customer", "description": "Update customer fields (name, email, phone, description)" },
+    { "name": "list_payments", "description": "List recent PaymentIntents (modern payment flow)" },
+    { "name": "get_payment", "description": "Get a PaymentIntent by id (pi_...)" },
+    { "name": "list_charges", "description": "List recent charges (legacy, still populated)" },
+    { "name": "list_invoices", "description": "List invoices (optional customer or status filter: draft, open, paid, void, uncollectible)" },
+    { "name": "get_invoice", "description": "Get invoice by id (in_...)" },
+    { "name": "create_invoice", "description": "Create a draft invoice for a customer (requires customer id)" },
+    { "name": "list_subscriptions", "description": "List subscriptions (optional customer or status filter)" },
+    { "name": "get_subscription", "description": "Get a subscription by id (sub_...)" },
+    { "name": "cancel_subscription", "description": "Cancel a subscription immediately (DESTRUCTIVE on live mode — ends recurring billing)" },
+    { "name": "list_products", "description": "List products in your catalog" },
+    { "name": "list_prices", "description": "List prices (optional product filter)" },
+    { "name": "list_refunds", "description": "List recent refunds" },
+    { "name": "create_refund", "description": "Refund a charge or payment_intent (DESTRUCTIVE on live mode — moves money back to customer). Optional partial amount in minor units (e.g. 500 = €5.00)" },
+    { "name": "get_balance", "description": "Current Stripe account balance (available + pending per currency)" },
+    { "name": "list_balance_transactions", "description": "List balance transactions (actual money movement after Stripe fees)" },
+    { "name": "list_payouts", "description": "List payouts to your bank account" },
+    { "name": "list_disputes", "description": "List chargebacks and disputes" },
+    { "name": "create_payment_link", "description": "Create a reusable hosted checkout URL for a given price (useful for quick invoicing)" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

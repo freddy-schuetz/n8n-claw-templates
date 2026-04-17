@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (60)
+## Available Skills (61)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -15,7 +15,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Creativity](#creativity) | 2 | AI image & video generation, Unsplash photos |
 | [Developer Tools](#developer-tools) | 1 | GitHub |
 | [Entertainment](#entertainment) | 4 | Recipes, movies, trivia, YouTube |
-| [Finance](#finance) | 5 | Crypto, currencies, banking, Finnhub stocks, Lexware |
+| [Finance](#finance) | 6 | Crypto, currencies, banking, Finnhub stocks, Lexware, Stripe |
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Maps](#maps) | 2 | OpenStreetMap / Overpass POI search, OpenRouteService routing |
@@ -95,6 +95,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Finnhub Stocks](https://finnhub.io/) | Real-time stock quotes, company profiles, news, symbol search and market-status checks (free tier: 60 calls/min) | Finnhub API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [KontoFlux](https://kontoflux.io/) | Access German bank accounts and transactions via KontoFlux Open-Banking API (5000+ banks, read-only) | KontoFlux API Key, Workspace ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Lexware Office](https://www.lexware.de/office/) | Full Lexware Office integration: contacts, articles, quotations, invoices, voucher upload, PDF download | Lexware API Token | [@Ranji1908](https://github.com/Ranji1908) | ✓ |
+| [Stripe](https://stripe.com/) | Stripe payments (23 tools): customers, payments, invoices, subscriptions, refunds, payouts, balance, payment links. Test-mode recommended for AI agents | Stripe API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Knowledge
 
