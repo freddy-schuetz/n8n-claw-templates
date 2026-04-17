@@ -1,17 +1,17 @@
 {
   "id": "overpass-osm",
   "name": "Overpass (OpenStreetMap)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "updated": "2026-04-17",
   "type": "native",
   "category": "maps",
-  "description": "Search places and points of interest on OpenStreetMap (restaurants, hotels, hiking huts, drinking water, EV charging, and 25+ more presets). Geocoding via Nominatim, POI search via Overpass API.",
+  "description": "Search places and points of interest on OpenStreetMap (restaurants, hotels, hiking huts, drinking water, EV charging, and 25+ more presets). Geocoding via Nominatim, POI search via Overpass API with automatic mirror fallback (overpass-api.de -> private.coffee -> kumi.systems) to handle rate limits.",
   "credentials_required": [],
   "credentials_optional": [
     {
       "key": "overpass_endpoint",
       "label": "Overpass API Endpoint",
-      "hint": "Override the default public endpoint. Use https://overpass.kumi.systems/api/interpreter as an alternative mirror if the public API is rate-limited. Default: https://overpass-api.de/api/interpreter"
+      "hint": "Optional. Pin to a specific Overpass endpoint (e.g. your own self-hosted instance). By default the skill rotates through three public mirrors automatically on rate-limit or error, so this is rarely needed. If set, your endpoint is tried first, then the default mirrors are used as fallback."
     }
   ],
   "tools": [
