@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-04-17",
+  "updated": "2026-04-20",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -917,6 +917,28 @@
         }
       ],
       "version": "1.2.2"
+    },
+    {
+      "id": "wordpress",
+      "name": "WordPress",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage a WordPress site via the REST API: posts, pages, comments, categories, tags, users, media. Uses Application Passwords (WordPress 5.6+).",
+      "credentials_required": [
+        {
+          "key": "wp_url",
+          "label": "WordPress Site URL"
+        },
+        {
+          "key": "wp_username",
+          "label": "WordPress Username"
+        },
+        {
+          "key": "wp_app_password",
+          "label": "WordPress Application Password"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

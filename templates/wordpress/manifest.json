@@ -1,0 +1,51 @@
+{
+  "id": "wordpress",
+  "name": "WordPress",
+  "version": "1.0.0",
+  "updated": "2026-04-20",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage a WordPress site via the REST API: posts, pages, comments, categories, tags, users, media. Uses Application Passwords (WordPress 5.6+). Read and write access — tested live against WordPress 6+ REST API.",
+  "credentials_required": [
+    {
+      "key": "wp_url",
+      "label": "WordPress Site URL",
+      "hint": "Base URL of your WordPress site (e.g. https://myblog.com) — no trailing slash. Works with self-hosted WP 5.6+ and most managed hosts."
+    },
+    {
+      "key": "wp_username",
+      "label": "WordPress Username",
+      "hint": "Your WordPress username (the login name, not the display name). Visible in WP-Admin under Users."
+    },
+    {
+      "key": "wp_app_password",
+      "label": "WordPress Application Password",
+      "hint": "Generate in WP-Admin > Users > Profile > Application Passwords. Give it a name like 'n8n-claw', then copy the generated password (spaces are OK). This is NOT your login password."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_posts", "description": "List posts with optional search, status filter, and pagination" },
+    { "name": "get_post", "description": "Get full content and metadata of a single post by ID" },
+    { "name": "create_post", "description": "Create a new post (draft by default) with title, content, status, categories, tags" },
+    { "name": "update_post", "description": "Update an existing post's title, content, status, categories, or tags" },
+    { "name": "delete_post", "description": "Delete a post (trash by default, or permanently with force=true)" },
+    { "name": "list_pages", "description": "List pages with optional search and status filter" },
+    { "name": "get_page", "description": "Get full content and metadata of a single page by ID" },
+    { "name": "create_page", "description": "Create a new page with title, content, status, and optional parent" },
+    { "name": "update_page", "description": "Update an existing page's title, content, status, or parent" },
+    { "name": "delete_page", "description": "Delete a page (trash by default, or permanently with force=true)" },
+    { "name": "list_comments", "description": "List comments, optionally filtered by post ID and/or moderation status" },
+    { "name": "moderate_comment", "description": "Approve, hold, mark as spam, or trash a comment" },
+    { "name": "list_categories", "description": "List post categories with post counts" },
+    { "name": "create_category", "description": "Create a new category with name, optional description, parent, and slug" },
+    { "name": "list_tags", "description": "List post tags with post counts" },
+    { "name": "list_users", "description": "List users (authors) of the site" },
+    { "name": "search", "description": "Cross-type search across posts, pages, and other content by keyword" },
+    { "name": "list_media", "description": "List media library items (images, videos, documents)" },
+    { "name": "upload_media", "description": "Upload a file (image/document) to the Media Library from a file_ref (File Bridge ID)" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
