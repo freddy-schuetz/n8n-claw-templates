@@ -13,7 +13,10 @@
         "name": "Execute Workflow Trigger",
         "type": "n8n-nodes-base.executeWorkflowTrigger",
         "typeVersion": 1.1,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "inputSource": "passthrough"
         }
@@ -23,15 +26,26 @@
         "name": "WordPress Logic",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [256, 0],
+        "position": [
+          256,
+          0
+        ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_posts';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.wordpress&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\n\nif (!creds.wp_url || !creds.wp_username || !creds.wp_app_password) {\n  return [{ json: { error: 'WordPress credentials missing. Use add_credential to set wp_url, wp_username, and wp_app_password.' } }];\n}\n\nconst baseUrl = creds.wp_url.replace(/\\/+$/, '');\nconst apiBase = baseUrl + '/wp-json/wp/v2';\nconst authHeader = 'Basic ' + Buffer.from(creds.wp_username + ':' + creds.wp_app_password).toString('base64');\nconst wpHeaders = { 'Authorization': authHeader, 'Content-Type': 'application/json' };\n\nfunction stripHtml(html) {\n  if (!html) return '';\n  return String(html).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#8217;/g, \"'\").replace(/&#8220;|&#8221;/g, '\"').trim();\n}\n\nfunction truncate(s, n) {\n  if (!s) return '';\n  s = String(s);\n  return s.length > n ? s.substring(0, n) + '...' : s;\n}\n\nfunction titleOf(p) {\n  return (p.title && p.title.rendered) ? p.title.rendered : (p.title || '(no title)');\n}\n\nfunction formatItem(p) {\n  const title = titleOf(p);\n  const excerpt = p.excerpt && p.excerpt.rendered ? stripHtml(p.excerpt.rendered) : '';\n  let s = 'ID ' + p.id + ' — \"' + title + '\" [' + p.status + ']';\n  if (excerpt) s += '\\n  ' + truncate(excerpt, 150);\n  if (p.link) s += '\\n  ' + p.link;\n  return s;\n}\n\nfunction parseIdList(v) {\n  if (v === undefined || v === null || v === '') return undefined;\n  return String(v).split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));\n}\n\n// ─────────────────────────────── list_posts ───────────────────────────────\nif (action === 'list_posts') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.search) params.append('search', input.search);\n  if (input.status) params.append('status', input.status);\n  if (input.page) params.append('page', String(input.page));\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/posts?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No posts found.' } }];\n    let result = 'Found ' + data.length + ' posts:\\n\\n';\n    for (const p of data) result += formatItem(p) + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list posts: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_post ───────────────────────────────\n} else if (action === 'get_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required (e.g. 1).' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'GET', url: apiBase + '/posts/' + encodeURIComponent(id), headers: wpHeaders });\n    let result = '**' + titleOf(p) + '**\\n';\n    result += 'ID: ' + p.id + ' | Status: ' + p.status + ' | Date: ' + p.date + '\\n';\n    if (p.link) result += 'Link: ' + p.link + '\\n';\n    if (p.author) result += 'Author: ' + p.author + '\\n';\n    if (p.categories && p.categories.length) result += 'Categories: ' + p.categories.join(', ') + '\\n';\n    if (p.tags && p.tags.length) result += 'Tags: ' + p.tags.join(', ') + '\\n';\n    const content = p.content && p.content.rendered ? stripHtml(p.content.rendered) : '';\n    result += '\\nContent:\\n' + content;\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated, ' + result.length + ' chars total)';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_post ───────────────────────────────\n} else if (action === 'create_post') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  const body = { title, status: input.status || 'draft' };\n  if (input.content) body.content = input.content;\n  if (input.excerpt) body.excerpt = input.excerpt;\n  const cats = parseIdList(input.categories);\n  if (cats && cats.length) body.categories = cats;\n  const tags = parseIdList(input.tags);\n  if (tags && tags.length) body.tags = tags;\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/posts', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Post created: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' + (p.link ? '\\nLink: ' + p.link : '') } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_post ───────────────────────────────\n} else if (action === 'update_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const body = {};\n  if (input.title !== undefined && input.title !== '') body.title = input.title;\n  if (input.content !== undefined && input.content !== '') body.content = input.content;\n  if (input.status !== undefined && input.status !== '') body.status = input.status;\n  if (input.excerpt !== undefined && input.excerpt !== '') body.excerpt = input.excerpt;\n  const cats = parseIdList(input.categories);\n  if (cats) body.categories = cats;\n  const tags = parseIdList(input.tags);\n  if (tags) body.tags = tags;\n  if (Object.keys(body).length === 0) return [{ json: { error: 'At least one field (title, content, status, excerpt, categories, tags) is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/posts/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Post updated: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── delete_post ───────────────────────────────\n} else if (action === 'delete_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const force = input.force === true || input.force === 'true';\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: apiBase + '/posts/' + encodeURIComponent(id) + (force ? '?force=true' : ''), headers: wpHeaders });\n    return [{ json: { result: force ? 'Post ' + id + ' permanently deleted.' : 'Post ' + id + ' moved to trash.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_pages ───────────────────────────────\n} else if (action === 'list_pages') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.search) params.append('search', input.search);\n  if (input.status) params.append('status', input.status);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/pages?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No pages found.' } }];\n    let result = 'Found ' + data.length + ' pages:\\n\\n';\n    for (const p of data) result += formatItem(p) + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list pages: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_page ───────────────────────────────\n} else if (action === 'get_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'GET', url: apiBase + '/pages/' + encodeURIComponent(id), headers: wpHeaders });\n    let result = '**' + titleOf(p) + '**\\n';\n    result += 'ID: ' + p.id + ' | Status: ' + p.status + '\\n';\n    if (p.link) result += 'Link: ' + p.link + '\\n';\n    if (p.parent) result += 'Parent: ' + p.parent + '\\n';\n    const content = p.content && p.content.rendered ? stripHtml(p.content.rendered) : '';\n    result += '\\nContent:\\n' + content;\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated)';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_page ───────────────────────────────\n} else if (action === 'create_page') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  const body = { title, status: input.status || 'draft' };\n  if (input.content) body.content = input.content;\n  if (input.parent) body.parent = parseInt(input.parent);\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/pages', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Page created: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' + (p.link ? '\\nLink: ' + p.link : '') } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_page ───────────────────────────────\n} else if (action === 'update_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const body = {};\n  if (input.title !== undefined && input.title !== '') body.title = input.title;\n  if (input.content !== undefined && input.content !== '') body.content = input.content;\n  if (input.status !== undefined && input.status !== '') body.status = input.status;\n  if (input.parent !== undefined && input.parent !== '') body.parent = parseInt(input.parent);\n  if (Object.keys(body).length === 0) return [{ json: { error: 'At least one field to update is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/pages/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Page updated: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── delete_page ───────────────────────────────\n} else if (action === 'delete_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const force = input.force === true || input.force === 'true';\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: apiBase + '/pages/' + encodeURIComponent(id) + (force ? '?force=true' : ''), headers: wpHeaders });\n    return [{ json: { result: force ? 'Page ' + id + ' permanently deleted.' : 'Page ' + id + ' moved to trash.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_comments ───────────────────────────────\n} else if (action === 'list_comments') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.post) params.append('post', String(input.post));\n  if (input.status) params.append('status', input.status);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/comments?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No comments found.' } }];\n    let result = 'Found ' + data.length + ' comments:\\n\\n';\n    for (const c of data) {\n      const content = c.content && c.content.rendered ? stripHtml(c.content.rendered) : '';\n      result += 'ID ' + c.id + ' [' + c.status + '] by \"' + (c.author_name || '') + '\" on post ' + c.post + '\\n  ' + truncate(content, 200) + '\\n\\n';\n    }\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list comments: ' + err.message } }];\n  }\n\n// ─────────────────────────────── moderate_comment ───────────────────────────────\n} else if (action === 'moderate_comment') {\n  const id = input.id;\n  const status = input.status;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  if (!status) return [{ json: { error: 'Parameter \"status\" is required. Use one of: approved, hold, spam, trash.' } }];\n  const valid = ['approved', 'approve', 'hold', 'spam', 'trash'];\n  if (!valid.includes(status)) return [{ json: { error: 'Invalid status \"' + status + '\". Use: approved, hold, spam, trash.' } }];\n  const normalized = status === 'approve' ? 'approved' : status;\n  try {\n    const c = await helpers.httpRequest({ method: 'POST', url: apiBase + '/comments/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify({ status: normalized }) });\n    return [{ json: { result: 'Comment ' + id + ' moderated: status = ' + c.status } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to moderate comment: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_categories ───────────────────────────────\n} else if (action === 'list_categories') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.search) params.append('search', input.search);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/categories?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No categories found.' } }];\n    let result = 'Found ' + data.length + ' categories:\\n';\n    for (const c of data) result += 'ID ' + c.id + ' — \"' + c.name + '\" (slug: ' + c.slug + ', ' + c.count + ' posts)\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list categories: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_category ───────────────────────────────\n} else if (action === 'create_category') {\n  const name = input.name;\n  if (!name) return [{ json: { error: 'Parameter \"name\" is required.' } }];\n  const body = { name };\n  if (input.description) body.description = input.description;\n  if (input.parent) body.parent = parseInt(input.parent);\n  if (input.slug) body.slug = input.slug;\n  try {\n    const c = await helpers.httpRequest({ method: 'POST', url: apiBase + '/categories', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Category created: ID ' + c.id + ' — \"' + c.name + '\" (slug: ' + c.slug + ')' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create category: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_tags ───────────────────────────────\n} else if (action === 'list_tags') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.search) params.append('search', input.search);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/tags?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No tags found.' } }];\n    let result = 'Found ' + data.length + ' tags:\\n';\n    for (const t of data) result += 'ID ' + t.id + ' — \"' + t.name + '\" (slug: ' + t.slug + ', ' + t.count + ' posts)\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list tags: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_users ───────────────────────────────\n} else if (action === 'list_users') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/users?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No users found.' } }];\n    let result = 'Found ' + data.length + ' users:\\n';\n    for (const u of data) result += 'ID ' + u.id + ' — \"' + u.name + '\" (@' + u.slug + ')\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list users: ' + err.message } }];\n  }\n\n// ─────────────────────────────── search ───────────────────────────────\n} else if (action === 'search') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required.' } }];\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = new URLSearchParams();\n  params.append('search', query);\n  params.append('per_page', String(perPage));\n  if (input.type) params.append('type', input.type);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/search?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No results for \"' + query + '\".' } }];\n    let result = 'Found ' + data.length + ' results for \"' + query + '\":\\n\\n';\n    for (const r of data) result += 'ID ' + r.id + ' [' + r.subtype + '] — \"' + r.title + '\"\\n  ' + r.url + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to search: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_media ───────────────────────────────\n} else if (action === 'list_media') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = new URLSearchParams();\n  params.append('per_page', String(perPage));\n  if (input.search) params.append('search', input.search);\n  if (input.media_type) params.append('media_type', input.media_type);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/media?' + params.toString(), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No media found.' } }];\n    let result = 'Found ' + data.length + ' media items:\\n\\n';\n    for (const m of data) {\n      const title = (m.title && m.title.rendered) || m.slug || '';\n      result += 'ID ' + m.id + ' — \"' + title + '\" [' + m.mime_type + ']\\n  ' + m.source_url + '\\n\\n';\n    }\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list media: ' + err.message } }];\n  }\n\n// ─────────────────────────────── upload_media ───────────────────────────────\n} else if (action === 'upload_media') {\n  if (!input.file_ref) return [{ json: { error: 'Parameter \"file_ref\" (File Bridge ID from a user-sent file, e.g. file-abc12345) is required.' } }];\n  const BRIDGE_URL = 'http://file-bridge:3200';\n  const form_fields = {};\n  if (input.title) form_fields.title = input.title;\n  if (input.alt_text) form_fields.alt_text = input.alt_text;\n  if (input.caption) form_fields.caption = input.caption;\n  try {\n    const fwd = await helpers.httpRequest({\n      method: 'POST',\n      url: BRIDGE_URL + '/files/' + input.file_ref + '/forward',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        url: apiBase + '/media',\n        headers: { 'Authorization': authHeader },\n        form_fields: form_fields,\n        filename: input.filename || undefined\n      })\n    });\n    if (fwd && fwd.remote_status && fwd.remote_status >= 200 && fwd.remote_status < 300) {\n      const media = fwd.remote_response || {};\n      return [{ json: { result: 'Media uploaded: ID ' + (media.id || '?') + ' — ' + (media.source_url || '(no URL)') + (media.mime_type ? ' [' + media.mime_type + ']' : '') } }];\n    }\n    const errMsg = fwd && fwd.remote_response && fwd.remote_response.message ? fwd.remote_response.message : JSON.stringify(fwd);\n    return [{ json: { error: 'Upload rejected by WordPress (HTTP ' + (fwd && fwd.remote_status) + '): ' + errMsg } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to upload media: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_posts, get_post, create_post, update_post, delete_post, list_pages, get_page, create_page, update_page, delete_page, list_comments, moderate_comment, list_categories, create_category, list_tags, list_users, search, list_media, upload_media.' } }];\n}\n"
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_posts';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.wordpress&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\n\nif (!creds.wp_url || !creds.wp_username || !creds.wp_app_password) {\n  return [{ json: { error: 'WordPress credentials missing. Use add_credential to set wp_url, wp_username, and wp_app_password.' } }];\n}\n\nconst baseUrl = creds.wp_url.replace(/\\/+$/, '');\nconst apiBase = baseUrl + '/wp-json/wp/v2';\nconst authHeader = 'Basic ' + Buffer.from(creds.wp_username + ':' + creds.wp_app_password).toString('base64');\nconst wpHeaders = { 'Authorization': authHeader, 'Content-Type': 'application/json' };\n\nfunction stripHtml(html) {\n  if (!html) return '';\n  return String(html).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#8217;/g, \"'\").replace(/&#8220;|&#8221;/g, '\"').trim();\n}\n\nfunction truncate(s, n) {\n  if (!s) return '';\n  s = String(s);\n  return s.length > n ? s.substring(0, n) + '...' : s;\n}\n\nfunction titleOf(p) {\n  return (p.title && p.title.rendered) ? p.title.rendered : (p.title || '(no title)');\n}\n\nfunction formatItem(p) {\n  const title = titleOf(p);\n  const excerpt = p.excerpt && p.excerpt.rendered ? stripHtml(p.excerpt.rendered) : '';\n  let s = 'ID ' + p.id + ' — \"' + title + '\" [' + p.status + ']';\n  if (excerpt) s += '\\n  ' + truncate(excerpt, 150);\n  if (p.link) s += '\\n  ' + p.link;\n  return s;\n}\n\nfunction parseIdList(v) {\n  if (v === undefined || v === null || v === '') return undefined;\n  return String(v).split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));\n}\nfunction qs(o) {\n  const parts = [];\n  for (const k of Object.keys(o)) {\n    const v = o[k];\n    if (v === undefined || v === null || v === '') continue;\n    parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));\n  }\n  return parts.join('&');\n}\n\n\n// ─────────────────────────────── list_posts ───────────────────────────────\nif (action === 'list_posts') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.search) params['search'] = input.search;\n  if (input.status) params['status'] = input.status;\n  if (input.page) params['page'] = String(input.page);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/posts?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No posts found.' } }];\n    let result = 'Found ' + data.length + ' posts:\\n\\n';\n    for (const p of data) result += formatItem(p) + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list posts: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_post ───────────────────────────────\n} else if (action === 'get_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required (e.g. 1).' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'GET', url: apiBase + '/posts/' + encodeURIComponent(id), headers: wpHeaders });\n    let result = '**' + titleOf(p) + '**\\n';\n    result += 'ID: ' + p.id + ' | Status: ' + p.status + ' | Date: ' + p.date + '\\n';\n    if (p.link) result += 'Link: ' + p.link + '\\n';\n    if (p.author) result += 'Author: ' + p.author + '\\n';\n    if (p.categories && p.categories.length) result += 'Categories: ' + p.categories.join(', ') + '\\n';\n    if (p.tags && p.tags.length) result += 'Tags: ' + p.tags.join(', ') + '\\n';\n    const content = p.content && p.content.rendered ? stripHtml(p.content.rendered) : '';\n    result += '\\nContent:\\n' + content;\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated, ' + result.length + ' chars total)';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_post ───────────────────────────────\n} else if (action === 'create_post') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  const body = { title, status: input.status || 'draft' };\n  if (input.content) body.content = input.content;\n  if (input.excerpt) body.excerpt = input.excerpt;\n  const cats = parseIdList(input.categories);\n  if (cats && cats.length) body.categories = cats;\n  const tags = parseIdList(input.tags);\n  if (tags && tags.length) body.tags = tags;\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/posts', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Post created: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' + (p.link ? '\\nLink: ' + p.link : '') } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_post ───────────────────────────────\n} else if (action === 'update_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const body = {};\n  if (input.title !== undefined && input.title !== '') body.title = input.title;\n  if (input.content !== undefined && input.content !== '') body.content = input.content;\n  if (input.status !== undefined && input.status !== '') body.status = input.status;\n  if (input.excerpt !== undefined && input.excerpt !== '') body.excerpt = input.excerpt;\n  const cats = parseIdList(input.categories);\n  if (cats) body.categories = cats;\n  const tags = parseIdList(input.tags);\n  if (tags) body.tags = tags;\n  if (Object.keys(body).length === 0) return [{ json: { error: 'At least one field (title, content, status, excerpt, categories, tags) is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/posts/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Post updated: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── delete_post ───────────────────────────────\n} else if (action === 'delete_post') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const force = input.force === true || input.force === 'true';\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: apiBase + '/posts/' + encodeURIComponent(id) + (force ? '?force=true' : ''), headers: wpHeaders });\n    return [{ json: { result: force ? 'Post ' + id + ' permanently deleted.' : 'Post ' + id + ' moved to trash.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete post: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_pages ───────────────────────────────\n} else if (action === 'list_pages') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.search) params['search'] = input.search;\n  if (input.status) params['status'] = input.status;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/pages?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No pages found.' } }];\n    let result = 'Found ' + data.length + ' pages:\\n\\n';\n    for (const p of data) result += formatItem(p) + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list pages: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_page ───────────────────────────────\n} else if (action === 'get_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'GET', url: apiBase + '/pages/' + encodeURIComponent(id), headers: wpHeaders });\n    let result = '**' + titleOf(p) + '**\\n';\n    result += 'ID: ' + p.id + ' | Status: ' + p.status + '\\n';\n    if (p.link) result += 'Link: ' + p.link + '\\n';\n    if (p.parent) result += 'Parent: ' + p.parent + '\\n';\n    const content = p.content && p.content.rendered ? stripHtml(p.content.rendered) : '';\n    result += '\\nContent:\\n' + content;\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated)';\n    return [{ json: { result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_page ───────────────────────────────\n} else if (action === 'create_page') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  const body = { title, status: input.status || 'draft' };\n  if (input.content) body.content = input.content;\n  if (input.parent) body.parent = parseInt(input.parent);\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/pages', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Page created: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' + (p.link ? '\\nLink: ' + p.link : '') } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_page ───────────────────────────────\n} else if (action === 'update_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const body = {};\n  if (input.title !== undefined && input.title !== '') body.title = input.title;\n  if (input.content !== undefined && input.content !== '') body.content = input.content;\n  if (input.status !== undefined && input.status !== '') body.status = input.status;\n  if (input.parent !== undefined && input.parent !== '') body.parent = parseInt(input.parent);\n  if (Object.keys(body).length === 0) return [{ json: { error: 'At least one field to update is required.' } }];\n  try {\n    const p = await helpers.httpRequest({ method: 'POST', url: apiBase + '/pages/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Page updated: ID ' + p.id + ' — \"' + titleOf(p) + '\" [' + p.status + ']' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── delete_page ───────────────────────────────\n} else if (action === 'delete_page') {\n  const id = input.id;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const force = input.force === true || input.force === 'true';\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: apiBase + '/pages/' + encodeURIComponent(id) + (force ? '?force=true' : ''), headers: wpHeaders });\n    return [{ json: { result: force ? 'Page ' + id + ' permanently deleted.' : 'Page ' + id + ' moved to trash.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete page: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_comments ───────────────────────────────\n} else if (action === 'list_comments') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.post) params['post'] = String(input.post);\n  if (input.status) params['status'] = input.status;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/comments?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No comments found.' } }];\n    let result = 'Found ' + data.length + ' comments:\\n\\n';\n    for (const c of data) {\n      const content = c.content && c.content.rendered ? stripHtml(c.content.rendered) : '';\n      result += 'ID ' + c.id + ' [' + c.status + '] by \"' + (c.author_name || '') + '\" on post ' + c.post + '\\n  ' + truncate(content, 200) + '\\n\\n';\n    }\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list comments: ' + err.message } }];\n  }\n\n// ─────────────────────────────── moderate_comment ───────────────────────────────\n} else if (action === 'moderate_comment') {\n  const id = input.id;\n  const status = input.status;\n  if (!id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  if (!status) return [{ json: { error: 'Parameter \"status\" is required. Use one of: approved, hold, spam, trash.' } }];\n  const valid = ['approved', 'approve', 'hold', 'spam', 'trash'];\n  if (!valid.includes(status)) return [{ json: { error: 'Invalid status \"' + status + '\". Use: approved, hold, spam, trash.' } }];\n  const normalized = status === 'approve' ? 'approved' : status;\n  try {\n    const c = await helpers.httpRequest({ method: 'POST', url: apiBase + '/comments/' + encodeURIComponent(id), headers: wpHeaders, body: JSON.stringify({ status: normalized }) });\n    return [{ json: { result: 'Comment ' + id + ' moderated: status = ' + c.status } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to moderate comment: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_categories ───────────────────────────────\n} else if (action === 'list_categories') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.search) params['search'] = input.search;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/categories?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No categories found.' } }];\n    let result = 'Found ' + data.length + ' categories:\\n';\n    for (const c of data) result += 'ID ' + c.id + ' — \"' + c.name + '\" (slug: ' + c.slug + ', ' + c.count + ' posts)\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list categories: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_category ───────────────────────────────\n} else if (action === 'create_category') {\n  const name = input.name;\n  if (!name) return [{ json: { error: 'Parameter \"name\" is required.' } }];\n  const body = { name };\n  if (input.description) body.description = input.description;\n  if (input.parent) body.parent = parseInt(input.parent);\n  if (input.slug) body.slug = input.slug;\n  try {\n    const c = await helpers.httpRequest({ method: 'POST', url: apiBase + '/categories', headers: wpHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Category created: ID ' + c.id + ' — \"' + c.name + '\" (slug: ' + c.slug + ')' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create category: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_tags ───────────────────────────────\n} else if (action === 'list_tags') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.search) params['search'] = input.search;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/tags?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No tags found.' } }];\n    let result = 'Found ' + data.length + ' tags:\\n';\n    for (const t of data) result += 'ID ' + t.id + ' — \"' + t.name + '\" (slug: ' + t.slug + ', ' + t.count + ' posts)\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list tags: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_users ───────────────────────────────\n} else if (action === 'list_users') {\n  const perPage = Math.min(parseInt(input.per_page) || 20, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/users?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No users found.' } }];\n    let result = 'Found ' + data.length + ' users:\\n';\n    for (const u of data) result += 'ID ' + u.id + ' — \"' + u.name + '\" (@' + u.slug + ')\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list users: ' + err.message } }];\n  }\n\n// ─────────────────────────────── search ───────────────────────────────\n} else if (action === 'search') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required.' } }];\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = {};\n  params['search'] = query;\n  params['per_page'] = String(perPage);\n  if (input.type) params['type'] = input.type;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/search?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No results for \"' + query + '\".' } }];\n    let result = 'Found ' + data.length + ' results for \"' + query + '\":\\n\\n';\n    for (const r of data) result += 'ID ' + r.id + ' [' + r.subtype + '] — \"' + r.title + '\"\\n  ' + r.url + '\\n\\n';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to search: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_media ───────────────────────────────\n} else if (action === 'list_media') {\n  const perPage = Math.min(parseInt(input.per_page) || 10, 100);\n  const params = {};\n  params['per_page'] = String(perPage);\n  if (input.search) params['search'] = input.search;\n  if (input.media_type) params['media_type'] = input.media_type;\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url: apiBase + '/media?' + qs(params), headers: wpHeaders });\n    if (!data || data.length === 0) return [{ json: { result: 'No media found.' } }];\n    let result = 'Found ' + data.length + ' media items:\\n\\n';\n    for (const m of data) {\n      const title = (m.title && m.title.rendered) || m.slug || '';\n      result += 'ID ' + m.id + ' — \"' + title + '\" [' + m.mime_type + ']\\n  ' + m.source_url + '\\n\\n';\n    }\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list media: ' + err.message } }];\n  }\n\n// ─────────────────────────────── upload_media ───────────────────────────────\n} else if (action === 'upload_media') {\n  if (!input.file_ref) return [{ json: { error: 'Parameter \"file_ref\" (File Bridge ID from a user-sent file, e.g. file-abc12345) is required.' } }];\n  const BRIDGE_URL = 'http://file-bridge:3200';\n  const form_fields = {};\n  if (input.title) form_fields.title = input.title;\n  if (input.alt_text) form_fields.alt_text = input.alt_text;\n  if (input.caption) form_fields.caption = input.caption;\n  try {\n    const fwd = await helpers.httpRequest({\n      method: 'POST',\n      url: BRIDGE_URL + '/files/' + input.file_ref + '/forward',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({\n        url: apiBase + '/media',\n        headers: { 'Authorization': authHeader },\n        form_fields: form_fields,\n        filename: input.filename || undefined\n      })\n    });\n    if (fwd && fwd.remote_status && fwd.remote_status >= 200 && fwd.remote_status < 300) {\n      const media = fwd.remote_response || {};\n      return [{ json: { result: 'Media uploaded: ID ' + (media.id || '?') + ' — ' + (media.source_url || '(no URL)') + (media.mime_type ? ' [' + media.mime_type + ']' : '') } }];\n    }\n    const errMsg = fwd && fwd.remote_response && fwd.remote_response.message ? fwd.remote_response.message : JSON.stringify(fwd);\n    return [{ json: { error: 'Upload rejected by WordPress (HTTP ' + (fwd && fwd.remote_status) + '): ' + errMsg } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to upload media: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_posts, get_post, create_post, update_post, delete_post, list_pages, get_page, create_page, update_page, delete_page, list_comments, moderate_comment, list_categories, create_category, list_tags, list_users, search, list_media, upload_media.' } }];\n}\n"
         }
       }
     ],
     "connections": {
       "Execute Workflow Trigger": {
-        "main": [[{ "node": "WordPress Logic", "type": "main", "index": 0 }]]
+        "main": [
+          [
+            {
+              "node": "WordPress Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   },
@@ -46,7 +60,10 @@
         "name": "MCP Server Trigger",
         "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
         "typeVersion": 2,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "path": "wordpress"
         }
@@ -56,11 +73,18 @@
         "name": "list_posts",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 300],
+        "position": [
+          0,
+          300
+        ],
         "parameters": {
           "name": "list_posts",
           "description": "List WordPress posts. Optional filters: search (keyword), status (publish/draft/pending/private), per_page (default 10, max 100), page (pagination).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -72,13 +96,44 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "search", "displayName": "search", "type": "string", "description": "Search keyword", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status filter", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false },
-              { "id": "page", "displayName": "page", "type": "string", "description": "Page number", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "type": "string",
+                "description": "Search keyword",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status filter",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              },
+              {
+                "id": "page",
+                "displayName": "page",
+                "type": "string",
+                "description": "Page number",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -87,11 +142,18 @@
         "name": "get_post",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 300],
+        "position": [
+          250,
+          300
+        ],
         "parameters": {
           "name": "get_post",
           "description": "Get a single WordPress post by ID (full content, status, author, categories, tags).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -100,10 +162,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Post ID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Post ID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -112,11 +187,18 @@
         "name": "create_post",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 300],
+        "position": [
+          500,
+          300
+        ],
         "parameters": {
           "name": "create_post",
           "description": "Create a new WordPress post. Default status is 'draft'. Categories/tags are comma-separated lists of IDs (use list_categories/list_tags to find IDs). Content accepts HTML.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -130,15 +212,58 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Post title", "required": true },
-              { "id": "content", "displayName": "content", "type": "string", "description": "Post content", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Post status", "required": false },
-              { "id": "excerpt", "displayName": "excerpt", "type": "string", "description": "Excerpt", "required": false },
-              { "id": "categories", "displayName": "categories", "type": "string", "description": "Category IDs", "required": false },
-              { "id": "tags", "displayName": "tags", "type": "string", "description": "Tag IDs", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Post title",
+                "required": true
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Post content",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Post status",
+                "required": false
+              },
+              {
+                "id": "excerpt",
+                "displayName": "excerpt",
+                "type": "string",
+                "description": "Excerpt",
+                "required": false
+              },
+              {
+                "id": "categories",
+                "displayName": "categories",
+                "type": "string",
+                "description": "Category IDs",
+                "required": false
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "type": "string",
+                "description": "Tag IDs",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -147,11 +272,18 @@
         "name": "update_post",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 300],
+        "position": [
+          750,
+          300
+        ],
         "parameters": {
           "name": "update_post",
           "description": "Update a WordPress post (provide only fields you want to change). Use status='publish' to publish a draft.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -166,16 +298,65 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Post ID", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Title", "required": false },
-              { "id": "content", "displayName": "content", "type": "string", "description": "Content", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status", "required": false },
-              { "id": "excerpt", "displayName": "excerpt", "type": "string", "description": "Excerpt", "required": false },
-              { "id": "categories", "displayName": "categories", "type": "string", "description": "Category IDs", "required": false },
-              { "id": "tags", "displayName": "tags", "type": "string", "description": "Tag IDs", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Post ID",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Title",
+                "required": false
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Content",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status",
+                "required": false
+              },
+              {
+                "id": "excerpt",
+                "displayName": "excerpt",
+                "type": "string",
+                "description": "Excerpt",
+                "required": false
+              },
+              {
+                "id": "categories",
+                "displayName": "categories",
+                "type": "string",
+                "description": "Category IDs",
+                "required": false
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "type": "string",
+                "description": "Tag IDs",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -184,11 +365,18 @@
         "name": "delete_post",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [1000, 300],
+        "position": [
+          1000,
+          300
+        ],
         "parameters": {
           "name": "delete_post",
           "description": "Delete a post. Without force it goes to trash (recoverable). With force=true it's permanently deleted.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -198,11 +386,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Post ID", "required": true },
-              { "id": "force", "displayName": "force", "type": "string", "description": "Permanent delete", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Post ID",
+                "required": true
+              },
+              {
+                "id": "force",
+                "displayName": "force",
+                "type": "string",
+                "description": "Permanent delete",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -211,11 +418,18 @@
         "name": "list_pages",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 600],
+        "position": [
+          0,
+          600
+        ],
         "parameters": {
           "name": "list_pages",
           "description": "List WordPress pages (static pages like About, Contact, Imprint). Optional: search, status, per_page.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -226,12 +440,37 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "search", "displayName": "search", "type": "string", "description": "Search keyword", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status filter", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "type": "string",
+                "description": "Search keyword",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status filter",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -240,11 +479,18 @@
         "name": "get_page",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 600],
+        "position": [
+          250,
+          600
+        ],
         "parameters": {
           "name": "get_page",
           "description": "Get a single WordPress page by ID (full content, parent).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -253,10 +499,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Page ID", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Page ID",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -265,11 +524,18 @@
         "name": "create_page",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 600],
+        "position": [
+          500,
+          600
+        ],
         "parameters": {
           "name": "create_page",
           "description": "Create a new WordPress page. Default status is 'draft'. Optional parent (another page ID) for hierarchy.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -281,13 +547,44 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Page title", "required": true },
-              { "id": "content", "displayName": "content", "type": "string", "description": "Content", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status", "required": false },
-              { "id": "parent", "displayName": "parent", "type": "string", "description": "Parent page ID", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Page title",
+                "required": true
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Content",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status",
+                "required": false
+              },
+              {
+                "id": "parent",
+                "displayName": "parent",
+                "type": "string",
+                "description": "Parent page ID",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -296,11 +593,18 @@
         "name": "update_page",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 600],
+        "position": [
+          750,
+          600
+        ],
         "parameters": {
           "name": "update_page",
           "description": "Update a WordPress page (only provided fields are changed).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -313,14 +617,51 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Page ID", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Title", "required": false },
-              { "id": "content", "displayName": "content", "type": "string", "description": "Content", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status", "required": false },
-              { "id": "parent", "displayName": "parent", "type": "string", "description": "Parent page ID", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Page ID",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Title",
+                "required": false
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Content",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status",
+                "required": false
+              },
+              {
+                "id": "parent",
+                "displayName": "parent",
+                "type": "string",
+                "description": "Parent page ID",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -329,11 +670,18 @@
         "name": "delete_page",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [1000, 600],
+        "position": [
+          1000,
+          600
+        ],
         "parameters": {
           "name": "delete_page",
           "description": "Delete a page (trash by default, force=true for permanent).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -343,11 +691,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Page ID", "required": true },
-              { "id": "force", "displayName": "force", "type": "string", "description": "Permanent delete", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Page ID",
+                "required": true
+              },
+              {
+                "id": "force",
+                "displayName": "force",
+                "type": "string",
+                "description": "Permanent delete",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -356,11 +723,18 @@
         "name": "list_comments",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 900],
+        "position": [
+          0,
+          900
+        ],
         "parameters": {
           "name": "list_comments",
           "description": "List comments. Optional: post (filter by post ID), status (approve/hold/spam/trash), per_page.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -371,12 +745,37 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "post", "displayName": "post", "type": "string", "description": "Post ID filter", "required": false },
-              { "id": "status", "displayName": "status", "type": "string", "description": "Status filter", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "post",
+                "displayName": "post",
+                "type": "string",
+                "description": "Post ID filter",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "Status filter",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -385,11 +784,18 @@
         "name": "moderate_comment",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 900],
+        "position": [
+          250,
+          900
+        ],
         "parameters": {
           "name": "moderate_comment",
           "description": "Change a comment's moderation status. Status values: approved (or approve), hold (pending), spam, trash.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -399,11 +805,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "id", "displayName": "id", "type": "string", "description": "Comment ID", "required": true },
-              { "id": "status", "displayName": "status", "type": "string", "description": "New status", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "type": "string",
+                "description": "Comment ID",
+                "required": true
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "New status",
+                "required": true
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -412,11 +837,18 @@
         "name": "list_categories",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 900],
+        "position": [
+          500,
+          900
+        ],
         "parameters": {
           "name": "list_categories",
           "description": "List post categories with their IDs and post counts.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -426,11 +858,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "search", "displayName": "search", "type": "string", "description": "Search keyword", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "type": "string",
+                "description": "Search keyword",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -439,11 +890,18 @@
         "name": "create_category",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 900],
+        "position": [
+          750,
+          900
+        ],
         "parameters": {
           "name": "create_category",
           "description": "Create a new post category. Required: name. Optional: description, parent (for hierarchy), slug.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -455,13 +913,44 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "name", "displayName": "name", "type": "string", "description": "Category name", "required": true },
-              { "id": "description", "displayName": "description", "type": "string", "description": "Description", "required": false },
-              { "id": "parent", "displayName": "parent", "type": "string", "description": "Parent category ID", "required": false },
-              { "id": "slug", "displayName": "slug", "type": "string", "description": "URL slug", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Category name",
+                "required": true
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "type": "string",
+                "description": "Description",
+                "required": false
+              },
+              {
+                "id": "parent",
+                "displayName": "parent",
+                "type": "string",
+                "description": "Parent category ID",
+                "required": false
+              },
+              {
+                "id": "slug",
+                "displayName": "slug",
+                "type": "string",
+                "description": "URL slug",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -470,11 +959,18 @@
         "name": "list_tags",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [1000, 900],
+        "position": [
+          1000,
+          900
+        ],
         "parameters": {
           "name": "list_tags",
           "description": "List post tags with their IDs and post counts.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -484,11 +980,30 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "search", "displayName": "search", "type": "string", "description": "Search keyword", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "type": "string",
+                "description": "Search keyword",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -497,11 +1012,18 @@
         "name": "list_users",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 1200],
+        "position": [
+          0,
+          1200
+        ],
         "parameters": {
           "name": "list_users",
           "description": "List WordPress users (authors/editors/admins).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -510,10 +1032,23 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -522,11 +1057,18 @@
         "name": "search",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [250, 1200],
+        "position": [
+          250,
+          1200
+        ],
         "parameters": {
           "name": "search",
           "description": "Cross-type search across posts, pages, and other content. Returns ID, type, title, and URL of each match.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -537,12 +1079,37 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "query", "displayName": "query", "type": "string", "description": "Search keyword", "required": true },
-              { "id": "type", "displayName": "type", "type": "string", "description": "Type filter", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search keyword",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "Type filter",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -551,11 +1118,18 @@
         "name": "list_media",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [500, 1200],
+        "position": [
+          500,
+          1200
+        ],
         "parameters": {
           "name": "list_media",
           "description": "List Media Library items (images, videos, audio, documents). Optional: search, media_type (image/video/audio/application).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -566,12 +1140,37 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "search", "displayName": "search", "type": "string", "description": "Search keyword", "required": false },
-              { "id": "media_type", "displayName": "media_type", "type": "string", "description": "Media type filter", "required": false },
-              { "id": "per_page", "displayName": "per_page", "type": "string", "description": "Results per page", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "type": "string",
+                "description": "Search keyword",
+                "required": false
+              },
+              {
+                "id": "media_type",
+                "displayName": "media_type",
+                "type": "string",
+                "description": "Media type filter",
+                "required": false
+              },
+              {
+                "id": "per_page",
+                "displayName": "per_page",
+                "type": "string",
+                "description": "Results per page",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       },
@@ -580,11 +1179,18 @@
         "name": "upload_media",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [750, 1200],
+        "position": [
+          750,
+          1200
+        ],
         "parameters": {
           "name": "upload_media",
           "description": "Upload a file from a user-sent file (File Bridge) to the WordPress Media Library. Required: file_ref (the ID from the user's message, e.g. file-abc12345). Optional: title, alt_text, caption, filename (custom name).",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -597,38 +1203,265 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
-              { "id": "file_ref", "displayName": "file_ref", "type": "string", "description": "File Bridge ID", "required": true },
-              { "id": "title", "displayName": "title", "type": "string", "description": "Media title", "required": false },
-              { "id": "alt_text", "displayName": "alt_text", "type": "string", "description": "Alt text", "required": false },
-              { "id": "caption", "displayName": "caption", "type": "string", "description": "Caption", "required": false },
-              { "id": "filename", "displayName": "filename", "type": "string", "description": "Custom filename", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "file_ref",
+                "displayName": "file_ref",
+                "type": "string",
+                "description": "File Bridge ID",
+                "required": true
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "type": "string",
+                "description": "Media title",
+                "required": false
+              },
+              {
+                "id": "alt_text",
+                "displayName": "alt_text",
+                "type": "string",
+                "description": "Alt text",
+                "required": false
+              },
+              {
+                "id": "caption",
+                "displayName": "caption",
+                "type": "string",
+                "description": "Caption",
+                "required": false
+              },
+              {
+                "id": "filename",
+                "displayName": "filename",
+                "type": "string",
+                "description": "Custom filename",
+                "required": false
+              }
             ],
-            "attemptToConvertTypes": false, "convertFieldsToString": false
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
           }
         }
       }
     ],
     "connections": {
-      "list_posts": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_post": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_post": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "update_post": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "delete_post": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_pages": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "get_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "update_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "delete_page": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_comments": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "moderate_comment": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_categories": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "create_category": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_tags": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_users": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "search": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "list_media": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "upload_media": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+      "list_posts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_post": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_post": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_post": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_post": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_pages": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_page": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_page": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_page": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_page": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_comments": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "moderate_comment": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_categories": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_category": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_tags": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_users": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "search": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_media": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "upload_media": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
     }
   }
 }
