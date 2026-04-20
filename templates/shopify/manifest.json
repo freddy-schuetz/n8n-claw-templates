@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "updated": "2026-04-20",
   "type": "native",
-  "category": "productivity",
+  "category": "e-commerce",
   "description": "Manage a Shopify store via the GraphQL Admin API (2026-01): products, orders, customers, inventory, fulfillment. Uses a Custom App access token (shpat_...). Read and write access — tested live against a real Shopify store.",
   "credentials_required": [
     {

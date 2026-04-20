@@ -922,7 +922,7 @@
       "id": "wordpress",
       "name": "WordPress",
       "type": "native",
-      "category": "productivity",
+      "category": "cms",
       "description": "Manage a WordPress site via the REST API: posts, pages, comments, categories, tags, users, media. Uses Application Passwords (WordPress 5.6+).",
       "credentials_required": [
         {
@@ -944,7 +944,7 @@
       "id": "shopify",
       "name": "Shopify",
       "type": "native",
-      "category": "productivity",
+      "category": "e-commerce",
       "description": "Manage a Shopify store via the GraphQL Admin API (2026-01): products, orders, customers, inventory, fulfillment, order edits. Custom App access token auth.",
       "credentials_required": [
         {

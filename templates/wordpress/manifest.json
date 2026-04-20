@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "updated": "2026-04-20",
   "type": "native",
-  "category": "productivity",
+  "category": "cms",
   "description": "Manage a WordPress site via the REST API: posts, pages, comments, categories, tags, users, media. Uses Application Passwords (WordPress 5.6+). Read and write access — tested live against WordPress 6+ REST API.",
   "credentials_required": [
     {
