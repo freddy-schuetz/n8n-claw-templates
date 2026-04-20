@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (65)
+## Available Skills (66)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -23,7 +23,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
-| [Notes & CRM](#notes--crm) | 5 | Airtable, Confluence Cloud, NocoDB, Notion, WordPress |
+| [Notes & CRM](#notes--crm) | 6 | Airtable, Confluence Cloud, NocoDB, Notion, Shopify, WordPress |
 | [Reference](#reference) | 3 | Countries, holidays, timezones |
 | [Smart Home](#smart-home) | 1 | Home Assistant |
 | [Tasks](#tasks) | 4 | Asana, Jira Cloud, Todoist, Vikunja |
@@ -158,6 +158,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Confluence Cloud](https://www.atlassian.com/software/confluence) | Confluence wiki (14 tools): CQL search, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Shopify](https://www.shopify.com/) | Shopify store admin (14 tools) via GraphQL Admin API 2026-01: products, orders, customers, inventory, fulfillment, order-quantity edits (begin → set → commit). Custom App access token auth | Store Domain, Admin API Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [WordPress](https://wordpress.org/) | Manage a WordPress site via the REST API (19 tools): posts, pages, comments, categories, tags, users, media (incl. upload via file_ref). Uses Application Passwords (WP 5.6+) | WordPress URL, Username, Application Password | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Reference

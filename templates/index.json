@@ -939,6 +939,24 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "shopify",
+      "name": "Shopify",
+      "type": "native",
+      "category": "productivity",
+      "description": "Manage a Shopify store via the GraphQL Admin API (2026-01): products, orders, customers, inventory, fulfillment, order edits. Custom App access token auth.",
+      "credentials_required": [
+        {
+          "key": "shopify_store",
+          "label": "Shopify Store Domain"
+        },
+        {
+          "key": "shopify_access_token",
+          "label": "Shopify Admin API Access Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

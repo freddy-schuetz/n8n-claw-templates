@@ -1,0 +1,1315 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Shopify",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Shopify Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'list_products';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.shopify&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\n\nif (!creds.shopify_store || !creds.shopify_access_token) {\n  return [{ json: { error: 'Shopify credentials missing. Use add_credential to set shopify_store and shopify_access_token.' } }];\n}\n\nconst store = creds.shopify_store.replace(/^https?:\\/\\//, '').replace(/\\/+$/, '');\nconst gqlUrl = 'https://' + store + '/admin/api/2026-01/graphql.json';\nconst gqlHeaders = {\n  'X-Shopify-Access-Token': creds.shopify_access_token,\n  'Content-Type': 'application/json'\n};\n\nasync function gql(query, variables) {\n  const res = await helpers.httpRequest({\n    method: 'POST',\n    url: gqlUrl,\n    headers: gqlHeaders,\n    body: JSON.stringify({ query: query, variables: variables || {} }),\n    json: true\n  });\n  if (res.errors) {\n    const msg = res.errors.map(function(e){ return e.message || JSON.stringify(e); }).join('; ');\n    throw new Error(msg);\n  }\n  return res.data;\n}\n\nfunction truncate(s, n) {\n  if (!s) return '';\n  s = String(s);\n  return s.length > n ? s.substring(0, n) + '...' : s;\n}\n\nfunction money(m) {\n  if (!m) return '';\n  if (typeof m === 'object') return (m.amount || '') + ' ' + (m.currencyCode || '');\n  return String(m);\n}\n\nfunction parseTags(v) {\n  if (v === undefined || v === null || v === '') return undefined;\n  if (Array.isArray(v)) return v.map(String);\n  return String(v).split(',').map(function(s){ return s.trim(); }).filter(Boolean);\n}\n\nfunction gidOrNum(v, type) {\n  if (!v) return v;\n  const s = String(v);\n  if (s.indexOf('gid://') === 0) return s;\n  return 'gid://shopify/' + type + '/' + s;\n}\n\n\n// ─────────────────────────────── list_products ───────────────────────────────\nif (action === 'list_products') {\n  const first = Math.min(parseInt(input.limit) || 20, 100);\n  const query = 'query LP($first: Int!, $after: String, $query: String) { products(first: $first, after: $after, query: $query) { edges { cursor node { id title handle status vendor productType tags variants(first: 1) { edges { node { price } } } } } pageInfo { hasNextPage endCursor } } }';\n  try {\n    const data = await gql(query, { first: first, after: input.cursor || null, query: input.search || null });\n    const edges = data.products.edges;\n    if (edges.length === 0) return [{ json: { result: 'No products found.' } }];\n    let result = 'Found ' + edges.length + ' products:\\n\\n';\n    for (const e of edges) {\n      const p = e.node;\n      const price = p.variants.edges[0] ? p.variants.edges[0].node.price : '';\n      result += 'ID ' + p.id + '\\n  \"' + p.title + '\" [' + p.status + ']';\n      if (price) result += ' — ' + price;\n      if (p.vendor) result += ' (' + p.vendor + ')';\n      result += '\\n';\n    }\n    if (data.products.pageInfo.hasNextPage) result += '\\n(more available — next cursor: ' + data.products.pageInfo.endCursor + ')';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list products: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_product ───────────────────────────────\n} else if (action === 'get_product') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required (product numeric ID or gid://shopify/Product/...).' } }];\n  const id = gidOrNum(input.id, 'Product');\n  const query = 'query GP($id: ID!) { product(id: $id) { id title handle status description vendor productType tags createdAt updatedAt variants(first: 20) { edges { node { id title sku price inventoryQuantity inventoryItem { id } } } } featuredImage { url altText } } }';\n  try {\n    const data = await gql(query, { id: id });\n    const p = data.product;\n    if (!p) return [{ json: { error: 'Product not found: ' + id } }];\n    let result = '**' + p.title + '**\\n';\n    result += 'ID: ' + p.id + '\\n';\n    result += 'Status: ' + p.status + ' | Handle: ' + p.handle + '\\n';\n    if (p.vendor) result += 'Vendor: ' + p.vendor + '\\n';\n    if (p.productType) result += 'Type: ' + p.productType + '\\n';\n    if (p.tags && p.tags.length) result += 'Tags: ' + p.tags.join(', ') + '\\n';\n    result += '\\nVariants (' + p.variants.edges.length + '):\\n';\n    for (const ve of p.variants.edges) {\n      const v = ve.node;\n      result += '  ' + v.id + ' — \"' + v.title + '\" — ' + v.price;\n      if (v.sku) result += ' (SKU: ' + v.sku + ')';\n      if (v.inventoryQuantity !== null && v.inventoryQuantity !== undefined) result += ' [qty: ' + v.inventoryQuantity + ']';\n      if (v.inventoryItem && v.inventoryItem.id) result += '\\n    inventory_item_id: ' + v.inventoryItem.id;\n      result += '\\n';\n    }\n    if (p.description) result += '\\nDescription:\\n' + truncate(p.description, 1500) + '\\n';\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated)';\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get product: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_product ───────────────────────────────\n} else if (action === 'create_product') {\n  if (!input.title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  const productInput = { title: input.title };\n  if (input.description) productInput.descriptionHtml = input.description;\n  if (input.vendor) productInput.vendor = input.vendor;\n  if (input.product_type) productInput.productType = input.product_type;\n  if (input.status) productInput.status = String(input.status).toUpperCase();\n  const tags = parseTags(input.tags);\n  if (tags) productInput.tags = tags;\n\n  const query = 'mutation CP($input: ProductInput!) { productCreate(input: $input) { product { id title handle status } userErrors { field message } } }';\n  try {\n    const data = await gql(query, { input: productInput });\n    const r = data.productCreate;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'productCreate rejected: ' + r.userErrors.map(function(e){ return (e.field ? e.field.join('.') + ': ' : '') + e.message; }).join('; ') } }];\n    }\n    let result = 'Product created: ' + r.product.id + '\\n  \"' + r.product.title + '\" [' + r.product.status + ']';\n    if (input.price) {\n      const pd = await gql('query V($id: ID!) { product(id: $id) { variants(first: 1) { edges { node { id } } } } }', { id: r.product.id });\n      const variantId = pd.product.variants.edges[0] ? pd.product.variants.edges[0].node.id : null;\n      if (variantId) {\n        const priceMut = 'mutation SP($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id price } userErrors { field message } } }';\n        const pr = await gql(priceMut, { productId: r.product.id, variants: [{ id: variantId, price: String(input.price) }] });\n        if (pr.productVariantsBulkUpdate.userErrors && pr.productVariantsBulkUpdate.userErrors.length === 0) {\n          result += '\\n  price: ' + input.price;\n        }\n      }\n    }\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create product: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_product ───────────────────────────────\n} else if (action === 'update_product') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const id = gidOrNum(input.id, 'Product');\n  const productInput = { id: id };\n  let hasProductChange = false;\n  if (input.title !== undefined && input.title !== '') { productInput.title = input.title; hasProductChange = true; }\n  if (input.description !== undefined && input.description !== '') { productInput.descriptionHtml = input.description; hasProductChange = true; }\n  if (input.vendor !== undefined && input.vendor !== '') { productInput.vendor = input.vendor; hasProductChange = true; }\n  if (input.product_type !== undefined && input.product_type !== '') { productInput.productType = input.product_type; hasProductChange = true; }\n  if (input.status !== undefined && input.status !== '') { productInput.status = String(input.status).toUpperCase(); hasProductChange = true; }\n  const tags = parseTags(input.tags);\n  if (tags) { productInput.tags = tags; hasProductChange = true; }\n  const hasPrice = input.price !== undefined && input.price !== '';\n  if (!hasProductChange && !hasPrice) {\n    return [{ json: { error: 'At least one field (title, description, vendor, product_type, status, tags, price) is required.' } }];\n  }\n  try {\n    let result = '';\n    if (hasProductChange) {\n      const query = 'mutation UP($input: ProductInput!) { productUpdate(input: $input) { product { id title status } userErrors { field message } } }';\n      const data = await gql(query, { input: productInput });\n      const r = data.productUpdate;\n      if (r.userErrors && r.userErrors.length) {\n        return [{ json: { error: 'productUpdate rejected: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n      }\n      result = 'Product updated: ' + r.product.id + '\\n  \"' + r.product.title + '\" [' + r.product.status + ']';\n    }\n    if (hasPrice) {\n      const pd = await gql('query V($id: ID!) { product(id: $id) { variants(first: 1) { edges { node { id } } } } }', { id: id });\n      const variantId = pd.product.variants.edges[0] ? pd.product.variants.edges[0].node.id : null;\n      if (!variantId) {\n        result += (result ? '\\n' : '') + 'Price not updated: no variant found.';\n      } else {\n        const priceMut = 'mutation SP($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id price } userErrors { field message } } }';\n        const pr = await gql(priceMut, { productId: id, variants: [{ id: variantId, price: String(input.price) }] });\n        if (pr.productVariantsBulkUpdate.userErrors && pr.productVariantsBulkUpdate.userErrors.length) {\n          result += (result ? '\\n' : '') + 'Price update failed: ' + pr.productVariantsBulkUpdate.userErrors.map(function(e){ return e.message; }).join('; ');\n        } else {\n          result += (result ? '\\n' : '') + '  price: ' + input.price;\n        }\n      }\n    }\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update product: ' + err.message } }];\n  }\n\n// ─────────────────────────────── delete_product ───────────────────────────────\n} else if (action === 'delete_product') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const id = gidOrNum(input.id, 'Product');\n  const query = 'mutation DP($input: ProductDeleteInput!) { productDelete(input: $input) { deletedProductId userErrors { field message } } }';\n  try {\n    const data = await gql(query, { input: { id: id } });\n    const r = data.productDelete;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'productDelete rejected: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    return [{ json: { result: 'Product deleted: ' + r.deletedProductId } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to delete product: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_orders ───────────────────────────────\n} else if (action === 'list_orders') {\n  const first = Math.min(parseInt(input.limit) || 20, 100);\n  const query = 'query LO($first: Int!, $after: String, $query: String) { orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) { edges { cursor node { id name createdAt displayFinancialStatus displayFulfillmentStatus totalPriceSet { shopMoney { amount currencyCode } } customer { firstName lastName email } tags } } pageInfo { hasNextPage endCursor } } }';\n  try {\n    const data = await gql(query, { first: first, after: input.cursor || null, query: input.search || null });\n    const edges = data.orders.edges;\n    if (edges.length === 0) return [{ json: { result: 'No orders found.' } }];\n    let result = 'Found ' + edges.length + ' orders:\\n\\n';\n    for (const e of edges) {\n      const o = e.node;\n      const total = money(o.totalPriceSet && o.totalPriceSet.shopMoney);\n      const cust = o.customer ? ((o.customer.firstName || '') + ' ' + (o.customer.lastName || '')).trim() : '';\n      result += o.name + ' — ' + total + ' [' + o.displayFinancialStatus + '/' + o.displayFulfillmentStatus + ']';\n      if (cust) result += ' — ' + cust;\n      result += '\\n  ' + o.id;\n      if (o.tags && o.tags.length) result += ' — tags: ' + o.tags.join(', ');\n      result += '\\n';\n    }\n    if (data.orders.pageInfo.hasNextPage) result += '\\n(more available — next cursor: ' + data.orders.pageInfo.endCursor + ')';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list orders: ' + err.message } }];\n  }\n\n// ─────────────────────────────── get_order ───────────────────────────────\n} else if (action === 'get_order') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required (order numeric ID or gid).' } }];\n  const id = gidOrNum(input.id, 'Order');\n  const query = 'query GO($id: ID!) { order(id: $id) { id name createdAt note tags displayFinancialStatus displayFulfillmentStatus totalPriceSet { shopMoney { amount currencyCode } } subtotalPriceSet { shopMoney { amount currencyCode } } customer { id firstName lastName email phone } shippingAddress { address1 city zip country } lineItems(first: 50) { edges { node { id title quantity sku variant { id price } } } } fulfillmentOrders(first: 10) { edges { node { id status } } } } }';\n  try {\n    const data = await gql(query, { id: id });\n    const o = data.order;\n    if (!o) return [{ json: { error: 'Order not found: ' + id } }];\n    let result = '**Order ' + o.name + '**\\n';\n    result += 'ID: ' + o.id + '\\n';\n    result += 'Created: ' + o.createdAt + '\\n';\n    result += 'Status: ' + o.displayFinancialStatus + ' / ' + o.displayFulfillmentStatus + '\\n';\n    result += 'Total: ' + money(o.totalPriceSet && o.totalPriceSet.shopMoney) + ' (subtotal ' + money(o.subtotalPriceSet && o.subtotalPriceSet.shopMoney) + ')\\n';\n    if (o.tags && o.tags.length) result += 'Tags: ' + o.tags.join(', ') + '\\n';\n    if (o.note) result += 'Note: ' + o.note + '\\n';\n    if (o.customer) {\n      const name = ((o.customer.firstName || '') + ' ' + (o.customer.lastName || '')).trim();\n      result += '\\nCustomer: ' + name + ' <' + (o.customer.email || '') + '>\\n';\n    }\n    if (o.shippingAddress) {\n      result += 'Ship to: ' + (o.shippingAddress.address1 || '') + ', ' + (o.shippingAddress.zip || '') + ' ' + (o.shippingAddress.city || '') + ', ' + (o.shippingAddress.country || '') + '\\n';\n    }\n    result += '\\nLine items:\\n';\n    for (const le of o.lineItems.edges) {\n      const li = le.node;\n      result += '  ' + li.quantity + 'x \"' + li.title + '\"';\n      if (li.variant && li.variant.price) result += ' @ ' + li.variant.price;\n      result += '\\n    line_item_id: ' + li.id + '\\n';\n    }\n    if (o.fulfillmentOrders && o.fulfillmentOrders.edges.length) {\n      result += '\\nFulfillment orders:\\n';\n      for (const fe of o.fulfillmentOrders.edges) result += '  ' + fe.node.id + ' [' + fe.node.status + ']\\n';\n    }\n    if (result.length > 5000) result = result.substring(0, 5000) + '\\n\\n... (truncated)';\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to get order: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_order ───────────────────────────────\n} else if (action === 'update_order') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const id = gidOrNum(input.id, 'Order');\n  const orderInput = { id: id };\n  let has = false;\n  const tags = parseTags(input.tags);\n  if (tags) { orderInput.tags = tags; has = true; }\n  if (input.note !== undefined && input.note !== '') { orderInput.note = input.note; has = true; }\n  if (!has) return [{ json: { error: 'At least one of \"tags\" or \"note\" is required.' } }];\n  const query = 'mutation UO($input: OrderInput!) { orderUpdate(input: $input) { order { id name tags note } userErrors { field message } } }';\n  try {\n    const data = await gql(query, { input: orderInput });\n    const r = data.orderUpdate;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'orderUpdate rejected: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    let result = 'Order updated: ' + r.order.name + ' (' + r.order.id + ')';\n    if (r.order.tags && r.order.tags.length) result += '\\n  tags: ' + r.order.tags.join(', ');\n    if (r.order.note) result += '\\n  note: ' + truncate(r.order.note, 200);\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update order: ' + err.message } }];\n  }\n\n// ─────────────────────────────── edit_order_quantity ───────────────────────────────\n} else if (action === 'edit_order_quantity') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" (order ID) is required.' } }];\n  if (!input.line_item_id) return [{ json: { error: 'Parameter \"line_item_id\" is required (get it from get_order output).' } }];\n  if (input.quantity === undefined || input.quantity === '') return [{ json: { error: 'Parameter \"quantity\" is required (new quantity, integer).' } }];\n  const qty = parseInt(input.quantity);\n  if (isNaN(qty) || qty < 0) return [{ json: { error: 'Parameter \"quantity\" must be a non-negative integer.' } }];\n  const id = gidOrNum(input.id, 'Order');\n  const origLineId = gidOrNum(input.line_item_id, 'LineItem');\n  try {\n    const begin = await gql('mutation B($id: ID!) { orderEditBegin(id: $id) { calculatedOrder { id } userErrors { field message } } }', { id: id });\n    if (begin.orderEditBegin.userErrors && begin.orderEditBegin.userErrors.length) {\n      return [{ json: { error: 'orderEditBegin failed: ' + begin.orderEditBegin.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    const calcId = begin.orderEditBegin.calculatedOrder.id;\n    const origNum = origLineId.replace('gid://shopify/LineItem/', '');\n    const calc = await gql('query C($id: ID!) { calculatedOrder(id: $id) { lineItems(first: 100) { edges { node { id quantity title } } } } }', { id: calcId });\n    const targetLine = (calc.calculatedOrder.lineItems.edges || []).find(function(e){ return e.node.id.indexOf(origNum) !== -1; });\n    if (!targetLine) {\n      return [{ json: { error: 'Line item ' + origLineId + ' not found in calculated order. Run get_order again to verify the line_item_id.' } }];\n    }\n    const setQty = await gql('mutation SQ($id: ID!, $lineItemId: ID!, $quantity: Int!) { orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $quantity) { calculatedOrder { id } userErrors { field message } } }', { id: calcId, lineItemId: targetLine.node.id, quantity: qty });\n    if (setQty.orderEditSetQuantity.userErrors && setQty.orderEditSetQuantity.userErrors.length) {\n      return [{ json: { error: 'orderEditSetQuantity failed: ' + setQty.orderEditSetQuantity.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    const commit = await gql('mutation CM($id: ID!) { orderEditCommit(id: $id, notifyCustomer: false, staffNote: \"Edited via n8n-claw\") { order { id name } userErrors { field message } } }', { id: calcId });\n    if (commit.orderEditCommit.userErrors && commit.orderEditCommit.userErrors.length) {\n      return [{ json: { error: 'orderEditCommit failed: ' + commit.orderEditCommit.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    return [{ json: { result: 'Order ' + commit.orderEditCommit.order.name + ' edited: line item quantity set to ' + qty } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to edit order: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_fulfillment ───────────────────────────────\n} else if (action === 'create_fulfillment') {\n  if (!input.order_id) return [{ json: { error: 'Parameter \"order_id\" is required.' } }];\n  const orderId = gidOrNum(input.order_id, 'Order');\n  try {\n    const q = await gql('query FO($id: ID!) { order(id: $id) { fulfillmentOrders(first: 10) { edges { node { id status } } } } }', { id: orderId });\n    const fos = (q.order && q.order.fulfillmentOrders && q.order.fulfillmentOrders.edges) || [];\n    const openFos = fos.filter(function(e){ return e.node.status === 'OPEN' || e.node.status === 'IN_PROGRESS'; });\n    if (openFos.length === 0) {\n      return [{ json: { error: 'No open fulfillment orders found for ' + orderId + '. Order may already be fully fulfilled.' } }];\n    }\n    const lineItemsByFO = openFos.map(function(e){ return { fulfillmentOrderId: e.node.id }; });\n    const fulfillment = {\n      lineItemsByFulfillmentOrder: lineItemsByFO,\n      notifyCustomer: input.notify_customer === true || input.notify_customer === 'true'\n    };\n    if (input.tracking_number || input.tracking_company || input.tracking_url) {\n      fulfillment.trackingInfo = {};\n      if (input.tracking_number) fulfillment.trackingInfo.number = input.tracking_number;\n      if (input.tracking_company) fulfillment.trackingInfo.company = input.tracking_company;\n      if (input.tracking_url) fulfillment.trackingInfo.url = input.tracking_url;\n    }\n    const mut = 'mutation F($fulfillment: FulfillmentV2Input!) { fulfillmentCreate(fulfillment: $fulfillment) { fulfillment { id status trackingInfo { number company url } } userErrors { field message } } }';\n    const data = await gql(mut, { fulfillment: fulfillment });\n    const r = data.fulfillmentCreate;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'fulfillmentCreate failed: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    let result = 'Fulfillment created: ' + r.fulfillment.id + ' [' + r.fulfillment.status + ']';\n    if (r.fulfillment.trackingInfo && r.fulfillment.trackingInfo.length) {\n      const ti = r.fulfillment.trackingInfo[0];\n      result += '\\nTracking: ' + (ti.company || '') + ' ' + (ti.number || '') + (ti.url ? ' (' + ti.url + ')' : '');\n    }\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create fulfillment: ' + err.message } }];\n  }\n\n// ─────────────────────────────── list_customers ───────────────────────────────\n} else if (action === 'list_customers') {\n  const first = Math.min(parseInt(input.limit) || 20, 100);\n  const query = 'query LC($first: Int!, $after: String, $query: String) { customers(first: $first, after: $after, query: $query) { edges { cursor node { id firstName lastName email phone tags numberOfOrders amountSpent { amount currencyCode } } } pageInfo { hasNextPage endCursor } } }';\n  try {\n    const data = await gql(query, { first: first, after: input.cursor || null, query: input.search || null });\n    const edges = data.customers.edges;\n    if (edges.length === 0) return [{ json: { result: 'No customers found.' } }];\n    let result = 'Found ' + edges.length + ' customers:\\n\\n';\n    for (const e of edges) {\n      const c = e.node;\n      const name = ((c.firstName || '') + ' ' + (c.lastName || '')).trim() || '(no name)';\n      result += name + ' <' + (c.email || 'no email') + '>\\n';\n      result += '  ' + c.id;\n      if (c.numberOfOrders) result += ' — ' + c.numberOfOrders + ' orders';\n      if (c.amountSpent) result += ' (' + money(c.amountSpent) + ')';\n      if (c.tags && c.tags.length) result += ' — tags: ' + c.tags.join(', ');\n      result += '\\n';\n    }\n    if (data.customers.pageInfo.hasNextPage) result += '\\n(more available — next cursor: ' + data.customers.pageInfo.endCursor + ')';\n    return [{ json: { result: result.trim() } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to list customers: ' + err.message } }];\n  }\n\n// ─────────────────────────────── create_customer ───────────────────────────────\n} else if (action === 'create_customer') {\n  if (!input.email && !input.phone) return [{ json: { error: 'At least one of \"email\" or \"phone\" is required.' } }];\n  const customerInput = {};\n  if (input.email) customerInput.email = input.email;\n  if (input.phone) customerInput.phone = input.phone;\n  if (input.first_name) customerInput.firstName = input.first_name;\n  if (input.last_name) customerInput.lastName = input.last_name;\n  if (input.note) customerInput.note = input.note;\n  const tags = parseTags(input.tags);\n  if (tags) customerInput.tags = tags;\n  const query = 'mutation CC($input: CustomerInput!) { customerCreate(input: $input) { customer { id firstName lastName email } userErrors { field message } } }';\n  try {\n    const data = await gql(query, { input: customerInput });\n    const r = data.customerCreate;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'customerCreate failed: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    const c = r.customer;\n    const name = ((c.firstName || '') + ' ' + (c.lastName || '')).trim() || '(no name)';\n    return [{ json: { result: 'Customer created: ' + c.id + '\\n  ' + name + ' <' + (c.email || '') + '>' } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to create customer: ' + err.message } }];\n  }\n\n// ─────────────────────────────── update_customer ───────────────────────────────\n} else if (action === 'update_customer') {\n  if (!input.id) return [{ json: { error: 'Parameter \"id\" is required.' } }];\n  const id = gidOrNum(input.id, 'Customer');\n  const customerInput = { id: id };\n  let has = false;\n  if (input.email !== undefined && input.email !== '') { customerInput.email = input.email; has = true; }\n  if (input.phone !== undefined && input.phone !== '') { customerInput.phone = input.phone; has = true; }\n  if (input.first_name !== undefined && input.first_name !== '') { customerInput.firstName = input.first_name; has = true; }\n  if (input.last_name !== undefined && input.last_name !== '') { customerInput.lastName = input.last_name; has = true; }\n  if (input.note !== undefined && input.note !== '') { customerInput.note = input.note; has = true; }\n  const tags = parseTags(input.tags);\n  if (tags) { customerInput.tags = tags; has = true; }\n  if (!has) return [{ json: { error: 'At least one field (email, phone, first_name, last_name, note, tags) is required.' } }];\n  const query = 'mutation UC($input: CustomerInput!) { customerUpdate(input: $input) { customer { id firstName lastName email tags } userErrors { field message } } }';\n  try {\n    const data = await gql(query, { input: customerInput });\n    const r = data.customerUpdate;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'customerUpdate failed: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    const c = r.customer;\n    const name = ((c.firstName || '') + ' ' + (c.lastName || '')).trim();\n    let result = 'Customer updated: ' + c.id;\n    if (name) result += '\\n  ' + name;\n    if (c.email) result += ' <' + c.email + '>';\n    if (c.tags && c.tags.length) result += '\\n  tags: ' + c.tags.join(', ');\n    return [{ json: { result: result } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to update customer: ' + err.message } }];\n  }\n\n// ─────────────────────────────── adjust_inventory ───────────────────────────────\n} else if (action === 'adjust_inventory') {\n  if (!input.inventory_item_id) return [{ json: { error: 'Parameter \"inventory_item_id\" is required (get it from get_product output — each variant has inventory_item_id).' } }];\n  if (input.delta === undefined || input.delta === '') return [{ json: { error: 'Parameter \"delta\" is required (positive or negative integer, e.g. 10 or -5).' } }];\n  const delta = parseInt(input.delta);\n  if (isNaN(delta)) return [{ json: { error: 'Parameter \"delta\" must be an integer.' } }];\n  const inventoryItemId = gidOrNum(input.inventory_item_id, 'InventoryItem');\n  let locationId = input.location_id ? gidOrNum(input.location_id, 'Location') : null;\n  try {\n    if (!locationId) {\n      const locs = await gql('query L { locations(first: 5, includeInactive: false) { edges { node { id name } } } }', {});\n      const active = (locs.locations.edges || []).map(function(e){ return e.node; });\n      if (active.length === 0) return [{ json: { error: 'No active locations found. Set location_id explicitly.' } }];\n      if (active.length > 1) {\n        return [{ json: { error: 'Multiple locations exist — pass location_id explicitly. Available: ' + active.map(function(l){ return l.id + ' (' + l.name + ')'; }).join(', ') } }];\n      }\n      locationId = active[0].id;\n    }\n    const mut = 'mutation Adj($input: InventoryAdjustQuantitiesInput!) { inventoryAdjustQuantities(input: $input) { inventoryAdjustmentGroup { createdAt reason } userErrors { field message } } }';\n    const vars = {\n      input: {\n        reason: 'correction',\n        name: 'available',\n        changes: [{ delta: delta, inventoryItemId: inventoryItemId, locationId: locationId }]\n      }\n    };\n    const data = await gql(mut, vars);\n    const r = data.inventoryAdjustQuantities;\n    if (r.userErrors && r.userErrors.length) {\n      return [{ json: { error: 'inventoryAdjustQuantities failed: ' + r.userErrors.map(function(e){ return e.message; }).join('; ') } }];\n    }\n    return [{ json: { result: 'Inventory adjusted by ' + (delta >= 0 ? '+' : '') + delta + ' for ' + inventoryItemId + ' at ' + locationId } }];\n  } catch (err) {\n    return [{ json: { error: 'Failed to adjust inventory: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_products, get_product, create_product, update_product, delete_product, list_orders, get_order, update_order, edit_order_quantity, create_fulfillment, list_customers, create_customer, update_customer, adjust_inventory.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Shopify Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Shopify",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "shopify"
+        }
+      },
+      {
+        "id": "tool-list-products",
+        "name": "list_products",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "list_products",
+          "description": "List Shopify products. Optional: search (Shopify query, e.g. 'title:shirt' or 'status:active'), limit (default 20, max 100), cursor (for pagination).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_products",
+              "search": "={{ $fromAI('search', 'Shopify search query, e.g. title:shirt, status:active, tag:sale (optional)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max products to return (default 20, max 100)', 'string') }}",
+              "cursor": "={{ $fromAI('cursor', 'Pagination cursor from previous response (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "cursor",
+                "displayName": "cursor",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-get-product",
+        "name": "get_product",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          500
+        ],
+        "parameters": {
+          "name": "get_product",
+          "description": "Get full details of a single Shopify product including variants, prices, inventory quantities, and inventory_item_ids.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_product",
+              "id": "={{ $fromAI('id', 'Product ID — numeric (e.g. 10631984087373) or full gid://shopify/Product/... (required)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-create-product",
+        "name": "create_product",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          700
+        ],
+        "parameters": {
+          "name": "create_product",
+          "description": "Create a new Shopify product. Required: title. Optional: description, vendor, product_type, status (DRAFT/ACTIVE/ARCHIVED), tags (comma-separated), price (default variant).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_product",
+              "title": "={{ $fromAI('title', 'Product title (required)', 'string') }}",
+              "description": "={{ $fromAI('description', 'HTML product description (optional)', 'string') }}",
+              "vendor": "={{ $fromAI('vendor', 'Vendor/brand name (optional)', 'string') }}",
+              "product_type": "={{ $fromAI('product_type', 'Product type/category, e.g. T-Shirt (optional)', 'string') }}",
+              "status": "={{ $fromAI('status', 'Product status: DRAFT, ACTIVE, ARCHIVED (default DRAFT)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated tags, e.g. sale,summer,new (optional)', 'string') }}",
+              "price": "={{ $fromAI('price', 'Default variant price, e.g. 29.99 (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "vendor",
+                "displayName": "vendor",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "product_type",
+                "displayName": "product_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "price",
+                "displayName": "price",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-update-product",
+        "name": "update_product",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          900
+        ],
+        "parameters": {
+          "name": "update_product",
+          "description": "Update an existing Shopify product. Required: id. Provide at least one field to update: title, description, vendor, product_type, status, tags, price.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_product",
+              "id": "={{ $fromAI('id', 'Product ID (required)', 'string') }}",
+              "title": "={{ $fromAI('title', 'New title (optional)', 'string') }}",
+              "description": "={{ $fromAI('description', 'New HTML description (optional)', 'string') }}",
+              "vendor": "={{ $fromAI('vendor', 'New vendor (optional)', 'string') }}",
+              "product_type": "={{ $fromAI('product_type', 'New product type (optional)', 'string') }}",
+              "status": "={{ $fromAI('status', 'New status: DRAFT, ACTIVE, ARCHIVED (optional)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated tags — replaces existing tags (optional)', 'string') }}",
+              "price": "={{ $fromAI('price', 'New default variant price, e.g. 34.99 (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "title",
+                "displayName": "title",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "description",
+                "displayName": "description",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "vendor",
+                "displayName": "vendor",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "product_type",
+                "displayName": "product_type",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "price",
+                "displayName": "price",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-delete-product",
+        "name": "delete_product",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1100
+        ],
+        "parameters": {
+          "name": "delete_product",
+          "description": "Permanently delete a Shopify product. Required: id. Cannot be undone.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "delete_product",
+              "id": "={{ $fromAI('id', 'Product ID to delete (required)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-list-orders",
+        "name": "list_orders",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1300
+        ],
+        "parameters": {
+          "name": "list_orders",
+          "description": "List Shopify orders. Optional: search (Shopify query, e.g. 'financial_status:paid' or 'tag:priority'), limit (default 20, max 100), cursor.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_orders",
+              "search": "={{ $fromAI('search', 'Shopify order query, e.g. financial_status:paid, tag:priority, name:1001 (optional)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max orders to return (default 20, max 100)', 'string') }}",
+              "cursor": "={{ $fromAI('cursor', 'Pagination cursor (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "cursor",
+                "displayName": "cursor",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-get-order",
+        "name": "get_order",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1500
+        ],
+        "parameters": {
+          "name": "get_order",
+          "description": "Get full details of a single Shopify order: line items (with line_item_id), customer, fulfillment status, totals. Use line_item_id for edit_order_quantity.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_order",
+              "id": "={{ $fromAI('id', 'Order ID — numeric or gid://shopify/Order/... (required)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-update-order",
+        "name": "update_order",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1700
+        ],
+        "parameters": {
+          "name": "update_order",
+          "description": "Update an order's tags or internal note (metadata only — to change quantities use edit_order_quantity).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_order",
+              "id": "={{ $fromAI('id', 'Order ID (required)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated tags — replaces existing (optional)', 'string') }}",
+              "note": "={{ $fromAI('note', 'Internal staff note (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-edit-order-quantity",
+        "name": "edit_order_quantity",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          1900
+        ],
+        "parameters": {
+          "name": "edit_order_quantity",
+          "description": "Change the quantity of a line item on an existing order. Wraps orderEditBegin → orderEditSetQuantity → orderEditCommit. Get line_item_id from get_order first.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "edit_order_quantity",
+              "id": "={{ $fromAI('id', 'Order ID (required)', 'string') }}",
+              "line_item_id": "={{ $fromAI('line_item_id', 'LineItem ID from get_order output, e.g. gid://shopify/LineItem/... (required)', 'string') }}",
+              "quantity": "={{ $fromAI('quantity', 'New quantity — non-negative integer, 0 removes the line (required)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "line_item_id",
+                "displayName": "line_item_id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "quantity",
+                "displayName": "quantity",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-create-fulfillment",
+        "name": "create_fulfillment",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2100
+        ],
+        "parameters": {
+          "name": "create_fulfillment",
+          "description": "Mark an order as fulfilled (ship all open fulfillment orders). Optional: tracking_number, tracking_company (e.g. DHL, UPS), tracking_url, notify_customer.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_fulfillment",
+              "order_id": "={{ $fromAI('order_id', 'Order ID to fulfill (required)', 'string') }}",
+              "tracking_number": "={{ $fromAI('tracking_number', 'Tracking/shipment number (optional)', 'string') }}",
+              "tracking_company": "={{ $fromAI('tracking_company', 'Carrier name, e.g. DHL, UPS, DPD (optional)', 'string') }}",
+              "tracking_url": "={{ $fromAI('tracking_url', 'Tracking URL (optional)', 'string') }}",
+              "notify_customer": "={{ $fromAI('notify_customer', 'Send shipment email to customer: true or false (default false)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "order_id",
+                "displayName": "order_id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tracking_number",
+                "displayName": "tracking_number",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tracking_company",
+                "displayName": "tracking_company",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tracking_url",
+                "displayName": "tracking_url",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "notify_customer",
+                "displayName": "notify_customer",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-list-customers",
+        "name": "list_customers",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2300
+        ],
+        "parameters": {
+          "name": "list_customers",
+          "description": "List Shopify customers. Optional: search (Shopify query, e.g. 'email:example.com' or 'tag:vip'), limit (default 20, max 100), cursor.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_customers",
+              "search": "={{ $fromAI('search', 'Shopify customer query, e.g. email:gmail.com, tag:vip (optional)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max customers (default 20, max 100)', 'string') }}",
+              "cursor": "={{ $fromAI('cursor', 'Pagination cursor (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "search",
+                "displayName": "search",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "cursor",
+                "displayName": "cursor",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-create-customer",
+        "name": "create_customer",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2500
+        ],
+        "parameters": {
+          "name": "create_customer",
+          "description": "Create a new customer. At least one of email or phone is required. Optional: first_name, last_name, note, tags.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "create_customer",
+              "email": "={{ $fromAI('email', 'Customer email (required if no phone)', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'Customer phone with country code (required if no email)', 'string') }}",
+              "first_name": "={{ $fromAI('first_name', 'First name (optional)', 'string') }}",
+              "last_name": "={{ $fromAI('last_name', 'Last name (optional)', 'string') }}",
+              "note": "={{ $fromAI('note', 'Internal note about the customer (optional)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated tags (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "first_name",
+                "displayName": "first_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "last_name",
+                "displayName": "last_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-update-customer",
+        "name": "update_customer",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2700
+        ],
+        "parameters": {
+          "name": "update_customer",
+          "description": "Update an existing customer's fields. Required: id. Provide at least one field to update.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "update_customer",
+              "id": "={{ $fromAI('id', 'Customer ID (required)', 'string') }}",
+              "email": "={{ $fromAI('email', 'New email (optional)', 'string') }}",
+              "phone": "={{ $fromAI('phone', 'New phone (optional)', 'string') }}",
+              "first_name": "={{ $fromAI('first_name', 'New first name (optional)', 'string') }}",
+              "last_name": "={{ $fromAI('last_name', 'New last name (optional)', 'string') }}",
+              "note": "={{ $fromAI('note', 'New internal note (optional)', 'string') }}",
+              "tags": "={{ $fromAI('tags', 'Comma-separated tags — replaces existing (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "id",
+                "displayName": "id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "email",
+                "displayName": "email",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "phone",
+                "displayName": "phone",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "first_name",
+                "displayName": "first_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "last_name",
+                "displayName": "last_name",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "note",
+                "displayName": "note",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "tags",
+                "displayName": "tags",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      },
+      {
+        "id": "tool-adjust-inventory",
+        "name": "adjust_inventory",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          2900
+        ],
+        "parameters": {
+          "name": "adjust_inventory",
+          "description": "Adjust inventory by a delta (positive = increase, negative = decrease). Required: inventory_item_id (from get_product variants), delta. Auto-picks location if only one exists.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "adjust_inventory",
+              "inventory_item_id": "={{ $fromAI('inventory_item_id', 'InventoryItem ID — from get_product output (required)', 'string') }}",
+              "delta": "={{ $fromAI('delta', 'Quantity change, positive or negative integer, e.g. 10 or -5 (required)', 'string') }}",
+              "location_id": "={{ $fromAI('location_id', 'Location ID — only needed if store has multiple locations (optional)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "inventory_item_id",
+                "displayName": "inventory_item_id",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "delta",
+                "displayName": "delta",
+                "required": true,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              },
+              {
+                "id": "location_id",
+                "displayName": "location_id",
+                "required": false,
+                "defaultMatch": false,
+                "display": true,
+                "canBeUsedToMatch": true,
+                "type": "string"
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": true
+          }
+        }
+      }
+    ],
+    "connections": {
+      "list_products": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_product": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_product": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_product": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "delete_product": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_orders": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_order": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_order": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "edit_order_quantity": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_fulfillment": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_customers": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "create_customer": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "update_customer": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "adjust_inventory": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

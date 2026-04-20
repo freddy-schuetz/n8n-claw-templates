@@ -1,0 +1,41 @@
+{
+  "id": "shopify",
+  "name": "Shopify",
+  "version": "1.0.0",
+  "updated": "2026-04-20",
+  "type": "native",
+  "category": "productivity",
+  "description": "Manage a Shopify store via the GraphQL Admin API (2026-01): products, orders, customers, inventory, fulfillment. Uses a Custom App access token (shpat_...). Read and write access — tested live against a real Shopify store.",
+  "credentials_required": [
+    {
+      "key": "shopify_store",
+      "label": "Shopify Store Domain",
+      "hint": "Your myshopify.com domain without https:// (e.g. myshop.myshopify.com). Find it in Shopify Admin > Settings > Domains."
+    },
+    {
+      "key": "shopify_access_token",
+      "label": "Shopify Admin API Access Token",
+      "hint": "Create in Shopify Admin > Settings > Apps and sales channels > Develop apps > Create an app > Configure Admin API scopes > Install. Token starts with 'shpat_'. Required scopes: read/write products, orders, customers, inventory, locations, order_edits, fulfillments, merchant_managed_fulfillment_orders, draft_orders."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "list_products", "description": "List products with optional search query, pagination cursor, and limit" },
+    { "name": "get_product", "description": "Get full details of a single product including variants, inventory, and pricing" },
+    { "name": "create_product", "description": "Create a new product with title, description, vendor, product type, tags, status, and initial price" },
+    { "name": "update_product", "description": "Update an existing product's title, description, vendor, tags, status, or default variant price" },
+    { "name": "delete_product", "description": "Permanently delete a product by ID" },
+    { "name": "list_orders", "description": "List orders with optional search query (Shopify query syntax), pagination, and limit" },
+    { "name": "get_order", "description": "Get full details of a single order including line items, customer, fulfillment status, and totals" },
+    { "name": "update_order", "description": "Update an order's tags or note (add metadata, not line items — use edit_order_quantity for that)" },
+    { "name": "edit_order_quantity", "description": "Change the quantity of a line item on an existing order (begin → setQuantity → commit)" },
+    { "name": "create_fulfillment", "description": "Mark order line items as fulfilled with optional tracking number and carrier" },
+    { "name": "list_customers", "description": "List customers with optional search query and limit" },
+    { "name": "create_customer", "description": "Create a new customer with email, first/last name, phone, and tags" },
+    { "name": "update_customer", "description": "Update an existing customer's email, name, phone, or tags" },
+    { "name": "adjust_inventory", "description": "Increase or decrease inventory quantity for a variant at a location (delta, not absolute)" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
