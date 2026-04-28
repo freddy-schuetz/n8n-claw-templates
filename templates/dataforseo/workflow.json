@@ -13,7 +13,10 @@
         "name": "Execute Workflow Trigger",
         "type": "n8n-nodes-base.executeWorkflowTrigger",
         "typeVersion": 1.1,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "inputSource": "passthrough"
         }
@@ -23,45 +26,80 @@
         "name": "DataForSEO Action Router",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [256, 0],
+        "position": [
+          256,
+          0
+        ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst action = input.action || input.query || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.dataforseo&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nconst login = creds.dataforseo_login;\nconst password = creds.dataforseo_password;\nif (!login || !password) {\n  return [{ json: { error: 'DataForSEO credentials not configured. Set both dataforseo_login (email) and dataforseo_password via add_credential.' } }];\n}\nconst authHeader = 'Basic ' + Buffer.from(login + ':' + password).toString('base64');\nconst BASE = 'https://api.dataforseo.com/v3';\n\nasync function dfsCall(method, path, taskBody) {\n  const opts = { method: method, url: BASE + path, headers: { 'Authorization': authHeader }, json: true };\n  if (taskBody !== undefined && taskBody !== null) {\n    opts.headers['Content-Type'] = 'application/json';\n    opts.body = JSON.stringify(taskBody);\n  }\n  let res;\n  try {\n    res = await helpers.httpRequest(opts);\n  } catch (e) {\n    throw new Error('HTTP error: ' + (e.message || e));\n  }\n  if (!res || res.status_code !== 20000) {\n    throw new Error('DataForSEO API error ' + (res && res.status_code) + ': ' + (res && res.status_message));\n  }\n  const task = (res.tasks || [])[0];\n  if (!task) throw new Error('No task in response.');\n  if (task.status_code !== 20000) {\n    throw new Error('DataForSEO task error ' + task.status_code + ': ' + task.status_message);\n  }\n  return { result: task.result || [], cost: res.cost, time: res.time };\n}\n\nfunction trunc(s, n) {\n  if (!s) return '';\n  if (s.length <= n) return s;\n  return s.substring(0, n) + '\\n\\n... (truncated at ' + n + ' chars).';\n}\nfunction fmtCost(meta) {\n  const c = (meta.cost == null ? 0 : meta.cost);\n  return '\\n\\n_Cost: $' + c.toFixed(4) + ' | Time: ' + (meta.time || '?') + '_';\n}\nfunction req_(v, name) {\n  if (v === undefined || v === null || v === '') throw new Error('Parameter \"' + name + '\" is required.');\n  return v;\n}\nfunction splitKeywords(s) {\n  if (!s) return [];\n  if (Array.isArray(s)) return s;\n  return String(s).split(',').map(x => x.trim()).filter(Boolean);\n}\nfunction locInt(v) { return parseInt(v, 10); }\n\ntry {\n  if (action === 'dfs_account_balance') {\n    const m = await dfsCall('GET', '/appendix/user_data', null);\n    const r = m.result[0] || {};\n    let out = 'DataForSEO account: ' + (r.login || '?') + ' (TZ: ' + (r.timezone || '?') + ')';\n    if (r.money) out += '\\nBalance: $' + Number(r.money.balance || 0).toFixed(2) + ' | Lifetime spend: $' + Number(r.money.total || 0).toFixed(2);\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_serp_google_organic') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/serp/google/organic/live/regular', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google SERP \"' + r.keyword + '\" (' + r.location_code + '/' + r.language_code + ')\\nTotal results: ' + (r.se_results_count || 0) + '\\n\\n';\n    for (const it of (r.items || [])) {\n      if (it.type === 'organic') {\n        out += '#' + it.rank_absolute + ' ' + it.domain + ' -- ' + it.title + '\\n  ' + it.url + '\\n';\n        if (it.description) out += '  ' + it.description.substring(0,150) + '\\n';\n        out += '\\n';\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_serp_google_organic_advanced') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/serp/google/organic/live/advanced', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google SERP advanced \"' + r.keyword + '\" (' + r.location_code + '/' + r.language_code + ')\\nResults: ' + (r.se_results_count || 0) + ' | Item types: ' + (r.item_types || []).join(', ') + '\\n\\n';\n    for (const it of (r.items || [])) {\n      out += '#' + (it.rank_absolute || '-') + ' [' + it.type + ']';\n      if (it.domain) out += ' ' + it.domain;\n      if (it.title) out += ' -- ' + it.title;\n      out += '\\n';\n      if (it.url) out += '  ' + it.url + '\\n';\n      if (it.description) out += '  ' + it.description.substring(0,150) + '\\n';\n      if (it.snippet) out += '  Snippet: ' + it.snippet.substring(0,150) + '\\n';\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_search_volume') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required (comma-separated list).');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/keywords_data/google_ads/search_volume/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code }]);\n    let out = 'Search volume (Google Ads, ' + input.location_code + '/' + input.language_code + '):\\n\\n';\n    for (const r of (m.result || [])) {\n      out += '- \"' + r.keyword + '\": vol=' + (r.search_volume || 0) + ', CPC=$' + Number(r.cpc || 0).toFixed(2) + ', comp=' + (r.competition || '?') + ' (idx ' + (r.competition_index || '?') + ')\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keywords_for_keywords') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/keywords_data/google_ads/keywords_for_keywords/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    let out = 'Related keywords (Google Ads):\\n\\n';\n    for (const r of (m.result || []).slice(0, 50)) {\n      out += '- \"' + r.keyword + '\": vol=' + (r.search_volume || 0) + ', CPC=$' + Number(r.cpc || 0).toFixed(2) + ', comp=' + (r.competition || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_google_trends') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code');\n    const body = { keywords: kws.slice(0,5), location_code: locInt(input.location_code) };\n    if (input.date_from) body.date_from = input.date_from;\n    if (input.date_to) body.date_to = input.date_to;\n    const m = await dfsCall('POST', '/keywords_data/dataforseo_trends/explore/live', [body]);\n    const r = m.result[0] || {};\n    let out = 'Google Trends \"' + kws.join(', ') + '\":\\n\\n';\n    for (const it of (r.items || [])) {\n      out += 'Type: ' + it.type + '\\n';\n      const data = (it.data && Array.isArray(it.data)) ? it.data : (it.keywords ? it.keywords.map((k,i) => ({ keyword: k, value: (it.values && it.values[i]) || 0 })) : []);\n      for (const point of data.slice(-12)) {\n        out += '  ' + (point.date_from || point.date || point.keyword || '?') + ': ' + JSON.stringify(point.values || point.value || []) + '\\n';\n      }\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_overview') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/keyword_overview/live', [{ keywords: [input.keyword], location_code: locInt(input.location_code), language_code: input.language_code }]);\n    let r = m.result[0] || {};\n    if (r.items && r.items.length) r = r.items[0];\n    const ki = r.keyword_info || {};\n    const kp = r.keyword_properties || {};\n    let out = 'Keyword overview \"' + input.keyword + '\":\\n';\n    out += '- Search volume: ' + (ki.search_volume || 0) + '/mo\\n';\n    out += '- CPC: $' + Number(ki.cpc || 0).toFixed(2) + '\\n';\n    out += '- Competition: ' + (ki.competition || '?') + ' (idx ' + (ki.competition_index || '?') + ')\\n';\n    if (kp.keyword_difficulty != null) out += '- Difficulty: ' + kp.keyword_difficulty + '/100\\n';\n    if (r.search_intent_info) out += '- Intent: ' + (r.search_intent_info.main_intent || '?') + '\\n';\n    if (r.serp_info && r.serp_info.serp_item_types) out += '- SERP features: ' + r.serp_info.serp_item_types.join(', ') + '\\n';\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_ideas') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/keyword_ideas/live', [{ keywords: [input.keyword], location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Keyword ideas for \"' + input.keyword + '\":\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      const ki = it.keyword_info || {};\n      out += '- \"' + it.keyword + '\": vol=' + (ki.search_volume || 0) + ', CPC=$' + Number(ki.cpc || 0).toFixed(2) + ', comp=' + (ki.competition || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_difficulty') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/bulk_keyword_difficulty/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code }]);\n    const r = m.result[0] || {};\n    let out = 'Keyword difficulty:\\n\\n';\n    for (const it of (r.items || [])) {\n      out += '- \"' + it.keyword + '\": KD=' + (it.keyword_difficulty != null ? it.keyword_difficulty : '?') + '/100\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_ranked_keywords') {\n    req_(input.target, 'target'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/ranked_keywords/live', [{ target: input.target, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Ranked keywords for ' + input.target + ' (' + input.location_code + '/' + input.language_code + ')\\nTotal: ' + (r.total_count || '?') + '\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      const k = (it.keyword_data && it.keyword_data.keyword) || it.keyword || '?';\n      const pos = (it.ranked_serp_element && it.ranked_serp_element.serp_item) ? it.ranked_serp_element.serp_item.rank_absolute : '?';\n      const vol = (it.keyword_data && it.keyword_data.keyword_info) ? (it.keyword_data.keyword_info.search_volume || 0) : 0;\n      out += '#' + pos + ' \"' + k + '\" (vol=' + vol + ')\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_competitors_domain') {\n    req_(input.target, 'target'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/competitors_domain/live', [{ target: input.target, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 20 }]);\n    const r = m.result[0] || {};\n    let out = 'Competitors for ' + input.target + ':\\n\\n';\n    for (const it of (r.items || []).slice(0, 30)) {\n      out += '- ' + it.domain + ' | intersections: ' + (it.intersections || 0) + ' | avg_pos: ' + (it.avg_position || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_summary') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/summary/live', [{ target: input.target }]);\n    const r = m.result[0] || {};\n    let out = 'Backlinks summary ' + input.target + ':\\n';\n    out += '- Backlinks: ' + (r.backlinks || 0) + '\\n';\n    out += '- Referring domains: ' + (r.referring_domains || 0) + '\\n';\n    out += '- Referring main domains: ' + (r.referring_main_domains || 0) + '\\n';\n    out += '- Rank: ' + (r.rank || '?') + '\\n';\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_referring_domains') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/referring_domains/live', [{ target: input.target, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Referring domains for ' + input.target + ' (total: ' + (r.total_count || '?') + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      out += '- ' + it.domain + ' | rank: ' + (it.rank || '?') + ' | backlinks: ' + (it.backlinks || 0) + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_anchors') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/anchors/live', [{ target: input.target, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Anchor distribution for ' + input.target + ' (total: ' + (r.total_count || '?') + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      out += '- \"' + (it.anchor || '(empty)') + '\" | backlinks: ' + (it.backlinks || 0) + ' | refdoms: ' + (it.referring_domains || 0) + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_onpage_instant') {\n    req_(input.url, 'url');\n    const m = await dfsCall('POST', '/on_page/instant_pages', [{ url: input.url }]);\n    let r = m.result[0] || {};\n    if (r.items && r.items.length) r = r.items[0];\n    let out = 'On-page audit ' + input.url + ':\\n';\n    out += '- HTTP status: ' + (r.status_code || '?') + '\\n';\n    if (r.meta) {\n      out += '- Title: ' + (r.meta.title || '-') + '\\n';\n      out += '- Description: ' + (r.meta.description || '-') + '\\n';\n    }\n    if (r.checks) {\n      const fails = Object.entries(r.checks).filter(([k,v]) => v === false).map(([k]) => k);\n      out += '- Failed checks: ' + (fails.length ? fails.join(', ') : 'none') + '\\n';\n    }\n    if (r.page_timing) out += '- Page timing: ' + JSON.stringify(r.page_timing) + '\\n';\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_lighthouse_audit') {\n    req_(input.url, 'url');\n    const forMobile = String(input.for_mobile || 'true').toLowerCase() === 'true';\n    const m = await dfsCall('POST', '/on_page/lighthouse/live/json', [{ url: input.url, for_mobile: forMobile }]);\n    const r = m.result[0] || {};\n    let out = 'Lighthouse audit ' + input.url + ' (' + (forMobile ? 'mobile' : 'desktop') + '):\\n';\n    if (r.categories) {\n      for (const [k, c] of Object.entries(r.categories)) {\n        out += '- ' + (c.title || k) + ': ' + Math.round((c.score || 0) * 100) + '/100\\n';\n      }\n    }\n    if (r.audits) {\n      const failing = Object.values(r.audits).filter(a => a && a.score != null && a.score < 0.5).slice(0, 8);\n      if (failing.length) {\n        out += '\\nTop issues:\\n';\n        for (const a of failing) out += '- ' + (a.title || '?') + ' (score ' + (a.score || 0) + ')\\n';\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_domain_technologies') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/domain_analytics/technologies/domain_technologies/live', [{ target: input.target }]);\n    const r = m.result[0] || {};\n    let out = 'Tech stack ' + input.target + ':\\n';\n    if (r.domain_rank) out += '- Domain rank: ' + r.domain_rank + '\\n';\n    if (r.country_iso_code) out += '- Country: ' + r.country_iso_code + '\\n';\n    if (r.technologies) {\n      out += '\\nTechnologies:\\n';\n      for (const [cat, items] of Object.entries(r.technologies)) {\n        if (Array.isArray(items) && items.length) {\n          out += '- ' + cat + ': ' + items.map(t => (typeof t === 'string' ? t : (t.name || t))).join(', ') + '\\n';\n        }\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_my_business_info') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/business_data/google/my_business_info/live', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google My Business \"' + input.keyword + '\" (' + input.location_code + '/' + input.language_code + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 15)) {\n      out += '- ' + (it.title || '?') + (it.rating ? ' *' + it.rating.value + ' (' + it.rating.votes_count + ')' : '') + '\\n';\n      if (it.address) out += '  ' + it.address + '\\n';\n      if (it.phone) out += '  Phone: ' + it.phone + '\\n';\n      if (it.url) out += '  ' + it.url + '\\n';\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Valid: dfs_account_balance, dfs_serp_google_organic, dfs_serp_google_organic_advanced, dfs_search_volume, dfs_keywords_for_keywords, dfs_google_trends, dfs_keyword_overview, dfs_keyword_ideas, dfs_keyword_difficulty, dfs_ranked_keywords, dfs_competitors_domain, dfs_backlinks_summary, dfs_backlinks_referring_domains, dfs_backlinks_anchors, dfs_onpage_instant, dfs_lighthouse_audit, dfs_domain_technologies, dfs_my_business_info.' } }];\n} catch (e) {\n  return [{ json: { error: 'DataForSEO call failed: ' + (e.message || String(e)) } }];\n}"
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.dataforseo&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nconst login = creds.dataforseo_login;\nconst password = creds.dataforseo_password;\nif (!login || !password) {\n  return [{ json: { error: 'DataForSEO credentials not configured. Set both dataforseo_login (email) and dataforseo_password via add_credential.' } }];\n}\nconst authHeader = 'Basic ' + Buffer.from(login + ':' + password).toString('base64');\nconst BASE = 'https://api.dataforseo.com/v3';\n\nasync function dfsCall(method, path, taskBody) {\n  const opts = { method: method, url: BASE + path, headers: { 'Authorization': authHeader }, json: true };\n  if (taskBody !== undefined && taskBody !== null) {\n    opts.headers['Content-Type'] = 'application/json';\n    opts.body = JSON.stringify(taskBody);\n  }\n  let res;\n  try {\n    res = await helpers.httpRequest(opts);\n  } catch (e) {\n    throw new Error('HTTP error: ' + (e.message || e));\n  }\n  if (!res || res.status_code !== 20000) {\n    throw new Error('DataForSEO API error ' + (res && res.status_code) + ': ' + (res && res.status_message));\n  }\n  const task = (res.tasks || [])[0];\n  if (!task) throw new Error('No task in response.');\n  if (task.status_code !== 20000) {\n    throw new Error('DataForSEO task error ' + task.status_code + ': ' + task.status_message);\n  }\n  return { result: task.result || [], cost: res.cost, time: res.time };\n}\n\nfunction trunc(s, n) {\n  if (!s) return '';\n  if (s.length <= n) return s;\n  return s.substring(0, n) + '\\n\\n... (truncated at ' + n + ' chars).';\n}\nfunction fmtCost(meta) {\n  const c = (meta.cost == null ? 0 : meta.cost);\n  return '\\n\\n_Cost: $' + c.toFixed(4) + ' | Time: ' + (meta.time || '?') + '_';\n}\nfunction req_(v, name) {\n  if (v === undefined || v === null || v === '') throw new Error('Parameter \"' + name + '\" is required.');\n  return v;\n}\nfunction splitKeywords(s) {\n  if (!s) return [];\n  if (Array.isArray(s)) return s;\n  return String(s).split(',').map(x => x.trim()).filter(Boolean);\n}\nfunction locInt(v) { return parseInt(v, 10); }\n\ntry {\n  if (action === 'dfs_account_balance') {\n    const m = await dfsCall('GET', '/appendix/user_data', null);\n    const r = m.result[0] || {};\n    let out = 'DataForSEO account: ' + (r.login || '?') + ' (TZ: ' + (r.timezone || '?') + ')';\n    if (r.money) out += '\\nBalance: $' + Number(r.money.balance || 0).toFixed(2) + ' | Lifetime spend: $' + Number(r.money.total || 0).toFixed(2);\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_serp_google_organic') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/serp/google/organic/live/regular', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google SERP \"' + r.keyword + '\" (' + r.location_code + '/' + r.language_code + ')\\nTotal results: ' + (r.se_results_count || 0) + '\\n\\n';\n    for (const it of (r.items || [])) {\n      if (it.type === 'organic') {\n        out += '#' + it.rank_absolute + ' ' + it.domain + ' -- ' + it.title + '\\n  ' + it.url + '\\n';\n        if (it.description) out += '  ' + it.description.substring(0,150) + '\\n';\n        out += '\\n';\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_serp_google_organic_advanced') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/serp/google/organic/live/advanced', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google SERP advanced \"' + r.keyword + '\" (' + r.location_code + '/' + r.language_code + ')\\nResults: ' + (r.se_results_count || 0) + ' | Item types: ' + (r.item_types || []).join(', ') + '\\n\\n';\n    for (const it of (r.items || [])) {\n      out += '#' + (it.rank_absolute || '-') + ' [' + it.type + ']';\n      if (it.domain) out += ' ' + it.domain;\n      if (it.title) out += ' -- ' + it.title;\n      out += '\\n';\n      if (it.url) out += '  ' + it.url + '\\n';\n      if (it.description) out += '  ' + it.description.substring(0,150) + '\\n';\n      if (it.snippet) out += '  Snippet: ' + it.snippet.substring(0,150) + '\\n';\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_search_volume') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required (comma-separated list).');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/keywords_data/google_ads/search_volume/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code }]);\n    let out = 'Search volume (Google Ads, ' + input.location_code + '/' + input.language_code + '):\\n\\n';\n    for (const r of (m.result || [])) {\n      out += '- \"' + r.keyword + '\": vol=' + (r.search_volume || 0) + ', CPC=$' + Number(r.cpc || 0).toFixed(2) + ', comp=' + (r.competition || '?') + ' (idx ' + (r.competition_index || '?') + ')\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keywords_for_keywords') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/keywords_data/google_ads/keywords_for_keywords/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    let out = 'Related keywords (Google Ads):\\n\\n';\n    for (const r of (m.result || []).slice(0, 50)) {\n      out += '- \"' + r.keyword + '\": vol=' + (r.search_volume || 0) + ', CPC=$' + Number(r.cpc || 0).toFixed(2) + ', comp=' + (r.competition || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_google_trends') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code');\n    const body = { keywords: kws.slice(0,5), location_code: locInt(input.location_code) };\n    if (input.date_from) body.date_from = input.date_from;\n    if (input.date_to) body.date_to = input.date_to;\n    const m = await dfsCall('POST', '/keywords_data/dataforseo_trends/explore/live', [body]);\n    const r = m.result[0] || {};\n    let out = 'Google Trends \"' + kws.join(', ') + '\":\\n\\n';\n    for (const it of (r.items || [])) {\n      out += 'Type: ' + it.type + '\\n';\n      const data = (it.data && Array.isArray(it.data)) ? it.data : (it.keywords ? it.keywords.map((k,i) => ({ keyword: k, value: (it.values && it.values[i]) || 0 })) : []);\n      for (const point of data.slice(-12)) {\n        out += '  ' + (point.date_from || point.date || point.keyword || '?') + ': ' + JSON.stringify(point.values || point.value || []) + '\\n';\n      }\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_overview') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/keyword_overview/live', [{ keywords: [input.keyword], location_code: locInt(input.location_code), language_code: input.language_code }]);\n    let r = m.result[0] || {};\n    if (r.items && r.items.length) r = r.items[0];\n    const ki = r.keyword_info || {};\n    const kp = r.keyword_properties || {};\n    let out = 'Keyword overview \"' + input.keyword + '\":\\n';\n    out += '- Search volume: ' + (ki.search_volume || 0) + '/mo\\n';\n    out += '- CPC: $' + Number(ki.cpc || 0).toFixed(2) + '\\n';\n    out += '- Competition: ' + (ki.competition || '?') + ' (idx ' + (ki.competition_index || '?') + ')\\n';\n    if (kp.keyword_difficulty != null) out += '- Difficulty: ' + kp.keyword_difficulty + '/100\\n';\n    if (r.search_intent_info) out += '- Intent: ' + (r.search_intent_info.main_intent || '?') + '\\n';\n    if (r.serp_info && r.serp_info.serp_item_types) out += '- SERP features: ' + r.serp_info.serp_item_types.join(', ') + '\\n';\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_ideas') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/keyword_ideas/live', [{ keywords: [input.keyword], location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Keyword ideas for \"' + input.keyword + '\":\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      const ki = it.keyword_info || {};\n      out += '- \"' + it.keyword + '\": vol=' + (ki.search_volume || 0) + ', CPC=$' + Number(ki.cpc || 0).toFixed(2) + ', comp=' + (ki.competition || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_keyword_difficulty') {\n    const kws = splitKeywords(input.keywords);\n    if (kws.length === 0) throw new Error('Parameter \"keywords\" is required.');\n    req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/bulk_keyword_difficulty/live', [{ keywords: kws, location_code: locInt(input.location_code), language_code: input.language_code }]);\n    const r = m.result[0] || {};\n    let out = 'Keyword difficulty:\\n\\n';\n    for (const it of (r.items || [])) {\n      out += '- \"' + it.keyword + '\": KD=' + (it.keyword_difficulty != null ? it.keyword_difficulty : '?') + '/100\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_ranked_keywords') {\n    req_(input.target, 'target'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/ranked_keywords/live', [{ target: input.target, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Ranked keywords for ' + input.target + ' (' + input.location_code + '/' + input.language_code + ')\\nTotal: ' + (r.total_count || '?') + '\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      const k = (it.keyword_data && it.keyword_data.keyword) || it.keyword || '?';\n      const pos = (it.ranked_serp_element && it.ranked_serp_element.serp_item) ? it.ranked_serp_element.serp_item.rank_absolute : '?';\n      const vol = (it.keyword_data && it.keyword_data.keyword_info) ? (it.keyword_data.keyword_info.search_volume || 0) : 0;\n      out += '#' + pos + ' \"' + k + '\" (vol=' + vol + ')\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_competitors_domain') {\n    req_(input.target, 'target'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/dataforseo_labs/google/competitors_domain/live', [{ target: input.target, location_code: locInt(input.location_code), language_code: input.language_code, limit: parseInt(input.limit) || 20 }]);\n    const r = m.result[0] || {};\n    let out = 'Competitors for ' + input.target + ':\\n\\n';\n    for (const it of (r.items || []).slice(0, 30)) {\n      out += '- ' + it.domain + ' | intersections: ' + (it.intersections || 0) + ' | avg_pos: ' + (it.avg_position || '?') + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_summary') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/summary/live', [{ target: input.target }]);\n    const r = m.result[0] || {};\n    let out = 'Backlinks summary ' + input.target + ':\\n';\n    out += '- Backlinks: ' + (r.backlinks || 0) + '\\n';\n    out += '- Referring domains: ' + (r.referring_domains || 0) + '\\n';\n    out += '- Referring main domains: ' + (r.referring_main_domains || 0) + '\\n';\n    out += '- Rank: ' + (r.rank || '?') + '\\n';\n    return [{ json: { result: out + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_referring_domains') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/referring_domains/live', [{ target: input.target, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Referring domains for ' + input.target + ' (total: ' + (r.total_count || '?') + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      out += '- ' + it.domain + ' | rank: ' + (it.rank || '?') + ' | backlinks: ' + (it.backlinks || 0) + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_backlinks_anchors') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/backlinks/anchors/live', [{ target: input.target, limit: parseInt(input.limit) || 30 }]);\n    const r = m.result[0] || {};\n    let out = 'Anchor distribution for ' + input.target + ' (total: ' + (r.total_count || '?') + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 50)) {\n      out += '- \"' + (it.anchor || '(empty)') + '\" | backlinks: ' + (it.backlinks || 0) + ' | refdoms: ' + (it.referring_domains || 0) + '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_onpage_instant') {\n    req_(input.url, 'url');\n    const m = await dfsCall('POST', '/on_page/instant_pages', [{ url: input.url }]);\n    let r = m.result[0] || {};\n    if (r.items && r.items.length) r = r.items[0];\n    let out = 'On-page audit ' + input.url + ':\\n';\n    out += '- HTTP status: ' + (r.status_code || '?') + '\\n';\n    if (r.meta) {\n      out += '- Title: ' + (r.meta.title || '-') + '\\n';\n      out += '- Description: ' + (r.meta.description || '-') + '\\n';\n    }\n    if (r.checks) {\n      const fails = Object.entries(r.checks).filter(([k,v]) => v === false).map(([k]) => k);\n      out += '- Failed checks: ' + (fails.length ? fails.join(', ') : 'none') + '\\n';\n    }\n    if (r.page_timing) out += '- Page timing: ' + JSON.stringify(r.page_timing) + '\\n';\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_lighthouse_audit') {\n    req_(input.url, 'url');\n    const forMobile = String(input.for_mobile || 'true').toLowerCase() === 'true';\n    const m = await dfsCall('POST', '/on_page/lighthouse/live/json', [{ url: input.url, for_mobile: forMobile }]);\n    const r = m.result[0] || {};\n    let out = 'Lighthouse audit ' + input.url + ' (' + (forMobile ? 'mobile' : 'desktop') + '):\\n';\n    if (r.categories) {\n      for (const [k, c] of Object.entries(r.categories)) {\n        out += '- ' + (c.title || k) + ': ' + Math.round((c.score || 0) * 100) + '/100\\n';\n      }\n    }\n    if (r.audits) {\n      const failing = Object.values(r.audits).filter(a => a && a.score != null && a.score < 0.5).slice(0, 8);\n      if (failing.length) {\n        out += '\\nTop issues:\\n';\n        for (const a of failing) out += '- ' + (a.title || '?') + ' (score ' + (a.score || 0) + ')\\n';\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_domain_technologies') {\n    req_(input.target, 'target');\n    const m = await dfsCall('POST', '/domain_analytics/technologies/domain_technologies/live', [{ target: input.target }]);\n    const r = m.result[0] || {};\n    let out = 'Tech stack ' + input.target + ':\\n';\n    if (r.domain_rank) out += '- Domain rank: ' + r.domain_rank + '\\n';\n    if (r.country_iso_code) out += '- Country: ' + r.country_iso_code + '\\n';\n    if (r.technologies) {\n      out += '\\nTechnologies:\\n';\n      for (const [cat, items] of Object.entries(r.technologies)) {\n        if (Array.isArray(items) && items.length) {\n          out += '- ' + cat + ': ' + items.map(t => (typeof t === 'string' ? t : (t.name || t))).join(', ') + '\\n';\n        }\n      }\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  if (action === 'dfs_my_business_info') {\n    req_(input.keyword, 'keyword'); req_(input.location_code, 'location_code'); req_(input.language_code, 'language_code');\n    const m = await dfsCall('POST', '/business_data/google/my_business_info/live', [{ keyword: input.keyword, location_code: locInt(input.location_code), language_code: input.language_code, depth: parseInt(input.depth) || 10 }]);\n    const r = m.result[0] || {};\n    let out = 'Google My Business \"' + input.keyword + '\" (' + input.location_code + '/' + input.language_code + '):\\n\\n';\n    for (const it of (r.items || []).slice(0, 15)) {\n      out += '- ' + (it.title || '?') + (it.rating ? ' *' + it.rating.value + ' (' + it.rating.votes_count + ')' : '') + '\\n';\n      if (it.address) out += '  ' + it.address + '\\n';\n      if (it.phone) out += '  Phone: ' + it.phone + '\\n';\n      if (it.url) out += '  ' + it.url + '\\n';\n      out += '\\n';\n    }\n    return [{ json: { result: trunc(out, 5000) + fmtCost(m) } }];\n  }\n\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Valid: dfs_account_balance, dfs_serp_google_organic, dfs_serp_google_organic_advanced, dfs_search_volume, dfs_keywords_for_keywords, dfs_google_trends, dfs_keyword_overview, dfs_keyword_ideas, dfs_keyword_difficulty, dfs_ranked_keywords, dfs_competitors_domain, dfs_backlinks_summary, dfs_backlinks_referring_domains, dfs_backlinks_anchors, dfs_onpage_instant, dfs_lighthouse_audit, dfs_domain_technologies, dfs_my_business_info.' } }];\n} catch (e) {\n  return [{ json: { error: 'DataForSEO call failed: ' + (e.message || String(e)) } }];\n}"
         }
       }
     ],
     "connections": {
       "Execute Workflow Trigger": {
-        "main": [[{ "node": "DataForSEO Action Router", "type": "main", "index": 0 }]]
+        "main": [
+          [
+            {
+              "node": "DataForSEO Action Router",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   },
   "server": {
     "name": "MCP: DataForSEO",
-    "settings": { "executionOrder": "v1" },
+    "settings": {
+      "executionOrder": "v1"
+    },
     "nodes": [
       {
         "id": "mcp-trigger",
         "name": "MCP Server Trigger",
         "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
         "typeVersion": 2,
-        "position": [0, 0],
-        "parameters": { "path": "dataforseo" }
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "dataforseo"
+        }
       },
       {
         "id": "t01",
         "name": "dfs_account_balance",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 100],
+        "position": [
+          400,
+          100
+        ],
         "parameters": {
           "name": "dfs_account_balance",
           "description": "Show DataForSEO account balance, lifetime spend, and timezone. Free, use first to check budget.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
-            "value": { "action": "dfs_account_balance" },
+            "value": {
+              "action": "dfs_account_balance"
+            },
             "matchingColumns": [],
-            "schema": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              }
+            ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
           }
@@ -72,11 +110,18 @@
         "name": "dfs_serp_google_organic",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 250],
+        "position": [
+          400,
+          250
+        ],
         "parameters": {
           "name": "dfs_serp_google_organic",
           "description": "Google organic SERP for a keyword. Common location_codes: 2276=Germany, 2840=USA, 2826=UK, 2040=Austria, 2756=Switzerland. Common language_codes: de, en, fr, it, es. ~$0.002 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -88,10 +133,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keyword", "displayName": "keyword", "type": "string", "description": "Search query", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Numeric location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "ISO language code", "required": true },
-              { "id": "depth", "displayName": "depth", "type": "string", "description": "Result count", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keyword",
+                "displayName": "keyword",
+                "type": "string",
+                "description": "Search query",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Numeric location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "ISO language code",
+                "required": true
+              },
+              {
+                "id": "depth",
+                "displayName": "depth",
+                "type": "string",
+                "description": "Result count",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -103,11 +179,18 @@
         "name": "dfs_serp_google_organic_advanced",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 400],
+        "position": [
+          400,
+          400
+        ],
         "parameters": {
           "name": "dfs_serp_google_organic_advanced",
           "description": "Google SERP advanced (with featured snippets, Knowledge Graph, People Also Ask, sitelinks). ~$0.002 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -119,10 +202,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keyword", "displayName": "keyword", "type": "string", "description": "Search query", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "depth", "displayName": "depth", "type": "string", "description": "Result count", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keyword",
+                "displayName": "keyword",
+                "type": "string",
+                "description": "Search query",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "depth",
+                "displayName": "depth",
+                "type": "string",
+                "description": "Result count",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -134,11 +248,18 @@
         "name": "dfs_search_volume",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 550],
+        "position": [
+          400,
+          550
+        ],
         "parameters": {
           "name": "dfs_search_volume",
           "description": "Monthly search volume + CPC + competition for a list of keywords. Pass keywords as comma-separated list. ~$0.075 per call regardless of keyword count.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -149,9 +270,34 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Comma-separated keywords", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keywords",
+                "displayName": "keywords",
+                "type": "string",
+                "description": "Comma-separated keywords",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -163,11 +309,18 @@
         "name": "dfs_keywords_for_keywords",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 700],
+        "position": [
+          400,
+          700
+        ],
         "parameters": {
           "name": "dfs_keywords_for_keywords",
           "description": "Find related keywords for a seed (Google Ads). Returns related keywords with volume, CPC, competition. ~$0.075 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -179,10 +332,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Seed keyword(s)", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max ideas", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keywords",
+                "displayName": "keywords",
+                "type": "string",
+                "description": "Seed keyword(s)",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max ideas",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -194,11 +378,18 @@
         "name": "dfs_google_trends",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 850],
+        "position": [
+          400,
+          850
+        ],
         "parameters": {
           "name": "dfs_google_trends",
           "description": "Google Trends interest-over-time for up to 5 keywords (comma-separated). Optional date range YYYY-MM-DD.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -210,10 +401,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Up to 5 comma-separated keywords", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "date_from", "displayName": "date_from", "type": "string", "description": "YYYY-MM-DD start", "required": false },
-              { "id": "date_to", "displayName": "date_to", "type": "string", "description": "YYYY-MM-DD end", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keywords",
+                "displayName": "keywords",
+                "type": "string",
+                "description": "Up to 5 comma-separated keywords",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "date_from",
+                "displayName": "date_from",
+                "type": "string",
+                "description": "YYYY-MM-DD start",
+                "required": false
+              },
+              {
+                "id": "date_to",
+                "displayName": "date_to",
+                "type": "string",
+                "description": "YYYY-MM-DD end",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -225,11 +447,18 @@
         "name": "dfs_keyword_overview",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1000],
+        "position": [
+          400,
+          1000
+        ],
         "parameters": {
           "name": "dfs_keyword_overview",
           "description": "Full SEO profile of a single keyword: search volume, KD, CPC, intent, SERP features. ~$0.01 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -240,9 +469,34 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keyword", "displayName": "keyword", "type": "string", "description": "Single keyword", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keyword",
+                "displayName": "keyword",
+                "type": "string",
+                "description": "Single keyword",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -254,11 +508,18 @@
         "name": "dfs_keyword_ideas",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1150],
+        "position": [
+          400,
+          1150
+        ],
         "parameters": {
           "name": "dfs_keyword_ideas",
           "description": "Semantic keyword ideas from a seed keyword (DataForSEO Labs). ~$0.011 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -270,10 +531,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keyword", "displayName": "keyword", "type": "string", "description": "Seed keyword", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max ideas", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keyword",
+                "displayName": "keyword",
+                "type": "string",
+                "description": "Seed keyword",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max ideas",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -285,11 +577,18 @@
         "name": "dfs_keyword_difficulty",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1300],
+        "position": [
+          400,
+          1300
+        ],
         "parameters": {
           "name": "dfs_keyword_difficulty",
           "description": "Bulk keyword difficulty (0-100) for a list of keywords. ~$0.01 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -300,9 +599,34 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keywords", "displayName": "keywords", "type": "string", "description": "Comma-separated keywords", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keywords",
+                "displayName": "keywords",
+                "type": "string",
+                "description": "Comma-separated keywords",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -314,11 +638,18 @@
         "name": "dfs_ranked_keywords",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1450],
+        "position": [
+          400,
+          1450
+        ],
         "parameters": {
           "name": "dfs_ranked_keywords",
           "description": "Keywords a domain ranks for organically: position, search volume, traffic estimate. Pass domain (no http://, no path) as 'target'. ~$0.0105 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -330,10 +661,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain name", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max keywords", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain name",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max keywords",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -345,11 +707,18 @@
         "name": "dfs_competitors_domain",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1600],
+        "position": [
+          400,
+          1600
+        ],
         "parameters": {
           "name": "dfs_competitors_domain",
           "description": "Top competing domains for a target domain in the SERPs. ~$0.0105 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -361,10 +730,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain name", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max competitors", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain name",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max competitors",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -376,11 +776,18 @@
         "name": "dfs_backlinks_summary",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1750],
+        "position": [
+          400,
+          1750
+        ],
         "parameters": {
           "name": "dfs_backlinks_summary",
           "description": "Backlink profile overview for a domain. NOTE: Requires Backlinks API subscription on DataForSEO; without it returns 40204 access-denied error.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -389,7 +796,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain or URL", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain or URL",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -401,11 +821,18 @@
         "name": "dfs_backlinks_referring_domains",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 1900],
+        "position": [
+          400,
+          1900
+        ],
         "parameters": {
           "name": "dfs_backlinks_referring_domains",
           "description": "List of referring domains for a target. NOTE: Requires Backlinks API subscription.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -415,8 +842,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max domains", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max domains",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -428,11 +874,18 @@
         "name": "dfs_backlinks_anchors",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 2050],
+        "position": [
+          400,
+          2050
+        ],
         "parameters": {
           "name": "dfs_backlinks_anchors",
           "description": "Anchor text distribution for a domain's backlinks. NOTE: Requires Backlinks API subscription.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -442,8 +895,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain", "required": true },
-              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max anchors", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain",
+                "required": true
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max anchors",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -455,11 +927,18 @@
         "name": "dfs_onpage_instant",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 2200],
+        "position": [
+          400,
+          2200
+        ],
         "parameters": {
           "name": "dfs_onpage_instant",
           "description": "Live single-page audit: HTTP status, meta tags, on-page checks. Pass full URL with protocol. ~$0.000125 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -468,7 +947,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "url", "displayName": "url", "type": "string", "description": "Full URL", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "url",
+                "displayName": "url",
+                "type": "string",
+                "description": "Full URL",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -480,11 +972,18 @@
         "name": "dfs_lighthouse_audit",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 2350],
+        "position": [
+          400,
+          2350
+        ],
         "parameters": {
           "name": "dfs_lighthouse_audit",
           "description": "Lighthouse audit (Performance, Accessibility, SEO, Best Practices, PWA). Set for_mobile=false for desktop. ~$0.00425 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -494,8 +993,27 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "url", "displayName": "url", "type": "string", "description": "Full URL", "required": true },
-              { "id": "for_mobile", "displayName": "for_mobile", "type": "string", "description": "true|false", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "url",
+                "displayName": "url",
+                "type": "string",
+                "description": "Full URL",
+                "required": true
+              },
+              {
+                "id": "for_mobile",
+                "displayName": "for_mobile",
+                "type": "string",
+                "description": "true|false",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -507,11 +1025,18 @@
         "name": "dfs_domain_technologies",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 2500],
+        "position": [
+          400,
+          2500
+        ],
         "parameters": {
           "name": "dfs_domain_technologies",
           "description": "Detected tech stack of a domain (CMS, frameworks, analytics, hosting, etc.). ~$0.01 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -520,7 +1045,20 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "target", "displayName": "target", "type": "string", "description": "Domain name", "required": true }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "target",
+                "displayName": "target",
+                "type": "string",
+                "description": "Domain name",
+                "required": true
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -532,11 +1070,18 @@
         "name": "dfs_my_business_info",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [400, 2650],
+        "position": [
+          400,
+          2650
+        ],
         "parameters": {
           "name": "dfs_my_business_info",
           "description": "Google My Business listings for a search query in a location. Returns name, address, rating, categories, hours. ~$0.0054 per call.",
-          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
@@ -548,10 +1093,41 @@
             },
             "matchingColumns": [],
             "schema": [
-              { "id": "keyword", "displayName": "keyword", "type": "string", "description": "Search query", "required": true },
-              { "id": "location_code", "displayName": "location_code", "type": "string", "description": "Location code", "required": true },
-              { "id": "language_code", "displayName": "language_code", "type": "string", "description": "Language code", "required": true },
-              { "id": "depth", "displayName": "depth", "type": "string", "description": "Result count", "required": false }
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type (hardcoded)",
+                "required": true
+              },
+              {
+                "id": "keyword",
+                "displayName": "keyword",
+                "type": "string",
+                "description": "Search query",
+                "required": true
+              },
+              {
+                "id": "location_code",
+                "displayName": "location_code",
+                "type": "string",
+                "description": "Location code",
+                "required": true
+              },
+              {
+                "id": "language_code",
+                "displayName": "language_code",
+                "type": "string",
+                "description": "Language code",
+                "required": true
+              },
+              {
+                "id": "depth",
+                "displayName": "depth",
+                "type": "string",
+                "description": "Result count",
+                "required": false
+              }
             ],
             "attemptToConvertTypes": false,
             "convertFieldsToString": false
@@ -560,24 +1136,204 @@
       }
     ],
     "connections": {
-      "dfs_account_balance": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_serp_google_organic": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_serp_google_organic_advanced": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_search_volume": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_keywords_for_keywords": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_google_trends": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_keyword_overview": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_keyword_ideas": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_keyword_difficulty": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_ranked_keywords": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_competitors_domain": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_backlinks_summary": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_backlinks_referring_domains": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_backlinks_anchors": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_onpage_instant": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_lighthouse_audit": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_domain_technologies": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
-      "dfs_my_business_info": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+      "dfs_account_balance": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_serp_google_organic": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_serp_google_organic_advanced": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_search_volume": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_keywords_for_keywords": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_google_trends": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_keyword_overview": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_keyword_ideas": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_keyword_difficulty": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_ranked_keywords": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_competitors_domain": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_backlinks_summary": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_backlinks_referring_domains": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_backlinks_anchors": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_onpage_instant": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_lighthouse_audit": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_domain_technologies": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "dfs_my_business_info": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
     }
   }
 }
