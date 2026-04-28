@@ -139,7 +139,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [DataForSEO](https://dataforseo.com/) | Comprehensive SEO data (18 tools): Google SERPs (live regular/advanced), keyword research (search volume, ideas, difficulty, overview), competitor analysis, backlinks (requires sub), on-page audits, Lighthouse, domain tech stack, Google My Business. Cost shown per call | DataForSEO Login (Email), API Password | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [DataForSEO](https://dataforseo.com/) | Comprehensive SEO data (18 tools): Google SERPs (live regular/advanced), keyword research (search volume, ideas, difficulty, overview), competitor analysis, backlinks (requires sub), on-page audits, Lighthouse, domain tech stack, Google My Business. Cost shown per call | DataForSEO Login (Email), API Password | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Google Ads](https://ads.google.com/) | Query campaigns, ad groups, and performance data via GAQL (Beta) | Google OAuth2, Developer Token, Customer ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Salesforce CRM](https://www.salesforce.com/) | Full CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks (CRUD + search) plus SOQL query, SOSL search, describe-object. REST v60.0 via Client Credentials Flow | Instance URL, Consumer Key, Consumer Secret | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
@@ -179,7 +179,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [GENESIS-Online (Destatis)](https://www-genesis.destatis.de/) | Official German federal statistics (9 tools): search 100,000+ tables on population, economy, migration, education, health, environment; browse statistics, list variables/values, fetch table metadata and data with year/regional/classifying filters | GENESIS-Online API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [GENESIS-Online (Destatis)](https://www-genesis.destatis.de/) | Official German federal statistics (9 tools): search 100,000+ tables on population, economy, migration, education, health, environment; browse statistics, list variables/values, fetch table metadata and data with year/regional/classifying filters | GENESIS-Online API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
