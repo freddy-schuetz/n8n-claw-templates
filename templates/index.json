@@ -971,6 +971,24 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "dataforseo",
+      "name": "DataForSEO",
+      "type": "native",
+      "category": "marketing",
+      "description": "Comprehensive SEO data via DataForSEO API v3: Google SERPs, keyword research (volume, ideas, difficulty), competitor analysis, backlinks (sub required), on-page audits, Lighthouse, domain tech stack, Google My Business. Live endpoints only. Paid API.",
+      "credentials_required": [
+        {
+          "key": "dataforseo_login",
+          "label": "DataForSEO Login (Email)"
+        },
+        {
+          "key": "dataforseo_password",
+          "label": "DataForSEO API Password"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

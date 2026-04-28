@@ -1,0 +1,42 @@
+{
+  "id": "dataforseo",
+  "name": "DataForSEO",
+  "version": "1.0.0",
+  "updated": "2026-04-28",
+  "type": "native",
+  "category": "marketing",
+  "description": "Comprehensive SEO data via DataForSEO API v3: Google SERPs, keyword research (search volume, ideas, difficulty, overview), competitor analysis, backlinks, on-page audits, Lighthouse scores, domain tech stack and Google My Business. Live endpoints only. Paid API (cost shown per call).",
+  "credentials_required": [
+    {
+      "key": "dataforseo_login",
+      "label": "DataForSEO Login (Email)"
+    },
+    {
+      "key": "dataforseo_password",
+      "label": "DataForSEO API Password"
+    }
+  ],
+  "tools": [
+    { "name": "dfs_account_balance", "description": "Show DataForSEO account balance, lifetime spend, and timezone. Free. Use this first to verify credentials work and check budget." },
+    { "name": "dfs_serp_google_organic", "description": "Fetch Google organic search results (top N) for a keyword in a given location and language. Live, ~$0.002 per call." },
+    { "name": "dfs_serp_google_organic_advanced", "description": "Like dfs_serp_google_organic but with featured snippets, sitelinks, knowledge graph, People Also Ask. ~$0.002 per call." },
+    { "name": "dfs_search_volume", "description": "Monthly search volume + CPC + competition for a list of keywords (Google Ads data). ~$0.075 per call regardless of keyword count." },
+    { "name": "dfs_keywords_for_keywords", "description": "Find related keywords for a seed keyword with their search volume, CPC and competition (Google Ads). ~$0.075 per call." },
+    { "name": "dfs_google_trends", "description": "Google Trends interest-over-time for one or more keywords in a region and date range." },
+    { "name": "dfs_keyword_overview", "description": "Full SEO profile of a single keyword: search volume, keyword difficulty, CPC, search intent, SERP features. ~$0.01 per call." },
+    { "name": "dfs_keyword_ideas", "description": "Semantic keyword ideas from a seed keyword, with metrics. ~$0.011 per call." },
+    { "name": "dfs_keyword_difficulty", "description": "Bulk keyword difficulty (KD 1-100) for a list of keywords. ~$0.01 per call." },
+    { "name": "dfs_ranked_keywords", "description": "What keywords does a domain rank for? Returns position, search volume, traffic estimate. ~$0.0105 per call." },
+    { "name": "dfs_competitors_domain", "description": "Top competing domains for a target domain in the SERPs. ~$0.0105 per call." },
+    { "name": "dfs_backlinks_summary", "description": "Backlink profile summary for a domain (total backlinks, referring domains, rank, history). REQUIRES a separate Backlinks API subscription on DataForSEO." },
+    { "name": "dfs_backlinks_referring_domains", "description": "List of domains that link to a target. REQUIRES Backlinks API subscription." },
+    { "name": "dfs_backlinks_anchors", "description": "Anchor text distribution for a domain's backlinks. REQUIRES Backlinks API subscription." },
+    { "name": "dfs_onpage_instant", "description": "Live single-page audit: HTTP status, meta tags, on-page issues. Synchronous, ~$0.000125 per call." },
+    { "name": "dfs_lighthouse_audit", "description": "Lighthouse audit (Performance, Accessibility, SEO, Best Practices, PWA) for a URL. Mobile or desktop. ~$0.00425 per call." },
+    { "name": "dfs_domain_technologies", "description": "Detected tech stack of a domain (CMS, frameworks, analytics, hosting). ~$0.01 per call." },
+    { "name": "dfs_my_business_info", "description": "Google My Business listings for a search query in a location. Returns name, address, rating, categories, hours. ~$0.0054 per call." }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}
