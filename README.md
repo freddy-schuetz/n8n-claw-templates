@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (66)
+## Available Skills (67)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -26,7 +26,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
 | [Notes & CRM](#notes--crm) | 4 | Airtable, Confluence Cloud, NocoDB, Notion |
-| [Reference](#reference) | 3 | Countries, holidays, timezones |
+| [Reference](#reference) | 4 | Countries, GENESIS-Online (German official stats), holidays, timezones |
 | [Smart Home](#smart-home) | 1 | Home Assistant |
 | [Tasks](#tasks) | 4 | Asana, Jira Cloud, Todoist, Vikunja |
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
@@ -178,6 +178,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [Country Info](https://restcountries.com/) | Country details: capital, population, languages, currencies | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [GENESIS-Online (Destatis)](https://www-genesis.destatis.de/) | Official German federal statistics (9 tools): search 100,000+ tables on population, economy, migration, education, health, environment; browse statistics, list variables/values, fetch table metadata and data with year/regional/classifying filters | GENESIS-Online API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Public Holidays](https://date.nager.at/) | Look up public holidays for any country | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Timezone & World Clock](https://timeapi.io/) | Get current time in any timezone and convert between timezones | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 

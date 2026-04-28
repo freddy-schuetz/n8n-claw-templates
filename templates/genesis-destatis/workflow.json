@@ -1,0 +1,384 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: GENESIS-Online Destatis",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "GENESIS Action Router",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.genesis-destatis&cred_key=eq.genesis_token&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || creds.length === 0 || !creds[0].cred_value) {\n  return [{ json: { error: 'GENESIS-Token nicht konfiguriert. Kostenlosen Token holen: https://www-genesis.destatis.de/datenbank/online -> Mein Profil -> API-Zugang. Dann mit add_credential einrichten.' } }];\n}\nconst token = creds[0].cred_value;\nconst BASE = 'https://www-genesis.destatis.de/genesisWS/rest/2020/';\n\nasync function genesisCall(path, params) {\n  const body = new URLSearchParams();\n  for (const [k, v] of Object.entries(params || {})) {\n    if (v !== undefined && v !== null && v !== '') body.append(k, String(v));\n  }\n  let res;\n  try {\n    res = await helpers.httpRequest({\n      method: 'POST',\n      url: BASE + path,\n      headers: {\n        'username': token,\n        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',\n        'Accept': 'application/json'\n      },\n      body: body.toString()\n    });\n  } catch (e) {\n    throw new Error('GENESIS HTTP-Fehler (' + path + '): ' + e.message);\n  }\n  if (res && typeof res.Code === 'number' && res.Code !== 0 && !res.Status) {\n    throw new Error('GENESIS error ' + res.Code + ': ' + (res.Content || ''));\n  }\n  if (res && res.Status && res.Status.Type === 'ERROR') {\n    throw new Error('GENESIS error ' + res.Status.Code + ': ' + res.Status.Content);\n  }\n  return res;\n}\n\nfunction trunc(s, n) {\n  if (!s) return '';\n  if (s.length <= n) return s;\n  return s.substring(0, n) + '\\n\\n... (gekuerzt bei ' + n + ' Zeichen, total ' + s.length + ' Zeichen).';\n}\n\nfunction fmtList(items, max) {\n  const out = [];\n  let count = 0;\n  for (const it of (items || [])) {\n    out.push('- [' + it.Code + '] ' + (it.Content || '').replace(/\\n/g, ' ') + (it.Time ? ' (' + it.Time + ')' : ''));\n    count++;\n    if (count >= max) break;\n  }\n  return out.join('\\n');\n}\n\nconst lang = (input.language || 'de').toLowerCase();\n\ntry {\n  if (action === 'genesis_search') {\n    if (!input.term) return [{ json: { error: 'Parameter \"term\" ist erforderlich.' } }];\n    const data = await genesisCall('find/find', {\n      term: input.term,\n      category: input.category || 'all',\n      pagelength: input.pagelength || '20',\n      language: lang\n    });\n    let result = 'Suche \"' + input.term + '\" (' + lang + '):\\n\\n';\n    let total = 0;\n    if (data.Tables && data.Tables.length) { result += 'Tables:\\n' + fmtList(data.Tables, 20) + '\\n\\n'; total += data.Tables.length; }\n    if (data.Statistics && data.Statistics.length) { result += 'Statistics:\\n' + fmtList(data.Statistics, 20) + '\\n\\n'; total += data.Statistics.length; }\n    if (data.Cubes && data.Cubes.length) { result += 'Cubes:\\n' + fmtList(data.Cubes, 20) + '\\n\\n'; total += data.Cubes.length; }\n    if (data.Timeseries && data.Timeseries.length) { result += 'Timeseries:\\n' + fmtList(data.Timeseries, 20) + '\\n\\n'; total += data.Timeseries.length; }\n    if (data.Variables && data.Variables.length) { result += 'Variables:\\n' + fmtList(data.Variables, 20) + '\\n\\n'; total += data.Variables.length; }\n    if (total === 0) {\n      result += 'Keine Treffer.';\n      if (lang === 'de') result += ' Hinweis: Bei deutschen Suchbegriffen liefert GENESIS oft leere Resultate. Versuch language=en mit englischem Wort (z.B. \"migration\" statt \"Wanderung\").';\n    }\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_list_tables') {\n    if (!input.selection) return [{ json: { error: 'Parameter \"selection\" ist erforderlich (z.B. \"12711*\" oder \"61*\").' } }];\n    const data = await genesisCall('catalogue/tables', { selection: input.selection, pagelength: input.pagelength || '20', language: lang });\n    const list = data.List || [];\n    const result = 'Tabellen fuer selection=\"' + input.selection + '\" (' + list.length + '):\\n\\n' + fmtList(list, 50);\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_list_statistics') {\n    const data = await genesisCall('catalogue/statistics', { selection: input.selection || '', pagelength: input.pagelength || '50', language: lang });\n    const list = data.List || [];\n    const result = 'Statistiken (' + list.length + ')' + (input.selection ? ' fuer \"' + input.selection + '\"' : '') + ':\\n\\n' + fmtList(list, 50);\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_list_variables') {\n    const data = await genesisCall('catalogue/variables', { selection: input.selection || '', type: input.type || 'Alle', pagelength: input.pagelength || '30', language: lang });\n    const list = data.List || [];\n    const result = 'Variablen (' + list.length + '):\\n\\n' + fmtList(list, 50);\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_list_values') {\n    if (!input.name) return [{ json: { error: 'Parameter \"name\" ist erforderlich (Variablen-Code, z.B. \"JAHR\", \"NAT\", \"GES\", \"DLAND\").' } }];\n    const data = await genesisCall('catalogue/values2variable', { name: input.name, pagelength: input.pagelength || '30', language: lang });\n    const list = data.List || [];\n    const result = 'Werte fuer Variable \"' + input.name + '\" (' + list.length + '):\\n\\n' + fmtList(list, 50);\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_table_metadata') {\n    if (!input.name) return [{ json: { error: 'Parameter \"name\" ist erforderlich (Tabellen-Code, z.B. \"12711-0001\").' } }];\n    const data = await genesisCall('metadata/table', { name: input.name, language: lang });\n    const obj = data.Object || {};\n    let result = 'Metadaten Tabelle ' + (obj.Code || input.name) + ':\\n\\n';\n    result += 'Titel: ' + (obj.Content || '-') + '\\n';\n    if (obj.Time) result += 'Zeitraum: ' + obj.Time.From + ' - ' + obj.Time.To + '\\n';\n    if (obj.Updated) result += 'Letztes Update: ' + obj.Updated + '\\n';\n    if (obj.Structure && obj.Structure.Head) result += '\\nStatistik: [' + obj.Structure.Head.Code + '] ' + obj.Structure.Head.Content + '\\n';\n    const collect = (arr, depth) => {\n      for (const v of (arr || [])) {\n        result += '  '.repeat(depth) + '- [' + v.Code + '] ' + v.Content + ' (' + v.Type + ')\\n';\n        if (v.Structure) collect(v.Structure, depth + 1);\n      }\n    };\n    if (obj.Structure && obj.Structure.Columns) { result += '\\nSpalten-Variablen:\\n'; collect(obj.Structure.Columns, 0); }\n    if (obj.Structure && obj.Structure.Rows) { result += '\\nZeilen-Variablen:\\n'; for (const v of obj.Structure.Rows) result += '- [' + v.Code + '] ' + v.Content + ' (' + v.Type + ')\\n'; }\n    return [{ json: { result: trunc(result, 5000) } }];\n  }\n\n  if (action === 'genesis_get_table') {\n    if (!input.name) return [{ json: { error: 'Parameter \"name\" ist erforderlich.' } }];\n    const data = await genesisCall('data/table', {\n      name: input.name,\n      startyear: input.startyear || '',\n      endyear: input.endyear || '',\n      regionalvariable: input.regionalvariable || '',\n      regionalkey: input.regionalkey || '',\n      classifyingvariable1: input.classifyingvariable1 || '',\n      classifyingkey1: input.classifyingkey1 || '',\n      classifyingvariable2: input.classifyingvariable2 || '',\n      classifyingkey2: input.classifyingkey2 || '',\n      classifyingvariable3: input.classifyingvariable3 || '',\n      classifyingkey3: input.classifyingkey3 || '',\n      format: 'ffcsv',\n      language: lang\n    });\n    const content = (data.Object && data.Object.Content) || '';\n    let result = 'Daten Tabelle ' + input.name + ':\\n\\n```\\n' + trunc(content, 4500) + '\\n```';\n    if (content.length > 4500) result += '\\n\\nFilter-Tipp: startyear/endyear (z.B. 2022/2024), regionalvariable+regionalkey (z.B. DLAND mit DG=Deutschland insgesamt), classifyingvariable1+classifyingkey1 fuer weitere Filter (z.B. NAT mit DEUTSCH=Deutsche).';\n    return [{ json: { result } }];\n  }\n\n  if (action === 'genesis_get_timeseries') {\n    if (!input.name) return [{ json: { error: 'Parameter \"name\" ist erforderlich.' } }];\n    const data = await genesisCall('data/timeseries', {\n      name: input.name,\n      startyear: input.startyear || '',\n      endyear: input.endyear || '',\n      contents: input.contents || '',\n      format: 'ffcsv',\n      language: lang\n    });\n    const content = (data.Object && data.Object.Content) || '';\n    const result = 'Zeitreihe ' + input.name + ':\\n\\n```\\n' + trunc(content, 4500) + '\\n```';\n    return [{ json: { result } }];\n  }\n\n  if (action === 'genesis_quality_signs') {\n    const data = await genesisCall('catalogue/qualitysigns', { language: lang });\n    const list = data.List || [];\n    let result = 'GENESIS Qualitaets-Sonderzeichen (Bedeutung in Datenzellen):\\n\\n';\n    for (const it of list) result += '- `' + it.Code + '` -> ' + it.Content + '\\n';\n    return [{ json: { result } }];\n  }\n\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: genesis_search, genesis_list_tables, genesis_list_statistics, genesis_list_variables, genesis_list_values, genesis_table_metadata, genesis_get_table, genesis_get_timeseries, genesis_quality_signs.' } }];\n} catch (e) {\n  return [{ json: { error: 'GENESIS-Aufruf fehlgeschlagen: ' + e.message } }];\n}"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "GENESIS Action Router", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: GENESIS-Online Destatis",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "genesis-destatis"
+        }
+      },
+      {
+        "id": "tool-search",
+        "name": "genesis_search",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 100],
+        "parameters": {
+          "name": "genesis_search",
+          "description": "Free-text search across GENESIS-Online (German official statistics) for tables, statistics, variables, time series and cubes. Returns codes (e.g. '12711-0001') that you can pass to genesis_table_metadata or genesis_get_table. NOTE: German search terms often return empty results — use language='en' with English terms (e.g. 'migration' instead of 'Wanderung') for best results.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_search",
+              "term": "={{ $fromAI('term', 'Search keyword (prefer English single words like \"migration\", \"population\", \"prices\")', 'string') }}",
+              "category": "={{ $fromAI('category', 'One of: all, tables, statistics, variables, time-series, cubes (default: all)', 'string') }}",
+              "pagelength": "={{ $fromAI('pagelength', 'Max results per category, default 20', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "term", "displayName": "term", "type": "string", "description": "Search keyword", "required": true },
+              { "id": "category", "displayName": "category", "type": "string", "description": "all|tables|statistics|variables|time-series|cubes", "required": false },
+              { "id": "pagelength", "displayName": "pagelength", "type": "string", "description": "Max results per category", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-tables",
+        "name": "genesis_list_tables",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 280],
+        "parameters": {
+          "name": "genesis_list_tables",
+          "description": "List GENESIS tables filtered by code prefix. Examples: '12711*' for migration tables, '61*' for prices, '21*' for education, '23*' for health. Use '*' for everything.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_list_tables",
+              "selection": "={{ $fromAI('selection', 'Code prefix with wildcard, e.g. 12711* for migration', 'string') }}",
+              "pagelength": "={{ $fromAI('pagelength', 'Max results, default 20', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "selection", "displayName": "selection", "type": "string", "description": "Code prefix, e.g. 12711*", "required": true },
+              { "id": "pagelength", "displayName": "pagelength", "type": "string", "description": "Max results", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-stats",
+        "name": "genesis_list_statistics",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 460],
+        "parameters": {
+          "name": "genesis_list_statistics",
+          "description": "Browse top-level GENESIS statistics (themes). Each statistic has a numeric code (e.g. '12711' for Wanderungsstatistik). Use the codes here as a prefix for genesis_list_tables.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_list_statistics",
+              "selection": "={{ $fromAI('selection', 'Optional code prefix (e.g. 12* or empty for all)', 'string') }}",
+              "pagelength": "={{ $fromAI('pagelength', 'Max results, default 50', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "selection", "displayName": "selection", "type": "string", "description": "Optional code prefix", "required": false },
+              { "id": "pagelength", "displayName": "pagelength", "type": "string", "description": "Max results", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-vars",
+        "name": "genesis_list_variables",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 640],
+        "parameters": {
+          "name": "genesis_list_variables",
+          "description": "List GENESIS variables (Merkmale) such as JAHR (year), NAT (nationality), GES (sex), DLAND (federal state). Optionally filter by code prefix or by type (klassifizierend, raeumlich, zeitlich, sachlich, insgesamt).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_list_variables",
+              "selection": "={{ $fromAI('selection', 'Optional code prefix (e.g. NAT* or empty for all)', 'string') }}",
+              "type": "={{ $fromAI('type', 'Alle | klassifizierend | raeumlich | zeitlich | sachlich | insgesamt (default: Alle)', 'string') }}",
+              "pagelength": "={{ $fromAI('pagelength', 'Max results, default 30', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "selection", "displayName": "selection", "type": "string", "description": "Optional code prefix", "required": false },
+              { "id": "type", "displayName": "type", "type": "string", "description": "Variable type filter", "required": false },
+              { "id": "pagelength", "displayName": "pagelength", "type": "string", "description": "Max results", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-values",
+        "name": "genesis_list_values",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 820],
+        "parameters": {
+          "name": "genesis_list_values",
+          "description": "List concrete value keys of a GENESIS variable. E.g. name='NAT' returns ['NATD'=Deutsche, 'NATA'=Auslaender]; name='DLAND' returns federal-state codes. Use these keys as classifyingkey/regionalkey in genesis_get_table.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_list_values",
+              "name": "={{ $fromAI('name', 'Variable code (e.g. NAT, GES, DLAND, JAHR)', 'string') }}",
+              "pagelength": "={{ $fromAI('pagelength', 'Max results, default 30', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "name", "displayName": "name", "type": "string", "description": "Variable code (e.g. NAT, GES, DLAND)", "required": true },
+              { "id": "pagelength", "displayName": "pagelength", "type": "string", "description": "Max results", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-meta",
+        "name": "genesis_table_metadata",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 1000],
+        "parameters": {
+          "name": "genesis_table_metadata",
+          "description": "Get the full structure of a GENESIS table: variables in head/columns/rows, time range, last update timestamp. Always call this BEFORE genesis_get_table to know which classifying variables exist and how to filter.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_table_metadata",
+              "name": "={{ $fromAI('name', 'Table code, e.g. 12711-0001', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "name", "displayName": "name", "type": "string", "description": "Table code", "required": true },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-table",
+        "name": "genesis_get_table",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 1180],
+        "parameters": {
+          "name": "genesis_get_table",
+          "description": "Fetch the actual data of a GENESIS table as a CSV-like preview. Always narrow the result with startyear/endyear and filter variables — full tables are huge and the response is truncated at 4500 chars. To filter: pass regionalvariable + regionalkey (e.g. DLAND + 'DG' for Germany) or classifyingvariable1..3 + classifyingkey1..3 (e.g. NAT + 'DEUTSCH'). Use genesis_list_values to find valid keys.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_get_table",
+              "name": "={{ $fromAI('name', 'Table code, e.g. 12711-0001', 'string') }}",
+              "startyear": "={{ $fromAI('startyear', 'Start year, e.g. 2022', 'string') }}",
+              "endyear": "={{ $fromAI('endyear', 'End year, e.g. 2024', 'string') }}",
+              "regionalvariable": "={{ $fromAI('regionalvariable', 'Regional variable code (e.g. DLAND for federal states)', 'string') }}",
+              "regionalkey": "={{ $fromAI('regionalkey', 'Regional value key (e.g. DG for Germany total, BB for Brandenburg)', 'string') }}",
+              "classifyingvariable1": "={{ $fromAI('classifyingvariable1', 'Classifying variable code (e.g. NAT, GES)', 'string') }}",
+              "classifyingkey1": "={{ $fromAI('classifyingkey1', 'Classifying value key (e.g. DEUTSCH, MAENNLICH)', 'string') }}",
+              "classifyingvariable2": "={{ $fromAI('classifyingvariable2', 'Second classifying variable code', 'string') }}",
+              "classifyingkey2": "={{ $fromAI('classifyingkey2', 'Second classifying value key', 'string') }}",
+              "classifyingvariable3": "={{ $fromAI('classifyingvariable3', 'Third classifying variable code', 'string') }}",
+              "classifyingkey3": "={{ $fromAI('classifyingkey3', 'Third classifying value key', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "name", "displayName": "name", "type": "string", "description": "Table code", "required": true },
+              { "id": "startyear", "displayName": "startyear", "type": "string", "description": "Start year", "required": false },
+              { "id": "endyear", "displayName": "endyear", "type": "string", "description": "End year", "required": false },
+              { "id": "regionalvariable", "displayName": "regionalvariable", "type": "string", "description": "Regional variable code", "required": false },
+              { "id": "regionalkey", "displayName": "regionalkey", "type": "string", "description": "Regional value key", "required": false },
+              { "id": "classifyingvariable1", "displayName": "classifyingvariable1", "type": "string", "description": "Classifying variable 1", "required": false },
+              { "id": "classifyingkey1", "displayName": "classifyingkey1", "type": "string", "description": "Classifying key 1", "required": false },
+              { "id": "classifyingvariable2", "displayName": "classifyingvariable2", "type": "string", "description": "Classifying variable 2", "required": false },
+              { "id": "classifyingkey2", "displayName": "classifyingkey2", "type": "string", "description": "Classifying key 2", "required": false },
+              { "id": "classifyingvariable3", "displayName": "classifyingvariable3", "type": "string", "description": "Classifying variable 3", "required": false },
+              { "id": "classifyingkey3", "displayName": "classifyingkey3", "type": "string", "description": "Classifying key 3", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-ts",
+        "name": "genesis_get_timeseries",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 1360],
+        "parameters": {
+          "name": "genesis_get_timeseries",
+          "description": "Fetch a single GENESIS time series by code (returned by genesis_search with category='time-series'). Optional year filter via startyear/endyear.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_get_timeseries",
+              "name": "={{ $fromAI('name', 'Time series code', 'string') }}",
+              "startyear": "={{ $fromAI('startyear', 'Start year', 'string') }}",
+              "endyear": "={{ $fromAI('endyear', 'End year', 'string') }}",
+              "contents": "={{ $fromAI('contents', 'Optional content filter', 'string') }}",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "name", "displayName": "name", "type": "string", "description": "Time series code", "required": true },
+              { "id": "startyear", "displayName": "startyear", "type": "string", "description": "Start year", "required": false },
+              { "id": "endyear", "displayName": "endyear", "type": "string", "description": "End year", "required": false },
+              { "id": "contents", "displayName": "contents", "type": "string", "description": "Content filter", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-quality",
+        "name": "genesis_quality_signs",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [400, 1540],
+        "parameters": {
+          "name": "genesis_quality_signs",
+          "description": "Reference: meaning of GENESIS quality codes used in data cells (e.g. '-' = no data, '/' = unreliable, '()' = limited validity, 'p' = preliminary). Use this when interpreting unusual values in genesis_get_table output.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "genesis_quality_signs",
+              "language": "={{ $fromAI('language', 'de or en (default de)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "language", "displayName": "language", "type": "string", "description": "de or en", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "genesis_search": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_list_tables": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_list_statistics": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_list_variables": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_list_values": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_table_metadata": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_get_table": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_get_timeseries": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "genesis_quality_signs": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}

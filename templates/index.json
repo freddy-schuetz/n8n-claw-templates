@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-04-20",
+  "updated": "2026-04-28",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -954,6 +954,20 @@
         {
           "key": "shopify_access_token",
           "label": "Shopify Admin API Access Token"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "genesis-destatis",
+      "name": "GENESIS-Online (Destatis)",
+      "type": "native",
+      "category": "reference",
+      "description": "Official German federal statistics from Destatis GENESIS-Online: search 100,000+ tables on population, economy, migration, education, health, environment. Free API token required.",
+      "credentials_required": [
+        {
+          "key": "genesis_token",
+          "label": "GENESIS-Online API Token"
         }
       ],
       "version": "1.0.0"
