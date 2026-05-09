@@ -1,0 +1,44 @@
+{
+  "id": "wger-exercises",
+  "name": "wger Exercises",
+  "version": "1.0.0",
+  "updated": "2026-05-09",
+  "type": "native",
+  "category": "health",
+  "description": "Open exercise database from wger.de — 845+ exercises with descriptions, muscle groups, equipment, images, plus public workout templates (Stronglifts 5x5, PPL, etc.). Anonymous read-only API, no credentials needed.",
+  "credentials_required": [],
+  "credentials_optional": [],
+  "tools": [
+    {
+      "name": "search_exercises",
+      "description": "Search exercises filtered by muscle group, equipment, category, and language"
+    },
+    {
+      "name": "get_exercise",
+      "description": "Get full details of one exercise by ID — instructions, muscles, equipment, images"
+    },
+    {
+      "name": "list_categories",
+      "description": "List all exercise categories (Arms, Legs, Cardio, etc.)"
+    },
+    {
+      "name": "list_muscles",
+      "description": "List all muscles available for filtering"
+    },
+    {
+      "name": "list_equipment",
+      "description": "List all equipment types (Barbell, Dumbbell, Bodyweight, etc.)"
+    },
+    {
+      "name": "list_public_templates",
+      "description": "List public workout routine templates available on wger"
+    },
+    {
+      "name": "get_template_detail",
+      "description": "Get the full structure of a public workout template — sessions, exercises, sets, reps"
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

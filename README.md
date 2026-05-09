@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (68)
+## Available Skills (70)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -18,6 +18,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [E-commerce](#e-commerce) | 1 | Shopify |
 | [Entertainment](#entertainment) | 4 | Recipes, movies, trivia, YouTube |
 | [Finance](#finance) | 6 | Crypto, currencies, banking, Finnhub stocks, Lexware, Stripe |
+| [Health & Fitness](#health--fitness) | 2 | Fitness Buddy (personal coach), wger Exercises |
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Maps](#maps) | 2 | OpenStreetMap / Overpass POI search, OpenRouteService routing |
@@ -110,6 +111,13 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [KontoFlux](https://kontoflux.io/) | Access German bank accounts and transactions via KontoFlux Open-Banking API (5000+ banks, read-only) | KontoFlux API Key, Workspace ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Lexware Office](https://www.lexware.de/office/) | Full Lexware Office integration: contacts, articles, quotations, invoices, voucher upload, PDF download | Lexware API Token | [@Ranji1908](https://github.com/Ranji1908) | ✓ |
 | [Stripe](https://stripe.com/) | Stripe payments (23 tools): customers, payments, invoices, subscriptions, refunds, payouts, balance, payment links. Test-mode recommended for AI agents | Stripe API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+
+### Health & Fitness
+
+| Skill | Description | Credentials | Author | Tested |
+|-------|-------------|-------------|--------|:------:|
+| Fitness Buddy | Personal coach 'Buddy': logs meals (text/voice/photo with vision), workouts, body data and hydration; tracks calories/macros; generates multi-week training plans using real wger.de exercises; daily/weekly summaries with streak; proactive reminders. Requires the v1.6 fitness schema (run setup.sh --force on n8n-claw) | OpenAI API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [wger Exercises](https://wger.de/) | Open exercise database — 845+ exercises (descriptions, muscles, equipment, images), plus public workout routine templates (Stronglifts 5x5, PPL, etc.). Anonymous read-only API | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
 
 ### Knowledge
 

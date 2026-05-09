@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "updated": "2026-04-28",
+  "updated": "2026-05-09",
   "templates": [
     {
       "id": "weather-openmeteo",
@@ -986,6 +986,29 @@
         {
           "key": "dataforseo_password",
           "label": "DataForSEO API Password"
+        }
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "id": "wger-exercises",
+      "name": "wger Exercises",
+      "type": "native",
+      "category": "health",
+      "description": "Open exercise database from wger.de — 845+ exercises with descriptions, muscle groups, equipment, images, plus public workout templates (Stronglifts 5x5, PPL, etc.). Anonymous read-only API, no credentials needed.",
+      "credentials_required": [],
+      "version": "1.0.0"
+    },
+    {
+      "id": "fitness-buddy",
+      "name": "Fitness Buddy",
+      "type": "native",
+      "category": "health",
+      "description": "Personal coach 'Buddy': logs meals (text/voice/photo with OpenAI vision), workouts and body measurements; tracks calories, macros and hydration; sets goals; generates personalized multi-week training plans (using real wger.de exercises, no LLM hallucination); gives daily/weekly summaries with streak tracking and proactive reminders. Requires the v1.6 fitness schema (run setup.sh --force on n8n-claw to apply).",
+      "credentials_required": [
+        {
+          "key": "openai_api_key",
+          "label": "OpenAI API Key"
         }
       ],
       "version": "1.0.0"

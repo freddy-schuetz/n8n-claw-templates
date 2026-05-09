@@ -1,0 +1,36 @@
+{
+  "id": "fitness-buddy",
+  "name": "Fitness Buddy",
+  "version": "1.0.0",
+  "updated": "2026-05-09",
+  "type": "native",
+  "category": "health",
+  "description": "Personal coach 'Buddy': logs meals (text/voice/photo with OpenAI vision), workouts and body measurements; tracks calories, macros and hydration; sets goals; generates personalized multi-week training plans (using real wger.de exercises, no LLM hallucination); gives daily/weekly summaries with streak tracking and proactive reminders. Requires the v1.6 fitness schema (run setup.sh --force on n8n-claw to apply).",
+  "credentials_required": [
+    {
+      "key": "openai_api_key",
+      "label": "OpenAI API Key",
+      "hint": "Used for meal photo analysis (gpt-4o-mini vision) and structured workout/insight extraction. Get one at https://platform.openai.com/api-keys"
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "fitness_profile", "description": "Manage the user's fitness profile (age, sex, height, weight, goals, allergies). Auto-computes daily kcal target and macros via Mifflin-St-Jeor BMR + activity multiplier" },
+    { "name": "log_meal", "description": "Log a meal — from text description, voice transcript, photo (with vision analysis), barcode, or saved meal memory. Auto-resolves nutrition via OpenFoodFacts" },
+    { "name": "meal_memory", "description": "Personal meal cache — list/save/delete frequently eaten meals for one-click logging" },
+    { "name": "suggest_meal", "description": "Suggest a next meal that fits the remaining macro budget for today (respects dietary restrictions and allergies)" },
+    { "name": "log_workout", "description": "Log a workout (running, strength, cycling, etc.). Auto-extracts type/duration/intensity from text or voice; estimates calories burned via MET formula" },
+    { "name": "log_body", "description": "Log body measurements (weight, body fat, circumferences) and view trends with moving averages" },
+    { "name": "log_hydration", "description": "Log water intake and check progress against daily target" },
+    { "name": "goals", "description": "Manage fitness goals (target weight, weekly workout count, streaks, etc.). Auto-tracks progress as logs come in" },
+    { "name": "summary", "description": "Daily, weekly, or monthly fitness report — calories vs target, macros, workouts, hydration, streak, highlights" },
+    { "name": "training_plan", "description": "Generate or manage a multi-week training plan using real wger.de exercises. Supports custom LLM-generated plans, today's session, marking sessions complete, and deload adjustments" },
+    { "name": "reminders", "description": "Set up recurring fitness reminders (morning meal nudge, workout reminders, weekly report). Stored as scheduled_actions and fired by the heartbeat" },
+    { "name": "insights", "description": "Analyze the last 30 days of logs and surface patterns/recommendations (e.g. 'you eat 30% more carbs on weekends'). Stored in memory_long for the agent to recall" },
+    { "name": "export", "description": "Export meals, workouts, body measurements or hydration as CSV for a date range" },
+    { "name": "nutrition_lookup", "description": "Stand-alone nutrition lookup via OpenFoodFacts (barcode or name) without logging" }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.10.4"
+}

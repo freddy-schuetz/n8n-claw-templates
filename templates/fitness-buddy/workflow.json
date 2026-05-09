@@ -1,0 +1,1459 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Fitness Buddy",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Fitness Buddy Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'help';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst FILE_BRIDGE = 'http://file-bridge:3200';\nconst OFF_BASE = 'https://world.openfoodfacts.org';\nconst OFF_SEARCH = 'https://search.openfoodfacts.org';\nconst WGER_BASE = 'https://wger.de/api/v2';\nconst UA = 'n8n-claw/fitness-buddy/1.0';\n\nconst pgHeaders = {\n  apikey: SUPABASE_KEY,\n  Authorization: 'Bearer ' + SUPABASE_KEY,\n  'Content-Type': 'application/json',\n  Prefer: 'return=representation'\n};\n\nasync function pg(method, path, body) {\n  const opts = {\n    method,\n    url: SUPABASE_URL + '/rest/v1' + path,\n    headers: pgHeaders,\n    json: true,\n    timeout: 15000\n  };\n  if (body !== undefined) opts.body = body;\n  return await helpers.httpRequest(opts);\n}\n\nasync function pgPatch(path, body) {\n  return await helpers.httpRequest({\n    method: 'PATCH',\n    url: SUPABASE_URL + '/rest/v1' + path,\n    headers: pgHeaders,\n    body,\n    json: true,\n    timeout: 15000\n  });\n}\n\nasync function getOpenAIKey() {\n  const r = await pg('GET', '/template_credentials?template_id=eq.fitness-buddy&cred_key=eq.openai_api_key&select=cred_value');\n  if (!r || !r[0] || !r[0].cred_value) {\n    throw new Error('OpenAI API Key not configured. Use add_credential action on the library_manager to set it up.');\n  }\n  return r[0].cred_value;\n}\n\nasync function openaiChat(messages, opts) {\n  const apiKey = await getOpenAIKey();\n  const body = {\n    model: (opts && opts.model) || 'gpt-4o-mini',\n    temperature: opts && opts.temperature != null ? opts.temperature : 0.2,\n    messages\n  };\n  if (opts && opts.response_format) body.response_format = opts.response_format;\n  if (opts && opts.max_tokens) body.max_tokens = opts.max_tokens;\n  return await helpers.httpRequest({\n    method: 'POST',\n    url: 'https://api.openai.com/v1/chat/completions',\n    headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },\n    body,\n    json: true,\n    timeout: 90000\n  });\n}\n\nasync function llmJSON(systemPrompt, userPrompt, schema) {\n  const resp = await openaiChat([\n    { role: 'system', content: systemPrompt },\n    { role: 'user', content: userPrompt }\n  ], {\n    response_format: { type: 'json_schema', json_schema: { name: 'extracted', strict: true, schema } }\n  });\n  return JSON.parse(resp.choices[0].message.content);\n}\n\nasync function fetchFile(fileRef) {\n  const meta = await helpers.httpRequest({\n    method: 'GET',\n    url: FILE_BRIDGE + '/files/' + encodeURIComponent(fileRef),\n    json: true,\n    timeout: 15000\n  });\n  const bin = await helpers.httpRequest({\n    method: 'GET',\n    url: FILE_BRIDGE + '/files/' + encodeURIComponent(fileRef) + '/content?encoding=base64',\n    json: true,\n    timeout: 30000\n  });\n  return { mime: (meta && meta.mime_type) || 'image/jpeg', base64: bin && bin.content_base64 };\n}\n\nfunction bmr(sex, weightKg, heightCm, ageYears) {\n  const base = 10 * weightKg + 6.25 * heightCm - 5 * ageYears;\n  return sex === 'm' ? base + 5 : base - 161;\n}\n\nconst ACTIVITY_MULT = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, very_active: 1.9 };\nconst GOAL_DELTA = { lose_weight: -0.20, recomp: -0.10, maintain: 0, gain_muscle: 0.10, endurance: 0 };\n\nconst MET = {\n  running: { low: 6, medium: 9, high: 11.5 },\n  cycling: { low: 4, medium: 8, high: 12 },\n  swimming: { low: 5.8, medium: 8, high: 10 },\n  walking: { low: 2.8, medium: 3.8, high: 5 },\n  strength: { low: 3, medium: 5, high: 6 },\n  hiit: { low: 6, medium: 8, high: 10 },\n  yoga: { low: 2.5, medium: 3, high: 4 },\n  other: { low: 3, medium: 5, high: 7 }\n};\n\nfunction calorieBurn(type, intensity, weightKg, durationMin) {\n  const t = MET[type] || MET.other;\n  const m = t[intensity] || t.medium;\n  return Math.round(m * (weightKg || 70) * (durationMin / 60));\n}\n\nfunction ageFromBirthdate(d) {\n  if (!d) return null;\n  const dt = new Date(d);\n  return Math.floor((Date.now() - dt.getTime()) / (1000 * 60 * 60 * 24 * 365.25));\n}\n\nfunction todayISO() {\n  return new Date().toISOString().substring(0, 10);\n}\n\nfunction nowISO() {\n  return new Date().toISOString();\n}\n\nfunction startOfWeekISO() {\n  const d = new Date();\n  const day = (d.getUTCDay() + 6) % 7;\n  d.setUTCDate(d.getUTCDate() - day);\n  return d.toISOString().substring(0, 10);\n}\n\nfunction startOfMonthISO() {\n  const d = new Date();\n  return d.toISOString().substring(0, 7) + '-01';\n}\n\nfunction daysAgoISO(n) {\n  const d = new Date();\n  d.setUTCDate(d.getUTCDate() - n);\n  return d.toISOString().substring(0, 10);\n}\n\nasync function getProfile(userId) {\n  const r = await pg('GET', '/fitness_profile?user_id=eq.' + encodeURIComponent(userId) + '&select=*');\n  return (r && r[0]) || null;\n}\n\nfunction computeTargets(p) {\n  if (!p.weight_kg_baseline || !p.height_cm || !p.birthdate || !p.sex) return null;\n  const age = ageFromBirthdate(p.birthdate);\n  const b = bmr(p.sex, p.weight_kg_baseline, p.height_cm, age);\n  const tdee = b * (ACTIVITY_MULT[p.activity_level] || 1.55);\n  const kcal = Math.round(tdee * (1 + (GOAL_DELTA[p.goal] || 0)));\n  const proteinPerKg = p.goal === 'gain_muscle' ? 2.0 : (p.goal === 'lose_weight' ? 2.2 : 1.6);\n  const protein = Math.round(p.weight_kg_baseline * proteinPerKg);\n  const fat = Math.round(p.weight_kg_baseline * 0.9);\n  const carbs = Math.max(0, Math.round((kcal - protein * 4 - fat * 9) / 4));\n  const hydration = Math.round(p.weight_kg_baseline * 35);\n  return { daily_kcal_target: kcal, protein_g_target: protein, carbs_g_target: carbs, fat_g_target: fat, hydration_ml_target: hydration };\n}\n\nlet _userId = null;\nasync function resolveUserId() {\n  if (input.user_id) return input.user_id;\n  if (input.qualifiedUserId) return input.qualifiedUserId;\n  try {\n    const r = await pg('GET', '/user_profiles?select=user_id&limit=1');\n    if (r && r[0] && r[0].user_id) return r[0].user_id;\n  } catch (e) {}\n  return 'default';\n}\nfunction getUserId() {\n  return _userId || 'default';\n}\n\nfunction fmtNum(n, dp) {\n  if (n == null || isNaN(n)) return '-';\n  const m = Math.pow(10, dp || 0);\n  return Math.round(n * m) / m;\n}\n\nasync function offSearch(query, limit) {\n  const url = OFF_SEARCH + '/search?q=' + encodeURIComponent(query) + '&page_size=' + (limit || 1) + '&fields=code,product_name,brands,nutriments,quantity,allergens_tags';\n  try {\n    const data = await helpers.httpRequest({ method: 'GET', url, headers: { 'User-Agent': UA }, timeout: 15000, json: true });\n    return (data && (data.hits || data.products)) || [];\n  } catch (e) {\n    return [];\n  }\n}\n\nasync function offBarcode(code) {\n  try {\n    const url = OFF_BASE + '/api/v2/product/' + encodeURIComponent(code) + '.json?fields=code,product_name,brands,nutriments,quantity,allergens_tags';\n    const data = await helpers.httpRequest({ method: 'GET', url, headers: { 'User-Agent': UA }, timeout: 15000, json: true });\n    return data && data.product && data.status !== 0 ? data.product : null;\n  } catch (e) {\n    return null;\n  }\n}\n\nfunction nutrientsFromOff(p, grams) {\n  if (!p || !p.nutriments) return null;\n  const n = p.nutriments;\n  const factor = grams / 100;\n  return {\n    kcal: Math.round((n['energy-kcal_100g'] || 0) * factor),\n    protein_g: Math.round((n.proteins_100g || 0) * factor * 10) / 10,\n    carbs_g: Math.round((n.carbohydrates_100g || 0) * factor * 10) / 10,\n    fat_g: Math.round((n.fat_100g || 0) * factor * 10) / 10,\n    fiber_g: Math.round((n.fiber_100g || 0) * factor * 10) / 10\n  };\n}\n\nasync function llmEstimateNutrition(name, grams) {\n  const schema = {\n    type: 'object',\n    additionalProperties: false,\n    required: ['kcal_per_100g', 'protein_per_100g', 'carbs_per_100g', 'fat_per_100g', 'fiber_per_100g'],\n    properties: {\n      kcal_per_100g: { type: 'number' },\n      protein_per_100g: { type: 'number' },\n      carbs_per_100g: { type: 'number' },\n      fat_per_100g: { type: 'number' },\n      fiber_per_100g: { type: 'number' }\n    }\n  };\n  try {\n    const r = await llmJSON(\n      'You estimate nutrition values per 100g for a single food item. Be conservative and realistic. Return numbers only.',\n      'Food: ' + name,\n      schema\n    );\n    const f = grams / 100;\n    return {\n      kcal: Math.round(r.kcal_per_100g * f),\n      protein_g: Math.round(r.protein_per_100g * f * 10) / 10,\n      carbs_g: Math.round(r.carbs_per_100g * f * 10) / 10,\n      fat_g: Math.round(r.fat_per_100g * f * 10) / 10,\n      fiber_g: Math.round(r.fiber_per_100g * f * 10) / 10\n    };\n  } catch (e) {\n    return { kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 };\n  }\n}\n\nasync function resolveItemNutrition(name, grams) {\n  if (name.match(/^[0-9]{8,14}$/)) {\n    const p = await offBarcode(name);\n    if (p) {\n      const n = nutrientsFromOff(p, grams);\n      if (n) return Object.assign({ source: 'off', off_id: p.code, confidence: 0.9, name: p.product_name || name }, n);\n    }\n  }\n  const hits = await offSearch(name, 1);\n  if (hits[0]) {\n    const n = nutrientsFromOff(hits[0], grams);\n    if (n && n.kcal > 0) return Object.assign({ source: 'off', off_id: hits[0].code, confidence: 0.7, name: hits[0].product_name || name }, n);\n  }\n  const llm = await llmEstimateNutrition(name, grams);\n  return Object.assign({ source: 'llm', confidence: 0.5, name }, llm);\n}\n\nfunction sumItems(items) {\n  const t = { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 };\n  for (const i of items) {\n    t.kcal += i.kcal || 0;\n    t.protein += i.protein_g || 0;\n    t.carbs += i.carbs_g || 0;\n    t.fat += i.fat_g || 0;\n    t.fiber += i.fiber_g || 0;\n  }\n  return t;\n}\n\nfunction buddySays(s) {\n  return s;\n}\n\nasync function actionFitnessProfile(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'get').toLowerCase();\n  if (sub === 'get') {\n    const p = await getProfile(userId);\n    if (!p) return buddySays('No profile yet. Run fitness_profile with sub_action=setup to create one.');\n    let out = 'Buddy profile for you:\\n';\n    out += '  Sex: ' + (p.sex || '?') + ' | Birthdate: ' + (p.birthdate || '?') + ' (age ' + (ageFromBirthdate(p.birthdate) || '?') + ')\\n';\n    out += '  Height: ' + (p.height_cm || '?') + ' cm | Weight baseline: ' + (p.weight_kg_baseline || '?') + ' kg\\n';\n    out += '  Activity: ' + (p.activity_level || '?') + ' | Goal: ' + (p.goal || '?') + '\\n';\n    if (p.target_weight_kg) out += '  Target: ' + p.target_weight_kg + ' kg by ' + (p.target_date || 'open') + '\\n';\n    out += '  Daily targets: ' + (p.daily_kcal_target || '?') + ' kcal | P ' + (p.protein_g_target || '?') + 'g / C ' + (p.carbs_g_target || '?') + 'g / F ' + (p.fat_g_target || '?') + 'g | Water ' + (p.hydration_ml_target || '?') + ' ml\\n';\n    if (p.allergies && p.allergies.length) out += '  Allergies: ' + p.allergies.join(', ') + '\\n';\n    if (p.dietary_restrictions && p.dietary_restrictions.length) out += '  Diet: ' + p.dietary_restrictions.join(', ') + '\\n';\n    if (p.training_days_per_week) out += '  Training days/week: ' + p.training_days_per_week + '\\n';\n    return out.trim();\n  }\n  if (sub === 'setup' || sub === 'update') {\n    const existing = await getProfile(userId);\n    const patch = { user_id: userId };\n    const fields = ['sex', 'birthdate', 'height_cm', 'weight_kg_baseline', 'activity_level', 'goal', 'target_weight_kg', 'target_date', 'training_days_per_week', 'preferred_workout_time', 'notes'];\n    for (const f of fields) if (input[f] != null && input[f] !== '') patch[f] = input[f];\n    if (input.allergies) patch.allergies = Array.isArray(input.allergies) ? input.allergies : String(input.allergies).split(',').map(s => s.trim()).filter(Boolean);\n    if (input.dietary_restrictions) patch.dietary_restrictions = Array.isArray(input.dietary_restrictions) ? input.dietary_restrictions : String(input.dietary_restrictions).split(',').map(s => s.trim()).filter(Boolean);\n    if (input.excluded_foods) patch.excluded_foods = Array.isArray(input.excluded_foods) ? input.excluded_foods : String(input.excluded_foods).split(',').map(s => s.trim()).filter(Boolean);\n    const merged = Object.assign({}, existing || {}, patch);\n    const targets = computeTargets(merged);\n    if (targets) {\n      if (input.daily_kcal_override) patch.daily_kcal_target = parseInt(input.daily_kcal_override);\n      else if (!existing || !existing.daily_kcal_target || sub === 'setup') patch.daily_kcal_target = targets.daily_kcal_target;\n      if (!existing || !existing.protein_g_target || sub === 'setup') {\n        patch.protein_g_target = targets.protein_g_target;\n        patch.carbs_g_target = targets.carbs_g_target;\n        patch.fat_g_target = targets.fat_g_target;\n      }\n    }\n    patch.updated_at = nowISO();\n    let result;\n    if (existing) {\n      result = await pgPatch('/fitness_profile?user_id=eq.' + encodeURIComponent(userId), patch);\n    } else {\n      result = await pg('POST', '/fitness_profile', patch);\n    }\n    const saved = (result && result[0]) || patch;\n    let out = (existing ? 'Profile updated.' : 'Profile created!') + ' Buddy is ready.\\n';\n    if (saved.daily_kcal_target) out += '  Daily target: ' + saved.daily_kcal_target + ' kcal (P ' + saved.protein_g_target + 'g / C ' + saved.carbs_g_target + 'g / F ' + saved.fat_g_target + 'g)\\n';\n    if (saved.hydration_ml_target) out += '  Water target: ' + saved.hydration_ml_target + ' ml\\n';\n    return out.trim();\n  }\n  return 'Unknown sub_action: ' + sub + '. Use setup, update, or get.';\n}\n\nasync function actionLogMeal(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'from_text').toLowerCase();\n\n  if (sub === 'delete') {\n    const id = parseInt(input.meal_id);\n    if (!id) return 'meal_id required.';\n    await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/fitness_meals?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), headers: pgHeaders, timeout: 15000 });\n    return 'Meal #' + id + ' deleted.';\n  }\n  if (sub === 'edit') {\n    const id = parseInt(input.meal_id);\n    if (!id) return 'meal_id required.';\n    const patch = {};\n    if (input.notes != null) patch.notes = input.notes;\n    if (input.meal_type) patch.meal_type = input.meal_type;\n    if (Object.keys(patch).length === 0) return 'Nothing to edit. Provide notes or meal_type.';\n    await pgPatch('/fitness_meals?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), patch);\n    return 'Meal #' + id + ' updated.';\n  }\n  if (sub === 'clear_day') {\n    const date = input.date || todayISO();\n    if (input.confirm !== true && input.confirm !== 'true') return 'Pass confirm=true to wipe all meals for ' + date + '.';\n    await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + date + 'T00:00:00&logged_at=lt.' + date + 'T23:59:59', headers: pgHeaders, timeout: 15000 });\n    return 'All meals for ' + date + ' wiped.';\n  }\n  if (sub === 'from_memory') {\n    const memId = parseInt(input.meal_memory_id);\n    if (!memId) return 'meal_memory_id required.';\n    const mem = await pg('GET', '/fitness_meal_memory?id=eq.' + memId + '&user_id=eq.' + encodeURIComponent(userId) + '&select=*');\n    if (!mem || !mem[0]) return 'Meal memory not found.';\n    const m = mem[0];\n    const row = {\n      user_id: userId,\n      logged_at: input.logged_at || nowISO(),\n      meal_type: input.meal_type || 'snack',\n      items: m.items,\n      total_kcal: m.total_kcal,\n      total_protein_g: m.total_protein_g,\n      total_carbs_g: m.total_carbs_g,\n      total_fat_g: m.total_fat_g,\n      total_fiber_g: m.total_fiber_g,\n      input_source: 'memory',\n      meal_memory_id: m.id,\n      notes: input.notes || null\n    };\n    const saved = await pg('POST', '/fitness_meals', row);\n    await pgPatch('/fitness_meal_memory?id=eq.' + memId, { times_logged: (m.times_logged || 0) + 1, last_logged_at: nowISO() });\n    return 'Logged from memory: \"' + m.name + '\" - ' + Math.round(m.total_kcal) + ' kcal (P ' + fmtNum(m.total_protein_g, 1) + 'g / C ' + fmtNum(m.total_carbs_g, 1) + 'g / F ' + fmtNum(m.total_fat_g, 1) + 'g).';\n  }\n\n  let items = [];\n  let inputSource = sub;\n  let visionConfidence = null;\n  let rawInput = input.raw_input || input.text || '';\n\n  if (sub === 'from_text' || sub === 'from_voice') {\n    const text = (input.text || input.raw_input || '').trim();\n    if (!text) return 'Provide text or raw_input describing the meal (e.g. \"100g oatmeal, 200ml milk, 1 banana\").';\n    inputSource = sub === 'from_voice' ? 'voice' : 'text';\n    const schema = {\n      type: 'object', additionalProperties: false,\n      required: ['items'],\n      properties: {\n        items: { type: 'array', items: {\n          type: 'object', additionalProperties: false,\n          required: ['name', 'grams'],\n          properties: { name: { type: 'string' }, grams: { type: 'number' } }\n        } }\n      }\n    };\n    try {\n      const parsed = await llmJSON(\n        'Extract food items and approximate weight in grams from a meal description. Convert units (1 banana ~120g, 1 slice bread ~30g, 1 egg ~50g, 1 cup rice cooked ~200g, 1 tbsp oil ~14g). Return strict JSON.',\n        text,\n        schema\n      );\n      items = parsed.items || [];\n    } catch (e) {\n      return 'Failed to parse meal description: ' + e.message;\n    }\n  } else if (sub === 'from_photo') {\n    const fileRef = input.file_ref;\n    if (!fileRef) return 'file_ref required for from_photo. The agent should pass the photo file_ref from the user message.';\n    inputSource = 'photo';\n    let img;\n    try {\n      img = await fetchFile(fileRef);\n    } catch (e) {\n      return 'Failed to fetch photo from File Bridge: ' + e.message;\n    }\n    const schema = {\n      type: 'object', additionalProperties: false,\n      required: ['items', 'overall_confidence'],\n      properties: {\n        items: { type: 'array', items: {\n          type: 'object', additionalProperties: false,\n          required: ['name', 'grams', 'confidence'],\n          properties: { name: { type: 'string' }, grams: { type: 'number' }, confidence: { type: 'number' } }\n        } },\n        overall_confidence: { type: 'number' }\n      }\n    };\n    try {\n      const apiKey = await getOpenAIKey();\n      const resp = await helpers.httpRequest({\n        method: 'POST',\n        url: 'https://api.openai.com/v1/chat/completions',\n        headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },\n        body: {\n          model: 'gpt-4o-mini',\n          temperature: 0,\n          response_format: { type: 'json_schema', json_schema: { name: 'meal', strict: true, schema } },\n          messages: [{\n            role: 'user',\n            content: [\n              { type: 'text', text: 'Identify each food item visible in this meal photo. For each, estimate the weight in grams as accurately as you can. Set confidence (0-1) per item and overall. Return strict JSON.' },\n              { type: 'image_url', image_url: { url: 'data:' + img.mime + ';base64,' + img.base64 } }\n            ]\n          }]\n        },\n        json: true,\n        timeout: 90000\n      });\n      const parsed = JSON.parse(resp.choices[0].message.content);\n      items = parsed.items || [];\n      visionConfidence = parsed.overall_confidence;\n    } catch (e) {\n      return 'Vision analysis failed: ' + e.message;\n    }\n  } else if (sub === 'from_barcode') {\n    const code = (input.barcode || '').trim();\n    const grams = parseFloat(input.grams) || 100;\n    if (!code) return 'barcode required.';\n    inputSource = 'barcode';\n    items = [{ name: code, grams }];\n  } else {\n    return 'Unknown sub_action: ' + sub + '. Use from_text, from_voice, from_photo, from_barcode, from_memory, edit, delete, clear_day.';\n  }\n\n  if (!items.length) return 'No food items detected. Try again with more detail.';\n\n  const enriched = [];\n  for (const it of items) {\n    const grams = it.grams || 100;\n    const n = await resolveItemNutrition(it.name, grams);\n    enriched.push({\n      name: n.name,\n      grams,\n      kcal: n.kcal,\n      protein_g: n.protein_g,\n      carbs_g: n.carbs_g,\n      fat_g: n.fat_g,\n      fiber_g: n.fiber_g,\n      source: n.source,\n      confidence: it.confidence != null ? it.confidence : n.confidence,\n      off_id: n.off_id || null\n    });\n  }\n\n  const totals = sumItems(enriched);\n  const row = {\n    user_id: userId,\n    logged_at: input.logged_at || nowISO(),\n    meal_type: input.meal_type || 'snack',\n    items: enriched,\n    total_kcal: totals.kcal,\n    total_protein_g: totals.protein,\n    total_carbs_g: totals.carbs,\n    total_fat_g: totals.fat,\n    total_fiber_g: totals.fiber,\n    input_source: inputSource,\n    photo_ref: input.file_ref || null,\n    raw_input: rawInput || null,\n    vision_confidence: visionConfidence,\n    notes: input.notes || null\n  };\n  const saved = await pg('POST', '/fitness_meals', row);\n  const mealId = saved && saved[0] ? saved[0].id : null;\n\n  let out = 'Logged ' + (row.meal_type || 'meal') + ' (#' + mealId + '):\\n';\n  for (const e of enriched) {\n    out += '  - ' + e.name + ' ' + e.grams + 'g: ' + e.kcal + ' kcal (P ' + fmtNum(e.protein_g, 1) + 'g / C ' + fmtNum(e.carbs_g, 1) + 'g / F ' + fmtNum(e.fat_g, 1) + 'g)';\n    out += ' [' + e.source + ', conf ' + Math.round((e.confidence || 0) * 100) + '%]\\n';\n  }\n  out += 'Total: ' + Math.round(totals.kcal) + ' kcal | P ' + fmtNum(totals.protein, 1) + 'g | C ' + fmtNum(totals.carbs, 1) + 'g | F ' + fmtNum(totals.fat, 1) + 'g';\n  if (visionConfidence != null) out += '\\nOverall vision confidence: ' + Math.round(visionConfidence * 100) + '% - tell Buddy if amounts were off.';\n\n  if (inputSource !== 'memory') {\n    try {\n      const sig = enriched.map(i => (i.name || '').toLowerCase().trim()).sort().join('|');\n      const recent = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + daysAgoISO(14) + '&select=items,id&order=logged_at.desc');\n      let count = 0;\n      for (const r of (recent || [])) {\n        const rsig = (r.items || []).map(i => (i.name || '').toLowerCase().trim()).sort().join('|');\n        if (rsig === sig) count++;\n      }\n      if (count >= 3) out += '\\n\\nBuddy notes: you have logged this combination ' + count + 'x in 14 days. Want to save it as a meal memory? Reply \"save as <name>\".';\n    } catch (e) {}\n  }\n  return out;\n}\n\nasync function actionMealMemory(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'list').toLowerCase();\n  if (sub === 'list') {\n    const r = await pg('GET', '/fitness_meal_memory?user_id=eq.' + encodeURIComponent(userId) + '&select=id,name,total_kcal,total_protein_g,total_carbs_g,total_fat_g,times_logged,last_logged_at&order=times_logged.desc&limit=20');\n    if (!r || !r.length) return 'No saved meals yet. After logging a meal, ask Buddy to \"save as <name>\".';\n    let out = 'Your saved meals:\\n';\n    for (const m of r) out += '  #' + m.id + ' ' + m.name + ' - ' + Math.round(m.total_kcal) + ' kcal (P' + fmtNum(m.total_protein_g, 1) + '/C' + fmtNum(m.total_carbs_g, 1) + '/F' + fmtNum(m.total_fat_g, 1) + ') used ' + (m.times_logged || 0) + 'x\\n';\n    return out.trim();\n  }\n  if (sub === 'save') {\n    const name = (input.name || '').trim();\n    const fromMealId = parseInt(input.meal_id);\n    if (!name) return 'name required.';\n    let items, totals;\n    if (fromMealId) {\n      const meals = await pg('GET', '/fitness_meals?id=eq.' + fromMealId + '&user_id=eq.' + encodeURIComponent(userId) + '&select=*');\n      if (!meals || !meals[0]) return 'Source meal not found.';\n      items = meals[0].items;\n      totals = { kcal: meals[0].total_kcal, protein: meals[0].total_protein_g, carbs: meals[0].total_carbs_g, fat: meals[0].total_fat_g, fiber: meals[0].total_fiber_g };\n    } else {\n      return 'Pass meal_id to save an existing meal as memory.';\n    }\n    const row = {\n      user_id: userId, name,\n      items, total_kcal: totals.kcal, total_protein_g: totals.protein, total_carbs_g: totals.carbs, total_fat_g: totals.fat, total_fiber_g: totals.fiber,\n      times_logged: 1, last_logged_at: nowISO()\n    };\n    try {\n      await pg('POST', '/fitness_meal_memory', row);\n      return 'Saved as \"' + name + '\". Next time, just ask \"log my ' + name + '\".';\n    } catch (e) {\n      return 'Failed to save (maybe a meal with this name exists already?): ' + e.message;\n    }\n  }\n  if (sub === 'delete') {\n    const id = parseInt(input.meal_memory_id);\n    if (!id) return 'meal_memory_id required.';\n    await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/fitness_meal_memory?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), headers: pgHeaders, timeout: 15000 });\n    return 'Meal memory #' + id + ' deleted.';\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionSuggestMeal(input) {\n  const userId = getUserId();\n  const profile = await getProfile(userId);\n  if (!profile) return 'Set up your profile first via fitness_profile.';\n  const today = todayISO();\n  const mealsToday = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + today + 'T00:00:00&select=total_kcal,total_protein_g,total_carbs_g,total_fat_g');\n  let consumed = { kcal: 0, protein: 0, carbs: 0, fat: 0 };\n  for (const m of (mealsToday || [])) {\n    consumed.kcal += m.total_kcal || 0;\n    consumed.protein += m.total_protein_g || 0;\n    consumed.carbs += m.total_carbs_g || 0;\n    consumed.fat += m.total_fat_g || 0;\n  }\n  const remaining = {\n    kcal: (profile.daily_kcal_target || 2000) - consumed.kcal,\n    protein: (profile.protein_g_target || 100) - consumed.protein,\n    carbs: (profile.carbs_g_target || 200) - consumed.carbs,\n    fat: (profile.fat_g_target || 60) - consumed.fat\n  };\n  const memHits = await pg('GET', '/fitness_meal_memory?user_id=eq.' + encodeURIComponent(userId) + '&select=name,total_kcal,total_protein_g,total_carbs_g,total_fat_g&order=times_logged.desc&limit=10');\n  const allergies = (profile.allergies || []).join(', ');\n  const restrictions = (profile.dietary_restrictions || []).join(', ');\n  const memList = (memHits || []).map(m => m.name + ' (' + Math.round(m.total_kcal) + 'kcal, P' + fmtNum(m.total_protein_g, 0) + '/C' + fmtNum(m.total_carbs_g, 0) + '/F' + fmtNum(m.total_fat_g, 0) + ')').join('; ');\n  const schema = {\n    type: 'object', additionalProperties: false, required: ['suggestions'],\n    properties: { suggestions: { type: 'array', items: {\n      type: 'object', additionalProperties: false, required: ['name', 'why', 'kcal', 'protein_g', 'carbs_g', 'fat_g'],\n      properties: { name: { type: 'string' }, why: { type: 'string' }, kcal: { type: 'number' }, protein_g: { type: 'number' }, carbs_g: { type: 'number' }, fat_g: { type: 'number' } }\n    } } }\n  };\n  const userPrompt = 'Remaining today: ' + Math.round(remaining.kcal) + ' kcal, P ' + Math.round(remaining.protein) + 'g, C ' + Math.round(remaining.carbs) + 'g, F ' + Math.round(remaining.fat) + 'g.\\n' +\n    (allergies ? 'Allergies: ' + allergies + '\\n' : '') +\n    (restrictions ? 'Diet: ' + restrictions + '\\n' : '') +\n    (memList ? 'User favorites: ' + memList + '\\n' : '') +\n    'Suggest 3 realistic meal options that fit the remaining macros. Prefer favorites if a good fit. Each with name, one-sentence \"why\", and macro estimates.';\n  try {\n    const r = await llmJSON('You are Buddy, a personal nutrition coach. Be practical and motivating, never shaming.', userPrompt, schema);\n    let out = 'Buddy suggests for your remaining ' + Math.round(remaining.kcal) + ' kcal:\\n';\n    for (let i = 0; i < r.suggestions.length; i++) {\n      const s = r.suggestions[i];\n      out += (i + 1) + '. ' + s.name + ' (~' + Math.round(s.kcal) + ' kcal | P' + Math.round(s.protein_g) + '/C' + Math.round(s.carbs_g) + '/F' + Math.round(s.fat_g) + ')\\n   ' + s.why + '\\n';\n    }\n    return out.trim();\n  } catch (e) {\n    return 'Failed to generate suggestions: ' + e.message;\n  }\n}\n\nasync function actionLogWorkout(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'log').toLowerCase();\n  if (sub === 'delete') {\n    const id = parseInt(input.workout_id);\n    if (!id) return 'workout_id required.';\n    await helpers.httpRequest({ method: 'DELETE', url: SUPABASE_URL + '/rest/v1/fitness_workouts?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), headers: pgHeaders, timeout: 15000 });\n    return 'Workout #' + id + ' deleted.';\n  }\n  if (sub === 'edit') {\n    const id = parseInt(input.workout_id);\n    if (!id) return 'workout_id required.';\n    const patch = {};\n    for (const f of ['exercise_type', 'duration_min', 'intensity', 'distance_km', 'notes', 'perceived_exertion']) {\n      if (input[f] != null && input[f] !== '') patch[f] = input[f];\n    }\n    if (Object.keys(patch).length === 0) return 'Nothing to edit.';\n    await pgPatch('/fitness_workouts?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), patch);\n    return 'Workout #' + id + ' updated.';\n  }\n  // log\n  const profile = await getProfile(userId);\n  let extracted = {\n    exercise_type: input.exercise_type,\n    duration_min: parseInt(input.duration_min) || null,\n    intensity: input.intensity,\n    distance_km: parseFloat(input.distance_km) || null,\n    perceived_exertion: parseInt(input.perceived_exertion) || null\n  };\n  if (input.text || input.raw_input) {\n    const text = input.text || input.raw_input;\n    const schema = {\n      type: 'object', additionalProperties: false,\n      required: ['exercise_type', 'duration_min', 'intensity'],\n      properties: {\n        exercise_type: { type: 'string', enum: ['running', 'cycling', 'swimming', 'walking', 'strength', 'hiit', 'yoga', 'other'] },\n        duration_min: { type: 'number' },\n        intensity: { type: 'string', enum: ['low', 'medium', 'high'] },\n        distance_km: { type: ['number', 'null'] },\n        perceived_exertion: { type: ['number', 'null'] },\n        notes: { type: ['string', 'null'] }\n      }\n    };\n    try {\n      const r = await llmJSON('Extract structured workout data from a user message (text or voice transcript). Map to one of: running, cycling, swimming, walking, strength, hiit, yoga, other. Intensity: low|medium|high. Return strict JSON.', text, schema);\n      extracted = Object.assign(extracted, r);\n    } catch (e) {\n      // fallthrough; will validate below\n    }\n  }\n  if (!extracted.exercise_type) return 'Could not determine exercise_type. Provide it explicitly or describe the workout (e.g. \"30 min jog medium intensity\").';\n  if (!extracted.duration_min) return 'Could not determine duration_min.';\n  const inten = extracted.intensity || 'medium';\n  const weightKg = profile && profile.weight_kg_baseline ? profile.weight_kg_baseline : 70;\n  const burned = calorieBurn(extracted.exercise_type, inten, weightKg, extracted.duration_min);\n  const row = {\n    user_id: userId,\n    performed_at: input.performed_at || nowISO(),\n    exercise_type: extracted.exercise_type,\n    duration_min: extracted.duration_min,\n    intensity: inten,\n    distance_km: extracted.distance_km,\n    sets: input.sets || null,\n    calories_burned: burned,\n    perceived_exertion: extracted.perceived_exertion,\n    plan_session_id: input.plan_session_id ? parseInt(input.plan_session_id) : null,\n    input_source: input.input_source || (input.text ? 'text' : 'manual'),\n    raw_input: input.text || input.raw_input || null,\n    notes: extracted.notes || input.notes || null\n  };\n  const saved = await pg('POST', '/fitness_workouts', row);\n  const id = saved && saved[0] ? saved[0].id : null;\n  // Auto-link to today's plan session if not provided\n  if (!row.plan_session_id) {\n    const sess = await pg('GET', '/fitness_plan_sessions?user_id=eq.' + encodeURIComponent(userId) + '&planned_for=eq.' + todayISO() + '&completed_at=is.null&select=id&limit=1');\n    if (sess && sess[0]) {\n      await pgPatch('/fitness_plan_sessions?id=eq.' + sess[0].id, { completed_at: nowISO(), workout_log_id: id });\n      await pgPatch('/fitness_workouts?id=eq.' + id, { plan_session_id: sess[0].id });\n    }\n  }\n  let out = 'Logged ' + extracted.exercise_type + ' ' + extracted.duration_min + ' min ' + inten + ' = ~' + burned + ' kcal burned (#' + id + ').';\n  // Goal progress\n  try {\n    const goals = await pg('GET', '/fitness_goals?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active&goal_type=eq.workout_frequency&select=*');\n    if (goals && goals[0]) {\n      const g = goals[0];\n      const since = startOfWeekISO();\n      const wk = await pg('GET', '/fitness_workouts?user_id=eq.' + encodeURIComponent(userId) + '&performed_at=gte.' + since + 'T00:00:00&select=id');\n      const cnt = (wk || []).length;\n      out += '\\nThis week: ' + cnt + '/' + g.target_value + ' workouts.';\n      await pgPatch('/fitness_goals?id=eq.' + g.id, { current_value: cnt });\n    }\n  } catch (e) {}\n  return out;\n}\n\nasync function actionLogBody(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'log').toLowerCase();\n  if (sub === 'log') {\n    const row = { user_id: userId, measured_at: input.measured_at || nowISO() };\n    for (const f of ['weight_kg', 'body_fat_pct', 'muscle_mass_kg', 'waist_cm', 'chest_cm', 'hip_cm', 'thigh_cm', 'arm_cm', 'photo_ref', 'notes']) {\n      if (input[f] != null && input[f] !== '') row[f] = input[f];\n    }\n    if (!row.weight_kg && !row.body_fat_pct && !row.waist_cm) return 'Provide at least weight_kg, body_fat_pct, or one circumference.';\n    const saved = await pg('POST', '/fitness_body', row);\n    const id = saved && saved[0] ? saved[0].id : null;\n    return 'Logged body data #' + id + ': ' + (row.weight_kg ? row.weight_kg + ' kg ' : '') + (row.body_fat_pct ? row.body_fat_pct + '% BF ' : '') + '(' + row.measured_at.substring(0, 10) + ').';\n  }\n  if (sub === 'list') {\n    const days = parseInt(input.days) || 30;\n    const since = daysAgoISO(days);\n    const r = await pg('GET', '/fitness_body?user_id=eq.' + encodeURIComponent(userId) + '&measured_at=gte.' + since + 'T00:00:00&order=measured_at.desc&limit=50&select=*');\n    if (!r || !r.length) return 'No body data in the last ' + days + ' days.';\n    let out = 'Body log (last ' + days + ' days):\\n';\n    for (const e of r) out += '  ' + e.measured_at.substring(0, 10) + ': ' + (e.weight_kg ? e.weight_kg + 'kg ' : '') + (e.body_fat_pct ? e.body_fat_pct + '% BF ' : '') + (e.waist_cm ? 'Waist ' + e.waist_cm + 'cm ' : '') + '\\n';\n    return out.trim();\n  }\n  if (sub === 'trend') {\n    const days = parseInt(input.days) || 30;\n    const since = daysAgoISO(days);\n    const r = await pg('GET', '/fitness_body?user_id=eq.' + encodeURIComponent(userId) + '&measured_at=gte.' + since + 'T00:00:00&order=measured_at.asc&select=measured_at,weight_kg,body_fat_pct');\n    if (!r || r.length < 2) return 'Need at least 2 entries in last ' + days + ' days for a trend.';\n    const first = r[0], last = r[r.length - 1];\n    const dwt = (last.weight_kg && first.weight_kg) ? (last.weight_kg - first.weight_kg).toFixed(1) : null;\n    const dbf = (last.body_fat_pct && first.body_fat_pct) ? (last.body_fat_pct - first.body_fat_pct).toFixed(1) : null;\n    let out = 'Trend over ' + r.length + ' entries (' + first.measured_at.substring(0, 10) + ' to ' + last.measured_at.substring(0, 10) + '):\\n';\n    if (dwt) out += '  Weight: ' + first.weight_kg + ' to ' + last.weight_kg + ' kg (' + (dwt > 0 ? '+' : '') + dwt + ' kg)\\n';\n    if (dbf) out += '  Body fat: ' + first.body_fat_pct + ' to ' + last.body_fat_pct + '% (' + (dbf > 0 ? '+' : '') + dbf + '%)\\n';\n    return out.trim();\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionLogHydration(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'log').toLowerCase();\n  if (sub === 'log') {\n    const ml = parseInt(input.volume_ml);\n    if (!ml) return 'volume_ml required.';\n    const row = { user_id: userId, logged_at: input.logged_at || nowISO(), volume_ml: ml, beverage_type: input.beverage_type || 'water' };\n    await pg('POST', '/fitness_hydration', row);\n    const t = await pg('GET', '/fitness_hydration?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + todayISO() + 'T00:00:00&select=volume_ml');\n    let total = 0;\n    for (const e of (t || [])) total += e.volume_ml;\n    const profile = await getProfile(userId);\n    const target = profile && profile.hydration_ml_target ? profile.hydration_ml_target : 2500;\n    return 'Logged ' + ml + ' ml. Today: ' + total + ' / ' + target + ' ml (' + Math.round(total / target * 100) + '%).';\n  }\n  if (sub === 'today') {\n    const t = await pg('GET', '/fitness_hydration?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + todayISO() + 'T00:00:00&select=volume_ml,beverage_type,logged_at&order=logged_at.asc');\n    let total = 0;\n    for (const e of (t || [])) total += e.volume_ml;\n    const profile = await getProfile(userId);\n    const target = profile && profile.hydration_ml_target ? profile.hydration_ml_target : 2500;\n    let out = 'Hydration today: ' + total + ' / ' + target + ' ml (' + Math.round(total / target * 100) + '%)';\n    if (t && t.length) out += ' across ' + t.length + ' logs';\n    return out;\n  }\n  if (sub === 'set_target') {\n    const ml = parseInt(input.target_ml);\n    if (!ml) return 'target_ml required.';\n    await pgPatch('/fitness_profile?user_id=eq.' + encodeURIComponent(userId), { hydration_ml_target: ml, updated_at: nowISO() });\n    return 'Hydration target set to ' + ml + ' ml/day.';\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionGoals(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'list').toLowerCase();\n  if (sub === 'list') {\n    const r = await pg('GET', '/fitness_goals?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active&select=*&order=created_at.desc');\n    if (!r || !r.length) return 'No active goals. Use sub_action=set to create one.';\n    let out = 'Active goals:\\n';\n    for (const g of r) {\n      const pct = g.target_value ? Math.round((g.current_value || 0) / g.target_value * 100) : 0;\n      out += '  #' + g.id + ' ' + g.goal_type + ': ' + (g.current_value || 0) + ' / ' + g.target_value + ' ' + (g.target_unit || '') + ' (' + pct + '%)';\n      if (g.deadline) out += ' by ' + g.deadline;\n      out += '\\n';\n    }\n    return out.trim();\n  }\n  if (sub === 'set') {\n    const goalType = input.goal_type;\n    const target = parseFloat(input.target_value);\n    if (!goalType || !target) return 'goal_type and target_value required. goal_type: weight, body_fat, workout_frequency, distance, strength, habit, streak.';\n    const row = {\n      user_id: userId,\n      goal_type: goalType,\n      target_value: target,\n      target_unit: input.target_unit || (goalType === 'weight' ? 'kg' : goalType === 'workout_frequency' ? 'workouts/week' : ''),\n      current_value: parseFloat(input.current_value) || 0,\n      deadline: input.deadline || null,\n      status: 'active'\n    };\n    const saved = await pg('POST', '/fitness_goals', row);\n    return 'Goal set: ' + goalType + ' = ' + target + ' ' + row.target_unit + (row.deadline ? ' by ' + row.deadline : '') + ' (#' + (saved && saved[0] ? saved[0].id : '?') + ').';\n  }\n  if (sub === 'archive') {\n    const id = parseInt(input.goal_id);\n    if (!id) return 'goal_id required.';\n    await pgPatch('/fitness_goals?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), { status: input.status || 'achieved', achieved_at: nowISO() });\n    return 'Goal #' + id + ' archived.';\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function computeStreak(userId) {\n  const r = await pg('GET', '/fitness_workouts?user_id=eq.' + encodeURIComponent(userId) + '&order=performed_at.desc&limit=60&select=performed_at');\n  const r2 = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&order=logged_at.desc&limit=200&select=logged_at');\n  const days = new Set();\n  for (const e of (r || [])) days.add(e.performed_at.substring(0, 10));\n  for (const e of (r2 || [])) days.add(e.logged_at.substring(0, 10));\n  let streak = 0;\n  let cursor = new Date();\n  for (let i = 0; i < 60; i++) {\n    const iso = cursor.toISOString().substring(0, 10);\n    if (days.has(iso)) {\n      streak++;\n      cursor.setUTCDate(cursor.getUTCDate() - 1);\n    } else {\n      break;\n    }\n  }\n  return streak;\n}\n\nasync function actionSummary(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'today').toLowerCase();\n  const profile = await getProfile(userId);\n  let since;\n  let label;\n  if (sub === 'today') { since = todayISO(); label = 'Today (' + since + ')'; }\n  else if (sub === 'week') { since = startOfWeekISO(); label = 'This week (since ' + since + ')'; }\n  else if (sub === 'month') { since = startOfMonthISO(); label = 'This month (since ' + since + ')'; }\n  else return 'Unknown sub_action: ' + sub;\n  const meals = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + since + 'T00:00:00&select=total_kcal,total_protein_g,total_carbs_g,total_fat_g');\n  const workouts = await pg('GET', '/fitness_workouts?user_id=eq.' + encodeURIComponent(userId) + '&performed_at=gte.' + since + 'T00:00:00&select=exercise_type,duration_min,calories_burned');\n  const hydra = await pg('GET', '/fitness_hydration?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + since + 'T00:00:00&select=volume_ml');\n  let kcal = 0, protein = 0, carbs = 0, fat = 0;\n  for (const m of (meals || [])) { kcal += m.total_kcal || 0; protein += m.total_protein_g || 0; carbs += m.total_carbs_g || 0; fat += m.total_fat_g || 0; }\n  let workoutMin = 0, burned = 0;\n  for (const w of (workouts || [])) { workoutMin += w.duration_min || 0; burned += w.calories_burned || 0; }\n  let water = 0;\n  for (const h of (hydra || [])) water += h.volume_ml;\n  const streak = await computeStreak(userId);\n  let out = '*' + label + '*\\n';\n  if (profile && profile.daily_kcal_target) {\n    const days = sub === 'today' ? 1 : (sub === 'week' ? 7 : 30);\n    const target = profile.daily_kcal_target * days;\n    out += 'Calories: ' + Math.round(kcal) + ' / ' + target + ' kcal (' + Math.round(kcal / target * 100) + '%)\\n';\n    out += 'Macros: P ' + fmtNum(protein, 0) + 'g / C ' + fmtNum(carbs, 0) + 'g / F ' + fmtNum(fat, 0) + 'g\\n';\n    if (sub === 'today') {\n      const remain = target - kcal;\n      out += 'Remaining: ' + Math.round(remain) + ' kcal (P ' + Math.max(0, Math.round((profile.protein_g_target || 0) - protein)) + 'g / C ' + Math.max(0, Math.round((profile.carbs_g_target || 0) - carbs)) + 'g / F ' + Math.max(0, Math.round((profile.fat_g_target || 0) - fat)) + 'g)\\n';\n    }\n  } else {\n    out += 'Calories: ' + Math.round(kcal) + ' kcal | P ' + fmtNum(protein, 0) + 'g / C ' + fmtNum(carbs, 0) + 'g / F ' + fmtNum(fat, 0) + 'g\\n';\n  }\n  out += 'Workouts: ' + (workouts || []).length + ' (' + workoutMin + ' min, ~' + burned + ' kcal burned)\\n';\n  if (profile && profile.hydration_ml_target) {\n    const days = sub === 'today' ? 1 : (sub === 'week' ? 7 : 30);\n    out += 'Water: ' + water + ' / ' + (profile.hydration_ml_target * days) + ' ml\\n';\n  } else {\n    out += 'Water: ' + water + ' ml\\n';\n  }\n  out += 'Active streak: ' + streak + ' day(s)';\n  if (streak >= 7) out += ' - on fire!';\n  return out;\n}\n\nasync function actionTrainingPlan(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'today').toLowerCase();\n  if (sub === 'get_active' || sub === 'today') {\n    const plans = await pg('GET', '/fitness_plans?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active&select=*&order=start_date.desc&limit=1');\n    if (!plans || !plans[0]) return 'No active training plan. Use sub_action=generate_custom or import_template to create one.';\n    const plan = plans[0];\n    if (sub === 'today') {\n      const today = todayISO();\n      const sess = await pg('GET', '/fitness_plan_sessions?plan_id=eq.' + plan.id + '&planned_for=eq.' + today + '&select=*');\n      if (!sess || !sess[0]) return 'No training session planned for today on plan \"' + plan.name + '\".';\n      const s = sess[0];\n      let out = 'Today on \"' + plan.name + '\" (Week ' + s.week_num + ', Day ' + s.day_num + '): ' + (s.name || 'Workout') + '\\n';\n      const exs = Array.isArray(s.exercises) ? s.exercises : [];\n      for (const e of exs) out += '  - ' + (e.name || 'Exercise') + ': ' + (e.sets || 3) + 'x' + (e.reps || 10) + (e.weight_kg ? ' @ ' + e.weight_kg + 'kg' : '') + (e.rest_s ? ' (rest ' + e.rest_s + 's)' : '') + '\\n';\n      out += s.completed_at ? 'Status: completed' : 'Status: open - log your workout to mark complete';\n      return out;\n    }\n    let out = 'Active plan: \"' + plan.name + '\" (' + plan.methodology + ')\\n';\n    out += '  Week ' + plan.current_week + ' / ' + plan.weeks_total + ' | ' + plan.start_date + ' to ' + plan.end_date + '\\n';\n    return out;\n  }\n  if (sub === 'generate_custom') {\n    const profile = await getProfile(userId);\n    if (!profile) return 'Set up your profile first.';\n    const goal = input.goal || profile.goal || 'gain_muscle';\n    const weeks = parseInt(input.weeks) || 4;\n    const daysPerWeek = parseInt(input.days_per_week) || profile.training_days_per_week || 3;\n    const equipment = input.equipment || 'gym';\n\n    let exerciseDb = [];\n    try {\n      const wgerData = await helpers.httpRequest({ method: 'GET', url: WGER_BASE + '/exerciseinfo/?language=2&limit=80', headers: { 'User-Agent': UA }, json: true, timeout: 20000 });\n      for (const e of ((wgerData && wgerData.results) || [])) {\n        const tr = (e.translations || []).find(t => t.language === 2) || (e.translations || [])[0];\n        if (!tr) continue;\n        exerciseDb.push({\n          id: e.id,\n          name: tr.name,\n          category: e.category && e.category.name,\n          muscles: (e.muscles || []).map(m => m.name_en || m.name),\n          equipment: (e.equipment || []).map(eq => eq.name)\n        });\n      }\n    } catch (err) {\n      // continue with empty db\n    }\n    const dbStr = exerciseDb.slice(0, 60).map(e => '#' + e.id + ' ' + e.name + ' [' + e.category + '|' + e.equipment.join(',') + '|' + e.muscles.join(',') + ']').join('\\n');\n\n    const schema = {\n      type: 'object', additionalProperties: false,\n      required: ['name', 'methodology', 'sessions'],\n      properties: {\n        name: { type: 'string' },\n        methodology: { type: 'string', enum: ['linear', 'undulating', 'periodized'] },\n        sessions: {\n          type: 'array',\n          items: {\n            type: 'object', additionalProperties: false,\n            required: ['week_num', 'day_num', 'name', 'is_deload', 'exercises'],\n            properties: {\n              week_num: { type: 'number' },\n              day_num: { type: 'number' },\n              name: { type: 'string' },\n              is_deload: { type: 'boolean' },\n              exercises: {\n                type: 'array',\n                items: {\n                  type: 'object', additionalProperties: false,\n                  required: ['name', 'sets', 'reps'],\n                  properties: {\n                    wger_id: { type: ['number', 'null'] },\n                    name: { type: 'string' },\n                    sets: { type: 'number' },\n                    reps: { type: 'string' },\n                    weight_kg: { type: ['number', 'null'] },\n                    rest_s: { type: ['number', 'null'] },\n                    notes: { type: ['string', 'null'] }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    };\n    const sys = 'You are Buddy, an evidence-based personal trainer. Generate a training plan as strict JSON. Use exercises from the wger database (provide wger_id when possible). Apply progressive overload across weeks and a deload in the last week if weeks >= 4.';\n    const user = 'Profile: ' + (profile.sex || '?') + ', age ' + (ageFromBirthdate(profile.birthdate) || '?') + ', ' + (profile.weight_kg_baseline || '?') + ' kg, ' + (profile.height_cm || '?') + ' cm, activity: ' + (profile.activity_level || 'moderate') + '.\\n' +\n      'Goal: ' + goal + '. Duration: ' + weeks + ' weeks, ' + daysPerWeek + ' sessions per week. Equipment available: ' + equipment + '.\\n' +\n      'Available wger exercises (use wger_id when matching):\\n' + (dbStr || '(database unavailable, choose your own)') + '\\n' +\n      'Return ' + (weeks * daysPerWeek) + ' sessions total. Use 4-6 exercises per session. Mark week ' + weeks + ' as deload if weeks >= 4.';\n    let plan;\n    try {\n      plan = await llmJSON(sys, user, schema);\n    } catch (e) {\n      return 'Plan generation failed: ' + e.message;\n    }\n    const start = todayISO();\n    const endDate = new Date();\n    endDate.setUTCDate(endDate.getUTCDate() + weeks * 7);\n    const endStr = endDate.toISOString().substring(0, 10);\n    // Deactivate any existing active plan\n    await pgPatch('/fitness_plans?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active', { status: 'paused' });\n    const planRow = {\n      user_id: userId,\n      name: plan.name,\n      goal_type: goal,\n      methodology: plan.methodology,\n      start_date: start,\n      end_date: endStr,\n      weeks_total: weeks,\n      current_week: 1,\n      status: 'active',\n      structure: { sessions_count: plan.sessions.length, days_per_week: daysPerWeek }\n    };\n    const savedPlan = await pg('POST', '/fitness_plans', planRow);\n    const planId = savedPlan && savedPlan[0] ? savedPlan[0].id : null;\n    if (!planId) return 'Plan saved partially - could not get plan ID.';\n    const sessionRows = [];\n    for (const s of plan.sessions) {\n      const offsetDays = (s.week_num - 1) * 7 + (s.day_num - 1);\n      const planned = new Date(start);\n      planned.setUTCDate(planned.getUTCDate() + offsetDays);\n      sessionRows.push({\n        plan_id: planId,\n        user_id: userId,\n        week_num: s.week_num,\n        day_num: s.day_num,\n        name: s.name,\n        exercises: s.exercises,\n        planned_for: planned.toISOString().substring(0, 10),\n        completion_notes: s.is_deload ? 'deload' : null\n      });\n    }\n    if (sessionRows.length) await pg('POST', '/fitness_plan_sessions', sessionRows);\n    let out = 'Plan \"' + plan.name + '\" created!\\n';\n    out += '  Methodology: ' + plan.methodology + ' | ' + weeks + ' weeks | ' + daysPerWeek + 'x/week\\n';\n    out += '  ' + plan.sessions.length + ' sessions scheduled (' + start + ' to ' + endStr + ')\\n';\n    out += '  First session: ' + (plan.sessions[0] ? plan.sessions[0].name : '?') + ' tomorrow';\n    return out;\n  }\n  if (sub === 'import_template') {\n    const tplId = parseInt(input.template_id);\n    if (!tplId) return 'template_id required (from wger-exercises list_public_templates).';\n    let tpl;\n    try {\n      tpl = await helpers.httpRequest({ method: 'GET', url: WGER_BASE + '/public-templates/' + tplId + '/', headers: { 'User-Agent': UA }, json: true, timeout: 20000 });\n    } catch (e) {\n      return 'Failed to fetch wger template: ' + e.message;\n    }\n    if (!tpl || !tpl.id) return 'Template ' + tplId + ' not found on wger.';\n    const start = todayISO();\n    const days = Array.isArray(tpl.days) ? tpl.days.filter(d => !d.is_rest) : [];\n    const weeks = parseInt(input.weeks) || 4;\n    const endDate = new Date();\n    endDate.setUTCDate(endDate.getUTCDate() + weeks * 7);\n    await pgPatch('/fitness_plans?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active', { status: 'paused' });\n    const planRow = {\n      user_id: userId,\n      name: tpl.name || ('wger template #' + tplId),\n      goal_type: input.goal || 'gain_muscle',\n      methodology: 'linear',\n      start_date: start,\n      end_date: endDate.toISOString().substring(0, 10),\n      weeks_total: weeks,\n      current_week: 1,\n      status: 'active',\n      structure: { source: 'wger', template_id: tplId }\n    };\n    const savedPlan = await pg('POST', '/fitness_plans', planRow);\n    const planId = savedPlan && savedPlan[0] ? savedPlan[0].id : null;\n    if (!planId) return 'Plan saved partially.';\n    const sessionRows = [];\n    for (let w = 1; w <= weeks; w++) {\n      for (let i = 0; i < days.length; i++) {\n        const d = days[i];\n        const slots = Array.isArray(d.slots) ? d.slots : [];\n        const exercises = slots.map(s => {\n          const cfg = (s.config && s.config[0]) || {};\n          return {\n            wger_id: s.exercise || (s.exercises && s.exercises[0]) || null,\n            name: s.name || ('Exercise #' + (s.exercise || '?')),\n            sets: parseInt(cfg.sets) || 3,\n            reps: cfg.reps || '8-12',\n            weight_kg: parseFloat(cfg.weight) || null,\n            rest_s: parseInt(cfg.rest) || null\n          };\n        });\n        const offsetDays = (w - 1) * 7 + i;\n        const planned = new Date(start);\n        planned.setUTCDate(planned.getUTCDate() + offsetDays);\n        sessionRows.push({\n          plan_id: planId,\n          user_id: userId,\n          week_num: w,\n          day_num: i + 1,\n          name: d.description || ('Day ' + (i + 1)),\n          exercises,\n          planned_for: planned.toISOString().substring(0, 10)\n        });\n      }\n    }\n    if (sessionRows.length) await pg('POST', '/fitness_plan_sessions', sessionRows);\n    return 'Imported wger template \"' + planRow.name + '\" as your active plan: ' + sessionRows.length + ' sessions over ' + weeks + ' weeks.';\n  }\n  if (sub === 'list_templates') {\n    try {\n      const tpls = await helpers.httpRequest({ method: 'GET', url: WGER_BASE + '/public-templates/?limit=20', headers: { 'User-Agent': UA }, json: true, timeout: 20000 });\n      const items = (tpls && tpls.results) || [];\n      if (!items.length) return 'No public wger templates available.';\n      let out = 'Available wger public templates:\\n';\n      for (const t of items) out += '  #' + t.id + ' ' + (t.name || 'Untitled') + '\\n';\n      return out.trim();\n    } catch (e) {\n      return 'Failed to fetch templates: ' + e.message;\n    }\n  }\n  if (sub === 'complete_session') {\n    const id = parseInt(input.session_id);\n    if (!id) return 'session_id required.';\n    await pgPatch('/fitness_plan_sessions?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), { completed_at: nowISO(), completion_notes: input.notes || null });\n    return 'Session #' + id + ' marked complete.';\n  }\n  if (sub === 'adjust') {\n    const planId = parseInt(input.plan_id);\n    if (!planId) {\n      const plans = await pg('GET', '/fitness_plans?user_id=eq.' + encodeURIComponent(userId) + '&status=eq.active&select=id&limit=1');\n      if (!plans || !plans[0]) return 'No active plan to adjust.';\n    }\n    const note = input.adjustment_note || 'manual adjustment';\n    return 'Plan adjustment requested: ' + note + '. (V1: noted in plan.notes; deeper restructure is V2.)';\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionReminders(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'list').toLowerCase();\n  const chatId = input.chatId || input.chat_id;\n  if (sub === 'setup') {\n    const presetName = input.preset || 'all';\n    if (!chatId) return 'chat_id required (passed by the agent).';\n    const presets = {\n      morning_meal: { instruction: 'Buddy: gentle reminder to log breakfast if not logged yet.', schedule: 'daily', time: '08:00', notify_mode: 'on_change' },\n      evening_summary: { instruction: 'Buddy: send today\\'s fitness summary.', schedule: 'daily', time: '21:00', notify_mode: 'always' },\n      weekly_report: { instruction: 'Buddy: send the weekly fitness report with insights.', schedule: 'weekly', day: 'sun', time: '19:00', notify_mode: 'always' }\n    };\n    const wanted = presetName === 'all' ? Object.keys(presets) : [presetName];\n    const created = [];\n    for (const k of wanted) {\n      const p = presets[k];\n      if (!p) continue;\n      const row = {\n        user_id: userId,\n        chat_id: String(chatId),\n        instruction: p.instruction,\n        schedule: { type: p.schedule, time: p.time, day: p.day },\n        timezone: input.timezone || 'Europe/Berlin',\n        enabled: true,\n        notify_mode: p.notify_mode,\n        next_run: null\n      };\n      try {\n        await pg('POST', '/scheduled_actions', row);\n        created.push(k);\n      } catch (e) {\n        // continue\n      }\n    }\n    return 'Reminders set up: ' + created.join(', ') + '. Heartbeat will fire them on schedule.';\n  }\n  if (sub === 'list') {\n    const r = await pg('GET', '/scheduled_actions?user_id=eq.' + encodeURIComponent(userId) + '&instruction=ilike.Buddy:*&select=id,instruction,schedule,enabled,notify_mode,next_run&order=id.asc');\n    if (!r || !r.length) return 'No Buddy reminders set up yet. Use sub_action=setup with preset=morning_meal|evening_summary|weekly_report|all.';\n    let out = 'Your Buddy reminders:\\n';\n    for (const a of r) out += '  #' + a.id + ' ' + (a.enabled ? '[on]' : '[off]') + ' ' + JSON.stringify(a.schedule) + ' - ' + a.instruction.substring(0, 80) + '\\n';\n    return out.trim();\n  }\n  if (sub === 'disable') {\n    const id = parseInt(input.reminder_id);\n    if (!id) return 'reminder_id required.';\n    await pgPatch('/scheduled_actions?id=eq.' + id + '&user_id=eq.' + encodeURIComponent(userId), { enabled: false });\n    return 'Reminder #' + id + ' disabled.';\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionInsights(input) {\n  const userId = getUserId();\n  const sub = (input.sub_action || 'list').toLowerCase();\n  if (sub === 'list') {\n    const r = await pg('GET', \"/memory_long?category=eq.insight&entity_name=eq.fitness&select=content,importance,created_at&order=created_at.desc&limit=10\");\n    if (!r || !r.length) return 'No insights yet. Run sub_action=analyze (after at least 14 days of logs).';\n    let out = 'Buddy insights:\\n';\n    for (const i of r) out += '  [' + i.created_at.substring(0, 10) + ' imp ' + i.importance + '] ' + i.content + '\\n';\n    return out.trim();\n  }\n  if (sub === 'analyze') {\n    const since = daysAgoISO(30);\n    const meals = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + since + 'T00:00:00&select=logged_at,meal_type,total_kcal,total_protein_g,total_carbs_g,total_fat_g');\n    const workouts = await pg('GET', '/fitness_workouts?user_id=eq.' + encodeURIComponent(userId) + '&performed_at=gte.' + since + 'T00:00:00&select=performed_at,exercise_type,duration_min,intensity');\n    const body = await pg('GET', '/fitness_body?user_id=eq.' + encodeURIComponent(userId) + '&measured_at=gte.' + since + 'T00:00:00&select=measured_at,weight_kg,body_fat_pct');\n    if ((meals || []).length < 14) return 'Need at least 14 meal logs for meaningful insights. You have ' + (meals || []).length + '.';\n    const stats = {\n      meal_count: (meals || []).length,\n      workout_count: (workouts || []).length,\n      avg_kcal_per_day: 0,\n      weekday_carbs: 0,\n      weekend_carbs: 0\n    };\n    let weekdayMeals = 0, weekendMeals = 0;\n    for (const m of (meals || [])) {\n      stats.avg_kcal_per_day += m.total_kcal || 0;\n      const wd = new Date(m.logged_at).getUTCDay();\n      if (wd === 0 || wd === 6) { stats.weekend_carbs += m.total_carbs_g || 0; weekendMeals++; }\n      else { stats.weekday_carbs += m.total_carbs_g || 0; weekdayMeals++; }\n    }\n    const days = Math.max(1, Math.ceil((Date.now() - new Date(since).getTime()) / 86400000));\n    stats.avg_kcal_per_day = Math.round(stats.avg_kcal_per_day / days);\n    stats.weekday_carbs_per_meal = weekdayMeals ? Math.round(stats.weekday_carbs / weekdayMeals) : 0;\n    stats.weekend_carbs_per_meal = weekendMeals ? Math.round(stats.weekend_carbs / weekendMeals) : 0;\n    const schema = {\n      type: 'object', additionalProperties: false, required: ['insights'],\n      properties: { insights: { type: 'array', items: {\n        type: 'object', additionalProperties: false,\n        required: ['content', 'importance'],\n        properties: { content: { type: 'string' }, importance: { type: 'number' } }\n      } } }\n    };\n    const sys = 'You are Buddy, evidence-based personal trainer. Look at user fitness stats and surface 3-5 actionable patterns. Each insight: 1 sentence, importance 1-10. No shaming, motivating tone.';\n    const user = 'Stats over last ' + days + ' days:\\n' + JSON.stringify(stats, null, 2) + '\\nWorkouts: ' + JSON.stringify((workouts || []).slice(0, 20).map(w => ({ d: w.performed_at.substring(0, 10), t: w.exercise_type, m: w.duration_min, i: w.intensity })));\n    let r;\n    try {\n      r = await llmJSON(sys, user, schema);\n    } catch (e) {\n      return 'Insight generation failed: ' + e.message;\n    }\n    const created = [];\n    for (const i of r.insights) {\n      const row = {\n        content: i.content,\n        category: 'insight',\n        entity_name: 'fitness',\n        importance: Math.max(1, Math.min(10, Math.round(i.importance))),\n        tags: ['fitness', 'pattern'],\n        metadata: { domain: 'fitness', user_id: userId, generated_at: nowISO() }\n      };\n      try {\n        await pg('POST', '/memory_long', row);\n        created.push(i.content);\n      } catch (e) {}\n    }\n    let out = 'Generated ' + created.length + ' insights:\\n';\n    for (const c of created) out += '  - ' + c + '\\n';\n    return out.trim();\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\nasync function actionExport(input) {\n  const userId = getUserId();\n  const type = input.type || 'meals';\n  const since = input.since || daysAgoISO(30);\n  const until = input.until || todayISO();\n  let rows = [];\n  let header = '';\n  if (type === 'meals') {\n    rows = await pg('GET', '/fitness_meals?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + since + 'T00:00:00&logged_at=lte.' + until + 'T23:59:59&order=logged_at.asc&select=logged_at,meal_type,total_kcal,total_protein_g,total_carbs_g,total_fat_g,total_fiber_g,input_source,notes');\n    header = 'logged_at,meal_type,kcal,protein_g,carbs_g,fat_g,fiber_g,source,notes';\n  } else if (type === 'workouts') {\n    rows = await pg('GET', '/fitness_workouts?user_id=eq.' + encodeURIComponent(userId) + '&performed_at=gte.' + since + 'T00:00:00&performed_at=lte.' + until + 'T23:59:59&order=performed_at.asc&select=performed_at,exercise_type,duration_min,intensity,distance_km,calories_burned,perceived_exertion,notes');\n    header = 'performed_at,exercise_type,duration_min,intensity,distance_km,calories_burned,rpe,notes';\n  } else if (type === 'body') {\n    rows = await pg('GET', '/fitness_body?user_id=eq.' + encodeURIComponent(userId) + '&measured_at=gte.' + since + 'T00:00:00&measured_at=lte.' + until + 'T23:59:59&order=measured_at.asc&select=measured_at,weight_kg,body_fat_pct,muscle_mass_kg,waist_cm,chest_cm,hip_cm,thigh_cm,arm_cm,notes');\n    header = 'measured_at,weight_kg,body_fat_pct,muscle_mass_kg,waist_cm,chest_cm,hip_cm,thigh_cm,arm_cm,notes';\n  } else if (type === 'hydration') {\n    rows = await pg('GET', '/fitness_hydration?user_id=eq.' + encodeURIComponent(userId) + '&logged_at=gte.' + since + 'T00:00:00&logged_at=lte.' + until + 'T23:59:59&order=logged_at.asc&select=logged_at,volume_ml,beverage_type');\n    header = 'logged_at,volume_ml,beverage_type';\n  } else {\n    return 'Unknown type: ' + type + '. Use meals, workouts, body, hydration.';\n  }\n  const lines = [header];\n  for (const r of (rows || [])) {\n    const cols = header.split(',').map(k => {\n      const colMap = { kcal: 'total_kcal', protein_g: 'total_protein_g', carbs_g: 'total_carbs_g', fat_g: 'total_fat_g', fiber_g: 'total_fiber_g', source: 'input_source', rpe: 'perceived_exertion' };\n      const key = colMap[k] || k;\n      const v = r[key];\n      if (v == null) return '';\n      const s = String(v).replace(/\"/g, '\"\"');\n      return /[,\"\\n]/.test(s) ? '\"' + s + '\"' : s;\n    });\n    lines.push(cols.join(','));\n  }\n  const csv = lines.join('\\n');\n  // Upload to File Bridge so it can be sent as a Telegram document\n  try {\n    const fname = 'fitness-' + type + '-' + since + '-to-' + until + '.csv';\n    const upload = await helpers.httpRequest({\n      method: 'POST',\n      url: FILE_BRIDGE + '/upload/base64',\n      headers: { 'Content-Type': 'application/json' },\n      body: { content_base64: Buffer.from(csv).toString('base64'), file_name: fname, mime_type: 'text/csv' },\n      json: true,\n      timeout: 30000\n    });\n    return 'CSV exported: ' + (rows || []).length + ' rows. file_ref: ' + (upload && upload.id) + ' (filename: ' + fname + ')';\n  } catch (e) {\n    if (csv.length > 4000) return 'CSV ready (' + (rows || []).length + ' rows) but File Bridge upload failed and inline send is too large. Run on a smaller date range or check File Bridge.';\n    return 'CSV (' + (rows || []).length + ' rows):\\n' + csv;\n  }\n}\n\nasync function actionNutritionLookup(input) {\n  const sub = (input.sub_action || 'by_name').toLowerCase();\n  if (sub === 'by_barcode') {\n    const code = (input.barcode || '').trim();\n    if (!code) return 'barcode required.';\n    const p = await offBarcode(code);\n    if (!p) return 'Product ' + code + ' not found in OpenFoodFacts.';\n    const n = p.nutriments || {};\n    let out = (p.product_name || 'Unknown') + (p.brands ? ' (' + p.brands + ')' : '') + (p.quantity ? ' - ' + p.quantity : '') + '\\n';\n    out += '  Per 100g: ' + (n['energy-kcal_100g'] || '?') + ' kcal | P ' + (n.proteins_100g || '?') + 'g | C ' + (n.carbohydrates_100g || '?') + 'g | F ' + (n.fat_100g || '?') + 'g\\n';\n    if (p.allergens_tags && p.allergens_tags.length) out += '  Allergens: ' + p.allergens_tags.map(a => a.replace('en:', '')).join(', ') + '\\n';\n    return out.trim();\n  }\n  if (sub === 'by_name') {\n    const q = (input.query || '').trim();\n    if (!q) return 'query required.';\n    const limit = Math.min(Math.max(parseInt(input.limit) || 5, 1), 10);\n    const hits = await offSearch(q, limit);\n    if (!hits.length) return 'No products found for \"' + q + '\".';\n    let out = 'OpenFoodFacts results for \"' + q + '\":\\n';\n    for (let i = 0; i < hits.length; i++) {\n      const p = hits[i];\n      const n = p.nutriments || {};\n      out += (i + 1) + '. ' + (p.product_name || 'Unknown') + (p.brands ? ' (' + p.brands + ')' : '');\n      if (p.code) out += ' [#' + p.code + ']';\n      out += '\\n   Per 100g: ' + (n['energy-kcal_100g'] || '?') + ' kcal | P ' + (n.proteins_100g || '?') + 'g | C ' + (n.carbohydrates_100g || '?') + 'g | F ' + (n.fat_100g || '?') + 'g\\n';\n    }\n    return out.trim();\n  }\n  return 'Unknown sub_action: ' + sub;\n}\n\ntry {\n  _userId = await resolveUserId();\n  let result;\n  if (action === 'fitness_profile') result = await actionFitnessProfile(input);\n  else if (action === 'log_meal') result = await actionLogMeal(input);\n  else if (action === 'meal_memory') result = await actionMealMemory(input);\n  else if (action === 'suggest_meal') result = await actionSuggestMeal(input);\n  else if (action === 'log_workout') result = await actionLogWorkout(input);\n  else if (action === 'log_body') result = await actionLogBody(input);\n  else if (action === 'log_hydration') result = await actionLogHydration(input);\n  else if (action === 'goals') result = await actionGoals(input);\n  else if (action === 'summary') result = await actionSummary(input);\n  else if (action === 'training_plan') result = await actionTrainingPlan(input);\n  else if (action === 'reminders') result = await actionReminders(input);\n  else if (action === 'insights') result = await actionInsights(input);\n  else if (action === 'export') result = await actionExport(input);\n  else if (action === 'nutrition_lookup') result = await actionNutritionLookup(input);\n  else result = 'Unknown action: ' + action + '. Available: fitness_profile, log_meal, meal_memory, suggest_meal, log_workout, log_body, log_hydration, goals, summary, training_plan, reminders, insights, export, nutrition_lookup.';\n  let text = typeof result === 'string' ? result : JSON.stringify(result);\n  if (text.length > 5000) text = text.substring(0, 5000) + '\\n... (truncated, ' + text.length + ' chars total)';\n  return [{ json: { result: text } }];\n} catch (err) {\n  return [{ json: { error: 'Buddy error: ' + (err.message || String(err)) } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Fitness Buddy Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Fitness Buddy",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "fitness-buddy"
+        }
+      },
+      {
+        "id": "tool-profile",
+        "name": "fitness_profile",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          300
+        ],
+        "parameters": {
+          "name": "fitness_profile",
+          "description": "Manage the user's fitness profile. sub_action='setup' creates a profile and auto-computes daily kcal and macros via Mifflin-St-Jeor; 'update' modifies existing fields; 'get' returns the current profile. Pass sex (m/f), birthdate (YYYY-MM-DD), height_cm, weight_kg_baseline, activity_level (sedentary/light/moderate/active/very_active), goal (lose_weight/maintain/gain_muscle/recomp/endurance), target_weight_kg, target_date (YYYY-MM-DD), allergies (csv), dietary_restrictions (csv), training_days_per_week, daily_kcal_override (manual override).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "fitness_profile",
+              "sub_action": "={{ $fromAI('sub_action', \"setup, update, or get\", 'string') }}",
+              "sex": "={{ $fromAI('sex', \"m or f (only for setup/update)\", 'string') }}",
+              "birthdate": "={{ $fromAI('birthdate', \"YYYY-MM-DD\", 'string') }}",
+              "height_cm": "={{ $fromAI('height_cm', \"Height in cm\", 'string') }}",
+              "weight_kg_baseline": "={{ $fromAI('weight_kg_baseline', \"Current weight in kg\", 'string') }}",
+              "activity_level": "={{ $fromAI('activity_level', \"sedentary|light|moderate|active|very_active\", 'string') }}",
+              "goal": "={{ $fromAI('goal', \"lose_weight|maintain|gain_muscle|recomp|endurance\", 'string') }}",
+              "target_weight_kg": "={{ $fromAI('target_weight_kg', \"Target weight in kg\", 'string') }}",
+              "target_date": "={{ $fromAI('target_date', \"Target date YYYY-MM-DD\", 'string') }}",
+              "allergies": "={{ $fromAI('allergies', \"Comma-separated allergies (e.g. 'nuts,gluten')\", 'string') }}",
+              "dietary_restrictions": "={{ $fromAI('dietary_restrictions', \"Comma-separated diet (e.g. 'vegan,low-carb')\", 'string') }}",
+              "training_days_per_week": "={{ $fromAI('training_days_per_week', \"How many days per week the user trains\", 'string') }}",
+              "daily_kcal_override": "={{ $fromAI('daily_kcal_override', \"Manual daily calorie target override\", 'string') }}",
+              "notes": "={{ $fromAI('notes', \"Free-form profile notes\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "sex",
+                "displayName": "sex",
+                "type": "string",
+                "description": "m or f",
+                "required": false
+              },
+              {
+                "id": "birthdate",
+                "displayName": "birthdate",
+                "type": "string",
+                "description": "YYYY-MM-DD",
+                "required": false
+              },
+              {
+                "id": "height_cm",
+                "displayName": "height_cm",
+                "type": "string",
+                "description": "Height in cm",
+                "required": false
+              },
+              {
+                "id": "weight_kg_baseline",
+                "displayName": "weight_kg_baseline",
+                "type": "string",
+                "description": "Current weight in kg",
+                "required": false
+              },
+              {
+                "id": "activity_level",
+                "displayName": "activity_level",
+                "type": "string",
+                "description": "sedentary|light|moderate|active|very_active",
+                "required": false
+              },
+              {
+                "id": "goal",
+                "displayName": "goal",
+                "type": "string",
+                "description": "lose_weight|maintain|gain_muscle|recomp|endurance",
+                "required": false
+              },
+              {
+                "id": "target_weight_kg",
+                "displayName": "target_weight_kg",
+                "type": "string",
+                "description": "Target weight in kg",
+                "required": false
+              },
+              {
+                "id": "target_date",
+                "displayName": "target_date",
+                "type": "string",
+                "description": "Target date YYYY-MM-DD",
+                "required": false
+              },
+              {
+                "id": "allergies",
+                "displayName": "allergies",
+                "type": "string",
+                "description": "CSV allergies",
+                "required": false
+              },
+              {
+                "id": "dietary_restrictions",
+                "displayName": "dietary_restrictions",
+                "type": "string",
+                "description": "CSV diet",
+                "required": false
+              },
+              {
+                "id": "training_days_per_week",
+                "displayName": "training_days_per_week",
+                "type": "string",
+                "description": "Training days per week",
+                "required": false
+              },
+              {
+                "id": "daily_kcal_override",
+                "displayName": "daily_kcal_override",
+                "type": "string",
+                "description": "Manual kcal target override",
+                "required": false
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "type": "string",
+                "description": "Free-form notes",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-log-meal",
+        "name": "log_meal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          250,
+          300
+        ],
+        "parameters": {
+          "name": "log_meal",
+          "description": "Log a meal. sub_action='from_text' parses a description (e.g. '100g oatmeal, 200ml milk, 1 banana'); 'from_voice' is identical (text from voice transcript); 'from_photo' uses the photo file_ref to call OpenAI vision and estimate items+grams; 'from_barcode' looks up by EAN; 'from_memory' logs a saved meal_memory_id; 'edit' modifies notes/meal_type of meal_id; 'delete' removes meal_id; 'clear_day' wipes all meals for a date (requires confirm=true). Always include meal_type (breakfast/lunch/dinner/snack).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "log_meal",
+              "sub_action": "={{ $fromAI('sub_action', \"from_text, from_voice, from_photo, from_barcode, from_memory, edit, delete, or clear_day\", 'string') }}",
+              "meal_type": "={{ $fromAI('meal_type', \"breakfast|lunch|dinner|snack\", 'string') }}",
+              "text": "={{ $fromAI('text', \"Free-text meal description (for from_text/from_voice)\", 'string') }}",
+              "file_ref": "={{ $fromAI('file_ref', \"Photo file_ref from the user's message (for from_photo)\", 'string') }}",
+              "barcode": "={{ $fromAI('barcode', \"EAN barcode (for from_barcode)\", 'string') }}",
+              "grams": "={{ $fromAI('grams', \"Grams consumed (for from_barcode, default 100)\", 'string') }}",
+              "meal_memory_id": "={{ $fromAI('meal_memory_id', \"Saved meal memory ID (for from_memory)\", 'string') }}",
+              "meal_id": "={{ $fromAI('meal_id', \"Meal ID (for edit/delete)\", 'string') }}",
+              "date": "={{ $fromAI('date', \"Date YYYY-MM-DD (for clear_day, default today)\", 'string') }}",
+              "confirm": "={{ $fromAI('confirm', \"true to confirm clear_day\", 'string') }}",
+              "logged_at": "={{ $fromAI('logged_at', \"Override timestamp ISO8601\", 'string') }}",
+              "notes": "={{ $fromAI('notes', \"Free-form notes\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "meal_type",
+                "displayName": "meal_type",
+                "type": "string",
+                "description": "breakfast|lunch|dinner|snack",
+                "required": false
+              },
+              {
+                "id": "text",
+                "displayName": "text",
+                "type": "string",
+                "description": "Free-text meal description",
+                "required": false
+              },
+              {
+                "id": "file_ref",
+                "displayName": "file_ref",
+                "type": "string",
+                "description": "Photo file_ref",
+                "required": false
+              },
+              {
+                "id": "barcode",
+                "displayName": "barcode",
+                "type": "string",
+                "description": "EAN barcode",
+                "required": false
+              },
+              {
+                "id": "grams",
+                "displayName": "grams",
+                "type": "string",
+                "description": "Grams consumed",
+                "required": false
+              },
+              {
+                "id": "meal_memory_id",
+                "displayName": "meal_memory_id",
+                "type": "string",
+                "description": "Saved meal memory ID",
+                "required": false
+              },
+              {
+                "id": "meal_id",
+                "displayName": "meal_id",
+                "type": "string",
+                "description": "Meal ID",
+                "required": false
+              },
+              {
+                "id": "date",
+                "displayName": "date",
+                "type": "string",
+                "description": "Date YYYY-MM-DD",
+                "required": false
+              },
+              {
+                "id": "confirm",
+                "displayName": "confirm",
+                "type": "string",
+                "description": "true to confirm clear_day",
+                "required": false
+              },
+              {
+                "id": "logged_at",
+                "displayName": "logged_at",
+                "type": "string",
+                "description": "Override timestamp ISO8601",
+                "required": false
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "type": "string",
+                "description": "Free-form notes",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-meal-memory",
+        "name": "meal_memory",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          300
+        ],
+        "parameters": {
+          "name": "meal_memory",
+          "description": "Manage frequently eaten meals. sub_action='list' shows top-20 saved meals with usage count; 'save' stores a previously logged meal_id under a name (e.g. 'My standard breakfast'); 'delete' removes meal_memory_id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "meal_memory",
+              "sub_action": "={{ $fromAI('sub_action', \"list, save, or delete\", 'string') }}",
+              "name": "={{ $fromAI('name', \"Display name for the saved meal (for save)\", 'string') }}",
+              "meal_id": "={{ $fromAI('meal_id', \"Source meal ID to save (for save)\", 'string') }}",
+              "meal_memory_id": "={{ $fromAI('meal_memory_id', \"Memory ID (for delete)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "name",
+                "displayName": "name",
+                "type": "string",
+                "description": "Display name",
+                "required": false
+              },
+              {
+                "id": "meal_id",
+                "displayName": "meal_id",
+                "type": "string",
+                "description": "Source meal ID",
+                "required": false
+              },
+              {
+                "id": "meal_memory_id",
+                "displayName": "meal_memory_id",
+                "type": "string",
+                "description": "Memory ID",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-suggest-meal",
+        "name": "suggest_meal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          300
+        ],
+        "parameters": {
+          "name": "suggest_meal",
+          "description": "Suggest 3 next-meal options that fit the remaining macro budget for today. Respects allergies, dietary restrictions, and prefers user favorites from meal_memory.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "suggest_meal"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-log-workout",
+        "name": "log_workout",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1000,
+          300
+        ],
+        "parameters": {
+          "name": "log_workout",
+          "description": "Log a workout. sub_action='log' (default) saves a new workout, auto-extracting exercise_type/duration_min/intensity from text/voice if provided. 'edit' updates workout_id; 'delete' removes workout_id. Pass text (e.g. '30 min jog medium intensity') OR explicit fields (exercise_type, duration_min, intensity).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "log_workout",
+              "sub_action": "={{ $fromAI('sub_action', \"log, edit, or delete\", 'string') }}",
+              "text": "={{ $fromAI('text', \"Free-text workout description (auto-extracted)\", 'string') }}",
+              "exercise_type": "={{ $fromAI('exercise_type', \"running|cycling|swimming|walking|strength|hiit|yoga|other\", 'string') }}",
+              "duration_min": "={{ $fromAI('duration_min', \"Duration in minutes\", 'string') }}",
+              "intensity": "={{ $fromAI('intensity', \"low|medium|high\", 'string') }}",
+              "distance_km": "={{ $fromAI('distance_km', \"Distance in km (for endurance)\", 'string') }}",
+              "perceived_exertion": "={{ $fromAI('perceived_exertion', \"RPE 1-10\", 'string') }}",
+              "performed_at": "={{ $fromAI('performed_at', \"Override timestamp ISO8601\", 'string') }}",
+              "workout_id": "={{ $fromAI('workout_id', \"Workout ID for edit/delete\", 'string') }}",
+              "notes": "={{ $fromAI('notes', \"Free-form notes\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "text",
+                "displayName": "text",
+                "type": "string",
+                "description": "Free-text workout description",
+                "required": false
+              },
+              {
+                "id": "exercise_type",
+                "displayName": "exercise_type",
+                "type": "string",
+                "description": "running|cycling|swimming|walking|strength|hiit|yoga|other",
+                "required": false
+              },
+              {
+                "id": "duration_min",
+                "displayName": "duration_min",
+                "type": "string",
+                "description": "Duration in minutes",
+                "required": false
+              },
+              {
+                "id": "intensity",
+                "displayName": "intensity",
+                "type": "string",
+                "description": "low|medium|high",
+                "required": false
+              },
+              {
+                "id": "distance_km",
+                "displayName": "distance_km",
+                "type": "string",
+                "description": "Distance in km",
+                "required": false
+              },
+              {
+                "id": "perceived_exertion",
+                "displayName": "perceived_exertion",
+                "type": "string",
+                "description": "RPE 1-10",
+                "required": false
+              },
+              {
+                "id": "performed_at",
+                "displayName": "performed_at",
+                "type": "string",
+                "description": "Override timestamp",
+                "required": false
+              },
+              {
+                "id": "workout_id",
+                "displayName": "workout_id",
+                "type": "string",
+                "description": "Workout ID",
+                "required": false
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "type": "string",
+                "description": "Free-form notes",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-log-body",
+        "name": "log_body",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1250,
+          300
+        ],
+        "parameters": {
+          "name": "log_body",
+          "description": "Log body measurements (weight, body fat %, circumferences) and view trends. sub_action='log' saves a measurement; 'list' shows entries from last N days; 'trend' computes change between first and last entry over the window.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "log_body",
+              "sub_action": "={{ $fromAI('sub_action', \"log, list, or trend\", 'string') }}",
+              "weight_kg": "={{ $fromAI('weight_kg', \"Body weight in kg\", 'string') }}",
+              "body_fat_pct": "={{ $fromAI('body_fat_pct', \"Body fat percentage\", 'string') }}",
+              "muscle_mass_kg": "={{ $fromAI('muscle_mass_kg', \"Muscle mass in kg\", 'string') }}",
+              "waist_cm": "={{ $fromAI('waist_cm', \"Waist in cm\", 'string') }}",
+              "chest_cm": "={{ $fromAI('chest_cm', \"Chest in cm\", 'string') }}",
+              "hip_cm": "={{ $fromAI('hip_cm', \"Hip in cm\", 'string') }}",
+              "thigh_cm": "={{ $fromAI('thigh_cm', \"Thigh in cm\", 'string') }}",
+              "arm_cm": "={{ $fromAI('arm_cm', \"Arm in cm\", 'string') }}",
+              "measured_at": "={{ $fromAI('measured_at', \"Override timestamp\", 'string') }}",
+              "days": "={{ $fromAI('days', \"Window in days for list/trend (default 30)\", 'string') }}",
+              "notes": "={{ $fromAI('notes', \"Free-form notes\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "weight_kg",
+                "displayName": "weight_kg",
+                "type": "string",
+                "description": "Weight in kg",
+                "required": false
+              },
+              {
+                "id": "body_fat_pct",
+                "displayName": "body_fat_pct",
+                "type": "string",
+                "description": "Body fat percentage",
+                "required": false
+              },
+              {
+                "id": "muscle_mass_kg",
+                "displayName": "muscle_mass_kg",
+                "type": "string",
+                "description": "Muscle mass in kg",
+                "required": false
+              },
+              {
+                "id": "waist_cm",
+                "displayName": "waist_cm",
+                "type": "string",
+                "description": "Waist in cm",
+                "required": false
+              },
+              {
+                "id": "chest_cm",
+                "displayName": "chest_cm",
+                "type": "string",
+                "description": "Chest in cm",
+                "required": false
+              },
+              {
+                "id": "hip_cm",
+                "displayName": "hip_cm",
+                "type": "string",
+                "description": "Hip in cm",
+                "required": false
+              },
+              {
+                "id": "thigh_cm",
+                "displayName": "thigh_cm",
+                "type": "string",
+                "description": "Thigh in cm",
+                "required": false
+              },
+              {
+                "id": "arm_cm",
+                "displayName": "arm_cm",
+                "type": "string",
+                "description": "Arm in cm",
+                "required": false
+              },
+              {
+                "id": "measured_at",
+                "displayName": "measured_at",
+                "type": "string",
+                "description": "Override timestamp",
+                "required": false
+              },
+              {
+                "id": "days",
+                "displayName": "days",
+                "type": "string",
+                "description": "Window in days",
+                "required": false
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "type": "string",
+                "description": "Free-form notes",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-log-hydration",
+        "name": "log_hydration",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1500,
+          300
+        ],
+        "parameters": {
+          "name": "log_hydration",
+          "description": "Log water intake and check progress. sub_action='log' adds volume_ml; 'today' shows progress vs target; 'set_target' updates daily target_ml in the profile.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "log_hydration",
+              "sub_action": "={{ $fromAI('sub_action', \"log, today, or set_target\", 'string') }}",
+              "volume_ml": "={{ $fromAI('volume_ml', \"Volume in ml (for log)\", 'string') }}",
+              "beverage_type": "={{ $fromAI('beverage_type', \"water|tea|coffee|other (default water)\", 'string') }}",
+              "target_ml": "={{ $fromAI('target_ml', \"New daily target ml (for set_target)\", 'string') }}",
+              "logged_at": "={{ $fromAI('logged_at', \"Override timestamp\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "volume_ml",
+                "displayName": "volume_ml",
+                "type": "string",
+                "description": "Volume in ml",
+                "required": false
+              },
+              {
+                "id": "beverage_type",
+                "displayName": "beverage_type",
+                "type": "string",
+                "description": "water|tea|coffee|other",
+                "required": false
+              },
+              {
+                "id": "target_ml",
+                "displayName": "target_ml",
+                "type": "string",
+                "description": "Daily target ml",
+                "required": false
+              },
+              {
+                "id": "logged_at",
+                "displayName": "logged_at",
+                "type": "string",
+                "description": "Override timestamp",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-goals",
+        "name": "goals",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          1750,
+          300
+        ],
+        "parameters": {
+          "name": "goals",
+          "description": "Manage fitness goals. sub_action='set' creates a goal (goal_type: weight, body_fat, workout_frequency, distance, strength, habit, streak); 'list' shows active goals with progress; 'archive' marks goal_id done.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "goals",
+              "sub_action": "={{ $fromAI('sub_action', \"set, list, or archive\", 'string') }}",
+              "goal_type": "={{ $fromAI('goal_type', \"weight|body_fat|workout_frequency|distance|strength|habit|streak\", 'string') }}",
+              "target_value": "={{ $fromAI('target_value', \"Target numeric value\", 'string') }}",
+              "target_unit": "={{ $fromAI('target_unit', \"Unit string (kg, workouts/week, days, etc.)\", 'string') }}",
+              "current_value": "={{ $fromAI('current_value', \"Starting current value\", 'string') }}",
+              "deadline": "={{ $fromAI('deadline', \"Deadline YYYY-MM-DD\", 'string') }}",
+              "goal_id": "={{ $fromAI('goal_id', \"Goal ID for archive\", 'string') }}",
+              "status": "={{ $fromAI('status', \"achieved or abandoned (for archive)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "goal_type",
+                "displayName": "goal_type",
+                "type": "string",
+                "description": "weight|body_fat|workout_frequency|distance|strength|habit|streak",
+                "required": false
+              },
+              {
+                "id": "target_value",
+                "displayName": "target_value",
+                "type": "string",
+                "description": "Target numeric value",
+                "required": false
+              },
+              {
+                "id": "target_unit",
+                "displayName": "target_unit",
+                "type": "string",
+                "description": "Unit",
+                "required": false
+              },
+              {
+                "id": "current_value",
+                "displayName": "current_value",
+                "type": "string",
+                "description": "Starting value",
+                "required": false
+              },
+              {
+                "id": "deadline",
+                "displayName": "deadline",
+                "type": "string",
+                "description": "Deadline YYYY-MM-DD",
+                "required": false
+              },
+              {
+                "id": "goal_id",
+                "displayName": "goal_id",
+                "type": "string",
+                "description": "Goal ID",
+                "required": false
+              },
+              {
+                "id": "status",
+                "displayName": "status",
+                "type": "string",
+                "description": "achieved or abandoned",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-summary",
+        "name": "summary",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          2000,
+          300
+        ],
+        "parameters": {
+          "name": "summary",
+          "description": "Aggregated fitness report. sub_action='today' shows today's calories vs target, macros, workouts, water, and active streak; 'week' or 'month' aggregate the period.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "summary",
+              "sub_action": "={{ $fromAI('sub_action', \"today, week, or month\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-training-plan",
+        "name": "training_plan",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          2250,
+          300
+        ],
+        "parameters": {
+          "name": "training_plan",
+          "description": "Manage multi-week training plans. sub_action='generate_custom' uses LLM + wger.de exercise database to create a periodized plan tailored to profile and goal (params: goal, weeks, days_per_week, equipment); 'import_template' clones a wger public template (param: template_id); 'list_templates' shows wger templates; 'today' returns today's planned session; 'get_active' returns active plan summary; 'complete_session' marks session_id complete; 'adjust' notes adjustment (V2 will restructure).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "training_plan",
+              "sub_action": "={{ $fromAI('sub_action', \"generate_custom, import_template, list_templates, today, get_active, complete_session, or adjust\", 'string') }}",
+              "goal": "={{ $fromAI('goal', \"Plan goal (uses profile goal if omitted)\", 'string') }}",
+              "weeks": "={{ $fromAI('weeks', \"Plan duration in weeks (default 4)\", 'string') }}",
+              "days_per_week": "={{ $fromAI('days_per_week', \"Sessions per week (uses profile if omitted)\", 'string') }}",
+              "equipment": "={{ $fromAI('equipment', \"gym|home|bodyweight|outdoor\", 'string') }}",
+              "template_id": "={{ $fromAI('template_id', \"wger public-template ID (for import_template)\", 'string') }}",
+              "session_id": "={{ $fromAI('session_id', \"Plan session ID (for complete_session)\", 'string') }}",
+              "plan_id": "={{ $fromAI('plan_id', \"Plan ID (for adjust)\", 'string') }}",
+              "adjustment_note": "={{ $fromAI('adjustment_note', \"Reason for adjust\", 'string') }}",
+              "notes": "={{ $fromAI('notes', \"Completion notes (for complete_session)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "goal",
+                "displayName": "goal",
+                "type": "string",
+                "description": "Plan goal",
+                "required": false
+              },
+              {
+                "id": "weeks",
+                "displayName": "weeks",
+                "type": "string",
+                "description": "Duration in weeks",
+                "required": false
+              },
+              {
+                "id": "days_per_week",
+                "displayName": "days_per_week",
+                "type": "string",
+                "description": "Sessions per week",
+                "required": false
+              },
+              {
+                "id": "equipment",
+                "displayName": "equipment",
+                "type": "string",
+                "description": "gym|home|bodyweight|outdoor",
+                "required": false
+              },
+              {
+                "id": "template_id",
+                "displayName": "template_id",
+                "type": "string",
+                "description": "wger template ID",
+                "required": false
+              },
+              {
+                "id": "session_id",
+                "displayName": "session_id",
+                "type": "string",
+                "description": "Session ID",
+                "required": false
+              },
+              {
+                "id": "plan_id",
+                "displayName": "plan_id",
+                "type": "string",
+                "description": "Plan ID",
+                "required": false
+              },
+              {
+                "id": "adjustment_note",
+                "displayName": "adjustment_note",
+                "type": "string",
+                "description": "Adjust reason",
+                "required": false
+              },
+              {
+                "id": "notes",
+                "displayName": "notes",
+                "type": "string",
+                "description": "Completion notes",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-reminders",
+        "name": "reminders",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          2500,
+          300
+        ],
+        "parameters": {
+          "name": "reminders",
+          "description": "Set up recurring fitness reminders fired by the heartbeat. sub_action='setup' adds presets (preset='morning_meal' / 'evening_summary' / 'weekly_report' / 'all'); 'list' shows configured reminders; 'disable' turns off reminder_id.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "reminders",
+              "sub_action": "={{ $fromAI('sub_action', \"setup, list, or disable\", 'string') }}",
+              "preset": "={{ $fromAI('preset', \"morning_meal|evening_summary|weekly_report|all\", 'string') }}",
+              "timezone": "={{ $fromAI('timezone', \"IANA timezone (default Europe/Berlin)\", 'string') }}",
+              "reminder_id": "={{ $fromAI('reminder_id', \"Reminder ID (for disable)\", 'string') }}",
+              "chat_id": "={{ $fromAI('chat_id', \"Telegram chat ID (caller passes this)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "preset",
+                "displayName": "preset",
+                "type": "string",
+                "description": "Preset name",
+                "required": false
+              },
+              {
+                "id": "timezone",
+                "displayName": "timezone",
+                "type": "string",
+                "description": "Timezone",
+                "required": false
+              },
+              {
+                "id": "reminder_id",
+                "displayName": "reminder_id",
+                "type": "string",
+                "description": "Reminder ID",
+                "required": false
+              },
+              {
+                "id": "chat_id",
+                "displayName": "chat_id",
+                "type": "string",
+                "description": "Telegram chat ID",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-insights",
+        "name": "insights",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          2750,
+          300
+        ],
+        "parameters": {
+          "name": "insights",
+          "description": "Pattern detection over the last 30 days of logs. sub_action='analyze' runs LLM analysis on aggregated stats and writes 3-5 insights to memory_long (category=insight, entity_name=fitness) for the agent to recall in future turns; 'list' shows the latest insights.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "insights",
+              "sub_action": "={{ $fromAI('sub_action', \"analyze or list\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-export",
+        "name": "export",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          3000,
+          300
+        ],
+        "parameters": {
+          "name": "export",
+          "description": "Export logs as CSV. type='meals' / 'workouts' / 'body' / 'hydration'. since/until are YYYY-MM-DD (default last 30 days). The CSV is uploaded to the file bridge and a file_ref is returned for the agent to send as a Telegram document.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "export",
+              "type": "={{ $fromAI('type', \"meals|workouts|body|hydration\", 'string') }}",
+              "since": "={{ $fromAI('since', \"Start date YYYY-MM-DD\", 'string') }}",
+              "until": "={{ $fromAI('until', \"End date YYYY-MM-DD\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "type",
+                "displayName": "type",
+                "type": "string",
+                "description": "meals|workouts|body|hydration",
+                "required": false
+              },
+              {
+                "id": "since",
+                "displayName": "since",
+                "type": "string",
+                "description": "Start date YYYY-MM-DD",
+                "required": false
+              },
+              {
+                "id": "until",
+                "displayName": "until",
+                "type": "string",
+                "description": "End date YYYY-MM-DD",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-nutrition-lookup",
+        "name": "nutrition_lookup",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          3250,
+          300
+        ],
+        "parameters": {
+          "name": "nutrition_lookup",
+          "description": "Stand-alone OpenFoodFacts nutrition lookup without logging. sub_action='by_name' searches by product name (top N results); 'by_barcode' fetches a product by EAN.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "nutrition_lookup",
+              "sub_action": "={{ $fromAI('sub_action', \"by_name or by_barcode\", 'string') }}",
+              "query": "={{ $fromAI('query', \"Search term (for by_name)\", 'string') }}",
+              "barcode": "={{ $fromAI('barcode', \"EAN barcode (for by_barcode)\", 'string') }}",
+              "limit": "={{ $fromAI('limit', \"Max results 1-10 (default 5)\", 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Internal action route",
+                "required": true
+              },
+              {
+                "id": "sub_action",
+                "displayName": "sub_action",
+                "type": "string",
+                "description": "Sub-action within this tool",
+                "required": true
+              },
+              {
+                "id": "query",
+                "displayName": "query",
+                "type": "string",
+                "description": "Search term",
+                "required": false
+              },
+              {
+                "id": "barcode",
+                "displayName": "barcode",
+                "type": "string",
+                "description": "EAN barcode",
+                "required": false
+              },
+              {
+                "id": "limit",
+                "displayName": "limit",
+                "type": "string",
+                "description": "Max results",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "fitness_profile": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "log_meal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "meal_memory": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "suggest_meal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "log_workout": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "log_body": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "log_hydration": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "goals": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "summary": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "training_plan": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "reminders": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "insights": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "export": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "nutrition_lookup": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

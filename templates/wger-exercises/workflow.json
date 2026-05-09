@@ -1,0 +1,247 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: wger Exercises",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "wger Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'search_exercises';\n\nconst BASE = 'https://wger.de/api/v2';\nconst UA = 'n8n-claw/1.0 (github.com/freddy-schuetz/n8n-claw)';\n\nasync function api(path) {\n  return await helpers.httpRequest({\n    method: 'GET',\n    url: BASE + path,\n    headers: { 'User-Agent': UA, 'Accept': 'application/json' },\n    timeout: 15000,\n    json: true\n  });\n}\n\nfunction langCode(lang) {\n  // wger language IDs: 1=de, 2=en, 4=ru, 5=es, 7=bg, 8=sv, 9=nl, 12=el, 13=cs, 14=ar, 15=tr, 16=fr, 17=pt, 18=it, 19=ko, 20=zh, 21=hr, 22=hu, 23=ja, 24=he, 26=lt, 27=pl, 28=da\n  const m = { de: 1, en: 2, es: 5, fr: 16, it: 18, pt: 17, nl: 9 };\n  if (typeof lang === 'number') return lang;\n  return m[(lang || 'en').toLowerCase()] || 2;\n}\n\nfunction pickTranslation(translations, languageId) {\n  if (!Array.isArray(translations) || translations.length === 0) return null;\n  return translations.find(t => t.language === languageId)\n      || translations.find(t => t.language === 2)\n      || translations[0];\n}\n\nfunction stripHtml(s) {\n  if (!s) return '';\n  return String(s).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\\s+/g, ' ').trim();\n}\n\nfunction formatExerciseSummary(ex, langId, idx) {\n  const tr = pickTranslation(ex.translations, langId) || {};\n  const name = tr.name || 'Unnamed';\n  const cat = ex.category && ex.category.name ? ex.category.name : '?';\n  const muscles = (ex.muscles || []).map(m => m.name_en || m.name).filter(Boolean).join(', ');\n  const equip = (ex.equipment || []).map(e => e.name).filter(Boolean).join(', ') || 'none';\n  const prefix = idx != null ? (idx + 1) + '. ' : '';\n  let out = prefix + name + ' [#' + ex.id + ']';\n  out += '\\n   Category: ' + cat + ' | Equipment: ' + equip;\n  if (muscles) out += '\\n   Primary muscles: ' + muscles;\n  return out;\n}\n\nfunction formatExerciseFull(ex, langId) {\n  const tr = pickTranslation(ex.translations, langId) || {};\n  const name = tr.name || 'Unnamed';\n  const desc = stripHtml(tr.description || '');\n  const aliases = Array.isArray(tr.aliases) ? tr.aliases.map(a => a.alias).filter(Boolean) : [];\n  const cat = ex.category && ex.category.name ? ex.category.name : '?';\n  const primary = (ex.muscles || []).map(m => m.name_en || m.name).filter(Boolean);\n  const secondary = (ex.muscles_secondary || []).map(m => m.name_en || m.name).filter(Boolean);\n  const equip = (ex.equipment || []).map(e => e.name).filter(Boolean);\n  const images = Array.isArray(ex.images) ? ex.images.map(i => i.image).filter(Boolean) : [];\n  let out = name + ' [#' + ex.id + ']\\n';\n  out += 'Category: ' + cat + '\\n';\n  if (aliases.length) out += 'Also known as: ' + aliases.join(', ') + '\\n';\n  if (equip.length) out += 'Equipment: ' + equip.join(', ') + '\\n'; else out += 'Equipment: bodyweight\\n';\n  if (primary.length) out += 'Primary muscles: ' + primary.join(', ') + '\\n';\n  if (secondary.length) out += 'Secondary muscles: ' + secondary.join(', ') + '\\n';\n  if (desc) {\n    const trimmed = desc.length > 1500 ? desc.substring(0, 1500) + '... (truncated)' : desc;\n    out += '\\nDescription:\\n' + trimmed + '\\n';\n  }\n  if (images.length) {\n    out += '\\nImages (' + images.length + '): ' + images.slice(0, 3).join(' | ');\n    if (images.length > 3) out += ' ...';\n    out += '\\n';\n  }\n  return out.trim();\n}\n\ntry {\n  if (action === 'search_exercises') {\n    const langId = langCode(input.language);\n    const limit = Math.min(Math.max(parseInt(input.limit) || 10, 1), 50);\n    let qs = '?language=' + langId + '&limit=' + limit;\n    if (input.muscles) qs += '&muscles=' + encodeURIComponent(String(input.muscles));\n    if (input.equipment) qs += '&equipment=' + encodeURIComponent(String(input.equipment));\n    if (input.category) qs += '&category=' + encodeURIComponent(String(input.category));\n    const data = await api('/exerciseinfo/' + qs);\n    const results = (data && data.results) || [];\n    if (input.name) {\n      const needle = String(input.name).toLowerCase();\n      results.sort((a, b) => {\n        const an = ((pickTranslation(a.translations, langId) || {}).name || '').toLowerCase();\n        const bn = ((pickTranslation(b.translations, langId) || {}).name || '').toLowerCase();\n        const aHit = an.includes(needle) ? 0 : 1;\n        const bHit = bn.includes(needle) ? 0 : 1;\n        return aHit - bHit;\n      });\n    }\n    if (results.length === 0) return [{ json: { result: 'No exercises found for the given filters.' } }];\n    let out = 'Found ' + (data.count || results.length) + ' exercises (showing ' + results.length + '):\\n\\n';\n    for (let i = 0; i < results.length; i++) out += formatExerciseSummary(results[i], langId, i) + '\\n\\n';\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out.trim() } }];\n  }\n\n  if (action === 'get_exercise') {\n    const id = parseInt(input.exercise_id);\n    if (!id) return [{ json: { error: 'Parameter \"exercise_id\" is required (integer ID from search_exercises).' } }];\n    const langId = langCode(input.language);\n    const ex = await api('/exerciseinfo/' + id + '/');\n    if (!ex || !ex.id) return [{ json: { error: 'Exercise ' + id + ' not found.' } }];\n    return [{ json: { result: formatExerciseFull(ex, langId) } }];\n  }\n\n  if (action === 'list_categories') {\n    const data = await api('/exercisecategory/?limit=100');\n    const items = (data && data.results) || [];\n    let out = 'Exercise categories (' + items.length + '):\\n';\n    for (const c of items) out += '  ' + c.id + ': ' + c.name + '\\n';\n    return [{ json: { result: out.trim() } }];\n  }\n\n  if (action === 'list_muscles') {\n    const data = await api('/muscle/?limit=100');\n    const items = (data && data.results) || [];\n    let out = 'Muscles (' + items.length + '):\\n';\n    for (const m of items) {\n      const en = m.name_en || m.name;\n      const lat = m.name && m.name !== en ? ' (' + m.name + ')' : '';\n      const front = m.is_front ? 'front' : 'back';\n      out += '  ' + m.id + ': ' + en + lat + ' [' + front + ']\\n';\n    }\n    return [{ json: { result: out.trim() } }];\n  }\n\n  if (action === 'list_equipment') {\n    const data = await api('/equipment/?limit=100');\n    const items = (data && data.results) || [];\n    let out = 'Equipment (' + items.length + '):\\n';\n    for (const e of items) out += '  ' + e.id + ': ' + e.name + '\\n';\n    return [{ json: { result: out.trim() } }];\n  }\n\n  if (action === 'list_public_templates') {\n    const limit = Math.min(Math.max(parseInt(input.limit) || 20, 1), 50);\n    const data = await api('/public-templates/?limit=' + limit);\n    const items = (data && data.results) || [];\n    if (items.length === 0) return [{ json: { result: 'No public workout templates available.' } }];\n    let out = 'Public workout templates (' + (data.count || items.length) + ', showing ' + items.length + '):\\n\\n';\n    for (let i = 0; i < items.length; i++) {\n      const t = items[i];\n      out += (i + 1) + '. ' + (t.name || 'Untitled') + ' [#' + t.id + ']';\n      if (t.description) out += ' — ' + stripHtml(t.description).substring(0, 120);\n      out += '\\n';\n      if (t.start && t.end) out += '   Duration: ' + t.start + ' to ' + t.end + '\\n';\n      out += '\\n';\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out.trim() } }];\n  }\n\n  if (action === 'get_template_detail') {\n    const id = parseInt(input.template_id);\n    if (!id) return [{ json: { error: 'Parameter \"template_id\" is required (integer ID from list_public_templates).' } }];\n    const t = await api('/public-templates/' + id + '/');\n    if (!t || !t.id) return [{ json: { error: 'Template ' + id + ' not found.' } }];\n    let out = (t.name || 'Untitled') + ' [#' + t.id + ']\\n';\n    if (t.description) out += stripHtml(t.description) + '\\n';\n    if (t.start && t.end) out += 'Duration: ' + t.start + ' to ' + t.end + '\\n';\n    if (Array.isArray(t.days) && t.days.length) {\n      out += '\\nSessions:\\n';\n      for (const d of t.days) {\n        out += '  Day: ' + (d.description || 'Workout') + (d.is_rest ? ' (rest day)' : '') + '\\n';\n        if (Array.isArray(d.slots)) {\n          for (const s of d.slots) {\n            const exId = s.exercise || (s.exercises && s.exercises[0]) || '?';\n            out += '    - Exercise #' + exId;\n            if (s.config && s.config.length) {\n              const cfg = s.config[0];\n              if (cfg.sets) out += ' | sets: ' + cfg.sets;\n              if (cfg.reps) out += ' | reps: ' + cfg.reps;\n              if (cfg.weight) out += ' | weight: ' + cfg.weight;\n            }\n            out += '\\n';\n          }\n        }\n      }\n    }\n    if (out.length > 5000) out = out.substring(0, 5000) + '\\n... (truncated)';\n    return [{ json: { result: out.trim(), raw: { id: t.id, name: t.name, days: t.days || [] } } }];\n  }\n\n  return [{ json: { error: 'Unknown action: ' + action + '. Available: search_exercises, get_exercise, list_categories, list_muscles, list_equipment, list_public_templates, get_template_detail.' } }];\n} catch (err) {\n  return [{ json: { error: 'wger API call failed: ' + (err.message || String(err)) } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "wger Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: wger Exercises",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "wger-exercises"
+        }
+      },
+      {
+        "id": "tool-search",
+        "name": "search_exercises",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "search_exercises",
+          "description": "Search the wger exercise database (845+ exercises). Filter by muscle group, equipment, category, language. Returns a list with exercise IDs you can pass to get_exercise. Parameters: muscles (muscle ID from list_muscles, optional), equipment (equipment ID from list_equipment, optional), category (category ID from list_categories, optional), name (free-text name to bias ranking, optional), language (de/en/es/fr/it, optional, default en), limit (1-50, optional, default 10)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "search_exercises",
+              "muscles": "={{ $fromAI('muscles', 'Muscle ID(s) to filter (from list_muscles), comma-separated', 'string') }}",
+              "equipment": "={{ $fromAI('equipment', 'Equipment ID(s) to filter (from list_equipment), comma-separated', 'string') }}",
+              "category": "={{ $fromAI('category', 'Category ID to filter (from list_categories)', 'string') }}",
+              "name": "={{ $fromAI('name', 'Free-text exercise name to rank-bias (e.g. \"squat\")', 'string') }}",
+              "language": "={{ $fromAI('language', 'Language code: de, en, es, fr, it (default en)', 'string') }}",
+              "limit": "={{ $fromAI('limit', 'Max results 1-50 (default 10)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "muscles", "displayName": "muscles", "type": "string", "description": "Muscle ID(s) to filter, comma-separated", "required": false },
+              { "id": "equipment", "displayName": "equipment", "type": "string", "description": "Equipment ID(s) to filter, comma-separated", "required": false },
+              { "id": "category", "displayName": "category", "type": "string", "description": "Category ID to filter", "required": false },
+              { "id": "name", "displayName": "name", "type": "string", "description": "Free-text name to bias ranking", "required": false },
+              { "id": "language", "displayName": "language", "type": "string", "description": "Language code (default en)", "required": false },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max results 1-50", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-exercise",
+        "name": "get_exercise",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [250, 300],
+        "parameters": {
+          "name": "get_exercise",
+          "description": "Get the full details of one exercise by its wger ID — name, description (instructions), aliases, primary/secondary muscles, equipment, and image URLs. Parameters: exercise_id (integer ID from search_exercises, required), language (de/en/es/fr/it, optional, default en)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_exercise",
+              "exercise_id": "={{ $fromAI('exercise_id', 'Integer wger exercise ID', 'string') }}",
+              "language": "={{ $fromAI('language', 'Language code: de, en, es, fr, it (default en)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "exercise_id", "displayName": "exercise_id", "type": "string", "description": "Integer wger exercise ID", "required": true },
+              { "id": "language", "displayName": "language", "type": "string", "description": "Language code (default en)", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-cats",
+        "name": "list_categories",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [500, 300],
+        "parameters": {
+          "name": "list_categories",
+          "description": "List all wger exercise categories with their IDs (Arms, Legs, Cardio, Chest, Back, Shoulders, Abs). Use these IDs in search_exercises (parameter: category). No parameters.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_categories" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-muscles",
+        "name": "list_muscles",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [750, 300],
+        "parameters": {
+          "name": "list_muscles",
+          "description": "List all muscle groups available for filtering with their IDs (e.g. Quadriceps femoris, Pectoralis major, Latissimus dorsi). Use these IDs in search_exercises (parameter: muscles). No parameters.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_muscles" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-equipment",
+        "name": "list_equipment",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1000, 300],
+        "parameters": {
+          "name": "list_equipment",
+          "description": "List all equipment types with their IDs (Barbell, Dumbbell, Bodyweight, Pull-up bar, etc.). Use these IDs in search_exercises (parameter: equipment). No parameters.",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": { "action": "list_equipment" },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-templates",
+        "name": "list_public_templates",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1250, 300],
+        "parameters": {
+          "name": "list_public_templates",
+          "description": "List public workout routine templates available on wger (Stronglifts 5x5, Push-Pull-Legs, Starting Strength, etc.). Returns templates with IDs you can pass to get_template_detail. Parameter: limit (1-50, optional, default 20)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_public_templates",
+              "limit": "={{ $fromAI('limit', 'Max templates 1-50 (default 20)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "limit", "displayName": "limit", "type": "string", "description": "Max templates 1-50", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-template",
+        "name": "get_template_detail",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [1500, 300],
+        "parameters": {
+          "name": "get_template_detail",
+          "description": "Get the full structure of a public workout template — all sessions/days with exercises, sets, reps, and weight prescriptions. Returns both human-readable text and raw JSON in 'raw' for programmatic import. Parameter: template_id (integer ID from list_public_templates, required)",
+          "workflowId": { "__rl": true, "value": "REPLACE_SUB_WORKFLOW_ID", "mode": "id" },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_template_detail",
+              "template_id": "={{ $fromAI('template_id', 'Integer wger public-template ID', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "template_id", "displayName": "template_id", "type": "string", "description": "Integer wger template ID", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "search_exercises": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_exercise": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_categories": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_muscles": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_equipment": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "list_public_templates": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_template_detail": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}
