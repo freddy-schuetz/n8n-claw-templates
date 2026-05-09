@@ -5,7 +5,7 @@
   "updated": "2026-05-09",
   "type": "native",
   "category": "health",
-  "description": "Personal coach 'Buddy': logs meals (text/voice/photo with OpenAI vision), workouts and body measurements; tracks calories, macros and hydration; sets goals; generates personalized multi-week training plans (using real wger.de exercises, no LLM hallucination); gives daily/weekly summaries with streak tracking and proactive reminders. Requires the v1.6 fitness schema (run setup.sh --force on n8n-claw to apply).",
+  "description": "Personal coach 'Buddy'. ROUTING: ALWAYS call this skill via mcp_client for ANY fitness, nutrition, workout, body, hydration, weight, training-plan, or fitness-goal interaction — including profile setup/onboarding ('Profil anlegen', 'Profil aufsetzen', 'Buddy einrichten'), meal logging (text/voice/photo), workout logging, body measurements, water tracking, daily/weekly fitness summaries. DO NOT improvise responses or ask onboarding questions yourself — always route to this skill; the skill drives the conversation step-by-step. Tools: fitness_profile (call with sub_action='setup' even with no fields, the skill replies with the next single question to forward to the user verbatim), log_meal (text/voice/photo via OpenAI vision + OpenFoodFacts), log_workout (auto-extract type/duration/intensity from voice/text), log_body, log_hydration, goals, summary, training_plan (LLM-generated using real wger exercises), reminders, insights, export, nutrition_lookup. Requires the v1.6 fitness schema.",
   "credentials_required": [
     {
       "key": "openai_api_key",
