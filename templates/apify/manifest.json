@@ -1,11 +1,11 @@
 {
   "id": "apify",
   "name": "Apify Actors",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "updated": "2026-05-11",
   "type": "bridge",
   "category": "utilities",
-  "description": "Access 6000+ web scrapers and automation tools (Actors) via the hosted Apify MCP server. Discover Actors with search-actors, inspect their input schema with fetch-actor-details, then run any Actor (Google Maps, Instagram, TikTok, web scrapers, ...) with call-actor — no preconfiguration needed.",
+  "description": "Access 6000+ web scrapers (Actors) via the hosted Apify MCP server. WORKFLOW: (1) search-actors with a broad platform keyword (e.g. 'instagram', 'google maps', 'tiktok') to find a specialized Actor — ALWAYS the first step. (2) fetch-actor-details to read the input schema. (3) call-actor with the matching input to run it. (4) optionally get-actor-output for full dataset items. The apify--rag-web-browser tool is a LAST-RESORT fallback ONLY when search-actors returns no relevant Actor; for plain webpage reads or web search use the Web Reader (Crawl4AI) and Web Search (SearXNG) tools instead, not this skill.",
   "tools": [
     { "name": "search-actors",         "description": "Search the Apify Store to find scrapers/Actors by platform or keyword (e.g. 'Instagram', 'Amazon products'). Returns Actor cards with name, description, pricing, stats." },
     { "name": "fetch-actor-details",   "description": "Get full metadata for an Actor by name (e.g. 'apify/rag-web-browser'): description, input schema, README, pricing, output schema. Call this before call-actor." },
