@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (70)
+## Available Skills (71)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -32,7 +32,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Tasks](#tasks) | 4 | Asana, Jira Cloud, Todoist, Vikunja |
 | [Tourism](#tourism) | 1 | DZT Germany Tourism |
 | [Transport](#transport) | 5 | Deutsche Bahn, ÖBB, SBB, ÖPNV Deutschland, Wiener Linien |
-| [Utilities](#utilities) | 3 | Backup, PDF tools, QR codes |
+| [Utilities](#utilities) | 4 | Apify Actors (6000+ web scrapers), Backup, PDF tools, QR codes |
 | [Weather](#weather) | 2 | Open-Meteo forecasts, OpenAQ air quality |
 
 > **Tested column** — A ✓ in the *Tested* column means the skill has been verified end-to-end on at least one live n8n-claw instance (install + tool call working as expected). An empty cell means the skill is published but has not been hands-on verified yet.
@@ -226,6 +226,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
+| [Apify Actors](https://apify.com/) | Access 6000+ web scrapers via the hosted Apify MCP server. Dynamically discover Actors with search-actors, inspect input schemas with fetch-actor-details, then run any Actor (Google Maps, Instagram, TikTok, web scrapers, ...) with call-actor | Apify API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | Config Backup & Restore | Back up and restore n8n-claw config as downloadable JSON files | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [PDF Tools](https://pdf-mcp.io/) | Generate PDFs from HTML, extract text, merge PDFs | pdf-mcp.io API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [QR Code](https://goqr.me/) | Generate QR codes from text or URLs | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |

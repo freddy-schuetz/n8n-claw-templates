@@ -1012,6 +1012,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "apify",
+      "name": "Apify Actors",
+      "type": "bridge",
+      "category": "utilities",
+      "description": "Access 6000+ web scrapers (Apify Actors) via the hosted Apify MCP server. Dynamically discover, inspect, and run any Actor (Google Maps, Instagram, TikTok, web scrapers, ...).",
+      "credentials_required": [
+        {
+          "key": "auth_token",
+          "label": "Apify API Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

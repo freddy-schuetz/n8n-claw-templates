@@ -1,0 +1,35 @@
+{
+  "id": "apify",
+  "name": "Apify Actors",
+  "version": "1.0.0",
+  "updated": "2026-05-11",
+  "type": "bridge",
+  "category": "utilities",
+  "description": "Access 6000+ web scrapers and automation tools (Actors) via the hosted Apify MCP server. Discover Actors with search-actors, inspect their input schema with fetch-actor-details, then run any Actor (Google Maps, Instagram, TikTok, web scrapers, ...) with call-actor — no preconfiguration needed.",
+  "tools": [
+    { "name": "search-actors",         "description": "Search the Apify Store to find scrapers/Actors by platform or keyword (e.g. 'Instagram', 'Amazon products'). Returns Actor cards with name, description, pricing, stats." },
+    { "name": "fetch-actor-details",   "description": "Get full metadata for an Actor by name (e.g. 'apify/rag-web-browser'): description, input schema, README, pricing, output schema. Call this before call-actor." },
+    { "name": "call-actor",            "description": "Run any Apify Actor synchronously or asynchronously. Takes 'actor' (username/name format) and 'input' (object matching the Actor's input schema). Returns datasetId + preview items." },
+    { "name": "get-actor-run",         "description": "Check status and metadata of an Actor run by runId (status, timestamps, dataset reference)." },
+    { "name": "get-actor-output",      "description": "Fetch dataset items from an Actor run by datasetId. Supports field selection (dot notation) and pagination via offset/limit." },
+    { "name": "search-apify-docs",     "description": "Full-text search over Apify Platform / Crawlee-JS / Crawlee-Python documentation. Returns matching doc URLs + snippets." },
+    { "name": "fetch-apify-docs",      "description": "Fetch the full markdown content of a specific Apify or Crawlee documentation page by URL." },
+    { "name": "apify--rag-web-browser","description": "Pre-bundled web browser Actor: queries Google Search, scrapes top N pages, returns content as Markdown. Use for immediate one-shot data retrieval ('current weather', 'fetch this URL')." }
+  ],
+  "bridge": {
+    "mcp_url": "https://mcp.apify.com",
+    "auth_type": "bearer",
+    "auth_token_required": true,
+    "auth_label": "Apify API Token",
+    "auth_hint": "Personal API token from Apify Console → Settings → Integrations (https://console.apify.com/settings/integrations). The free plan includes $5/month in platform credits."
+  },
+  "credentials_required": [
+    {
+      "key": "auth_token",
+      "label": "Apify API Token",
+      "hint": "Personal API token from Apify Console → Settings → Integrations. Free plan includes $5/month credits."
+    }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT"
+}
