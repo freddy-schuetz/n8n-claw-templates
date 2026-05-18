@@ -1026,6 +1026,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "bfl-flux",
+      "name": "BFL FLUX Image Generation",
+      "type": "native",
+      "category": "creativity",
+      "description": "Generate and edit photorealistic images with Black Forest Labs FLUX 2 models (Pro, Max, Klein 4B/9B, Flex). One tool covers text-to-image AND editing (file_ref or image_url). Async polling with chunked wait_for_image fallback.",
+      "credentials_required": [
+        {
+          "key": "bfl_api_key",
+          "label": "BFL API Key"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

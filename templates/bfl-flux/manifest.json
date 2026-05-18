@@ -1,0 +1,25 @@
+{
+  "id": "bfl-flux",
+  "name": "BFL FLUX Image Generation",
+  "version": "1.0.0",
+  "updated": "2026-05-18",
+  "type": "native",
+  "category": "creativity",
+  "description": "Generate and edit photorealistic images with Black Forest Labs FLUX 2 models (Pro, Max, Klein 4B/9B, Flex). One tool covers text-to-image AND image editing — pass file_ref or image_url to enable edit mode. Async polling: most generations finish in <25s and return the image inline; longer jobs return a polling_url for follow-up with wait_for_image.",
+  "credentials_required": [
+    {
+      "key": "bfl_api_key",
+      "label": "BFL API Key",
+      "hint": "Get at https://api.bfl.ai/ -> Account -> API Keys. Pay-per-generation via BFL credits (1 credit = $0.01)."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "generate_image", "description": "Generate a single image with FLUX 2. Covers text-to-image and editing (pass file_ref of a user-uploaded photo OR image_url of a previous generation). Returns the image inline if ready within ~25s, otherwise returns a polling_url for wait_for_image." },
+    { "name": "wait_for_image",  "description": "Continue waiting for a FLUX generation that did not finish in the initial 25s window. Call repeatedly with the SAME polling_url until you get the file." },
+    { "name": "get_credits",     "description": "Return remaining BFL credit balance (1 credit = $0.01 USD)." }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.14.0"
+}

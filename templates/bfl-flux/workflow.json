@@ -1,0 +1,161 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: BFL FLUX Image Generation",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [0, 0],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "BFL FLUX Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [256, 0],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'generate_image';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst BRIDGE_URL = 'http://file-bridge:3200';\nconst BFL_BASE = 'https://api.bfl.ai/v1';\nconst POLL_INTERVAL_MS = 5000;\nconst POLL_MAX_ATTEMPTS = 5;\n\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst creds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.bfl-flux&cred_key=eq.bfl_api_key&select=cred_value',\n  headers: pgHeaders\n});\nif (!creds || !creds[0] || !creds[0].cred_value) {\n  return [{ json: { error: 'BFL API key not configured. Use add_credential to set bfl-flux / bfl_api_key.' } }];\n}\nconst apiKey = creds[0].cred_value;\nconst bflHeaders = { 'x-key': apiKey, 'Content-Type': 'application/json' };\n\nasync function storeBytesInBridge(bytes, fileName, mimeType) {\n  const b64 = Buffer.from(bytes).toString('base64');\n  const stored = await helpers.httpRequest({\n    method: 'POST',\n    url: BRIDGE_URL + '/upload/base64',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ content_base64: b64, file_name: fileName, mime_type: mimeType })\n  });\n  return stored;\n}\n\nasync function fetchFileRefAsBase64(fileRef) {\n  const meta = await helpers.httpRequest({\n    method: 'GET',\n    url: BRIDGE_URL + '/files/' + fileRef + '/meta'\n  });\n  const dl = await helpers.httpRequest({\n    method: 'GET',\n    url: BRIDGE_URL + '/files/' + fileRef,\n    encoding: 'arraybuffer',\n    returnFullResponse: true\n  });\n  const b64 = Buffer.from(dl.body).toString('base64');\n  return { base64: b64, mime_type: meta.mime_type || 'image/jpeg', file_name: meta.file_name };\n}\n\nfunction fmtSize(bytes) {\n  if (!bytes) return 'unknown size';\n  if (bytes < 1024) return bytes + ' B';\n  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';\n  return (bytes / 1024 / 1024).toFixed(2) + ' MB';\n}\n\nfunction successFileResult(name, sizeStr, storedId, cost) {\n  let msg = 'Image ready: ' + name + ' (' + sizeStr + ')';\n  if (cost) msg += ' [cost: ' + Number(cost).toFixed(2) + ' BFL credits]';\n  return msg + '\\n[send_file: ' + BRIDGE_URL + '/files/' + storedId + ']';\n}\n\nasync function bflPost(url, body) {\n  const resp = await helpers.httpRequest({\n    method: 'POST', url, headers: bflHeaders,\n    body: JSON.stringify(body),\n    returnFullResponse: true, ignoreHttpStatusErrors: true, json: false\n  });\n  if (resp.statusCode >= 400) {\n    const errBody = typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body);\n    throw new Error('BFL HTTP ' + resp.statusCode + ': ' + errBody.substring(0, 500));\n  }\n  return typeof resp.body === 'string' ? JSON.parse(resp.body) : resp.body;\n}\n\nasync function bflGet(url) {\n  const resp = await helpers.httpRequest({\n    method: 'GET', url, headers: bflHeaders,\n    returnFullResponse: true, ignoreHttpStatusErrors: true, json: false\n  });\n  if (resp.statusCode >= 400) {\n    const errBody = typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body);\n    throw new Error('BFL HTTP ' + resp.statusCode + ': ' + errBody.substring(0, 500));\n  }\n  return typeof resp.body === 'string' ? JSON.parse(resp.body) : resp.body;\n}\n\nconst MODEL_ENDPOINTS = {\n  'flux-2-pro':              'flux-2-pro',\n  'flux-2-pro-preview':      'flux-2-pro-preview',\n  'flux-2-max':              'flux-2-max',\n  'flux-2-flex':             'flux-2-flex',\n  'flux-2-klein-9b':         'flux-2-klein-9b',\n  'flux-2-klein-9b-preview': 'flux-2-klein-9b-preview',\n  'flux-2-klein-4b':         'flux-2-klein-4b'\n};\n\nasync function pollAndDeliver(pollingUrl, sourceCost) {\n  let attempts = 0;\n  let result = null;\n  while (attempts < POLL_MAX_ATTEMPTS) {\n    const r = await bflGet(pollingUrl);\n    if (r.status === 'Ready') { result = r; break; }\n    if (r.status === 'Error' || r.status === 'Failed') {\n      throw new Error('BFL generation failed: ' + JSON.stringify(r).slice(0, 500));\n    }\n    await new Promise(res => setTimeout(res, POLL_INTERVAL_MS));\n    attempts++;\n  }\n  if (!result) {\n    return { result: 'Image still generating. Call wait_for_image AGAIN with the SAME polling_url: ' + pollingUrl };\n  }\n  const sampleUrl = result.result && result.result.sample;\n  if (!sampleUrl) {\n    throw new Error('Generation done but no sample URL in result: ' + JSON.stringify(result).slice(0, 300));\n  }\n  const dl = await helpers.httpRequest({\n    method: 'GET', url: sampleUrl, encoding: 'arraybuffer', returnFullResponse: true\n  });\n  const stored = await storeBytesInBridge(dl.body, 'flux_' + Date.now() + '.jpeg', 'image/jpeg');\n  return { result: successFileResult(stored.file_name, fmtSize(stored.size_bytes), stored.id, sourceCost) };\n}\n\nif (action === 'generate_image') {\n  const prompt = input.prompt;\n  if (!prompt) return [{ json: { error: 'Parameter \"prompt\" is required.' } }];\n\n  const model = input.model || 'flux-2-pro';\n  const endpoint = MODEL_ENDPOINTS[model];\n  if (!endpoint) {\n    return [{ json: { error: 'Unknown model: \"' + model + '\". Available: ' + Object.keys(MODEL_ENDPOINTS).join(', ') } }];\n  }\n\n  const width = parseInt(input.width) || 1024;\n  const height = parseInt(input.height) || 1024;\n  if (width < 64 || height < 64) {\n    return [{ json: { error: 'width and height must each be >= 64. Got ' + width + 'x' + height } }];\n  }\n\n  const body = { prompt, width, height };\n  if (input.seed) body.seed = parseInt(input.seed);\n\n  if (input.file_ref) {\n    try {\n      const src = await fetchFileRefAsBase64(input.file_ref);\n      body.input_image = src.base64;\n    } catch (e) {\n      return [{ json: { error: 'Failed to fetch input image from file-bridge: ' + e.message } }];\n    }\n  } else if (input.image_url) {\n    body.input_image = input.image_url;\n  }\n\n  try {\n    const init = await bflPost(BFL_BASE + '/' + endpoint, body);\n    if (!init.polling_url) {\n      return [{ json: { error: 'BFL did not return a polling_url. Raw: ' + JSON.stringify(init).slice(0, 500) } }];\n    }\n    const out = await pollAndDeliver(init.polling_url, init.cost);\n    return [{ json: out }];\n  } catch (e) {\n    return [{ json: { error: 'generate_image failed: ' + e.message } }];\n  }\n\n} else if (action === 'wait_for_image') {\n  const pollingUrl = input.polling_url;\n  if (!pollingUrl) return [{ json: { error: 'Parameter \"polling_url\" is required.' } }];\n  try {\n    const out = await pollAndDeliver(pollingUrl, null);\n    return [{ json: out }];\n  } catch (e) {\n    return [{ json: { error: 'wait_for_image failed: ' + e.message } }];\n  }\n\n} else if (action === 'get_credits') {\n  try {\n    const r = await bflGet(BFL_BASE + '/credits');\n    const c = (r && typeof r.credits === 'number') ? r.credits.toFixed(2) : JSON.stringify(r);\n    return [{ json: { result: 'BFL credit balance: ' + c + ' credits (1 credit = $0.01)' } }];\n  } catch (e) {\n    return [{ json: { error: 'get_credits failed: ' + e.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: generate_image, wait_for_image, get_credits.' } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [[{ "node": "BFL FLUX Logic", "type": "main", "index": 0 }]]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: BFL FLUX Image Generation",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "parameters": {
+          "path": "bfl-flux"
+        }
+      },
+      {
+        "id": "tool-generate-image",
+        "name": "generate_image",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [0, 300],
+        "parameters": {
+          "name": "generate_image",
+          "description": "Generate a single image with BFL FLUX 2. Covers text-to-image AND image editing: pass file_ref to edit a user-uploaded photo, OR image_url to edit a previously generated image. Returns the image inline if ready within ~25s, otherwise returns a polling_url and you must call wait_for_image to keep waiting. Parameters: prompt (required, what to generate or how to edit), model (optional: flux-2-pro [default], flux-2-max [highest quality], flux-2-flex [best typography], flux-2-klein-9b, flux-2-klein-4b [cheapest+fastest], flux-2-pro-preview, flux-2-klein-9b-preview), width/height (optional, default 1024, min 64), file_ref (optional, file-bridge id of a user-uploaded photo to edit), image_url (optional, URL of a previous BFL generation to edit/vary), seed (optional integer for reproducibility).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "generate_image",
+              "prompt": "={{ $fromAI('prompt', 'Detailed description of the image to generate, or for editing: what to change about the input image', 'string') }}",
+              "model": "={{ $fromAI('model', 'FLUX 2 model id: flux-2-pro (default), flux-2-max, flux-2-flex, flux-2-klein-9b, flux-2-klein-4b, flux-2-pro-preview, flux-2-klein-9b-preview', 'string') }}",
+              "width": "={{ $fromAI('width', 'Image width in pixels (min 64, default 1024)', 'string') }}",
+              "height": "={{ $fromAI('height', 'Image height in pixels (min 64, default 1024)', 'string') }}",
+              "file_ref": "={{ $fromAI('file_ref', 'Optional: file-bridge id of a user-uploaded image to edit (usually present when the user just sent a photo)', 'string') }}",
+              "image_url": "={{ $fromAI('image_url', 'Optional: URL of a previous BFL-generated image to edit or vary', 'string') }}",
+              "seed": "={{ $fromAI('seed', 'Optional integer seed for reproducibility', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "prompt", "displayName": "prompt", "type": "string", "description": "Image description / edit instructions", "required": true },
+              { "id": "model", "displayName": "model", "type": "string", "description": "FLUX 2 model id", "required": false },
+              { "id": "width", "displayName": "width", "type": "string", "description": "Width in pixels", "required": false },
+              { "id": "height", "displayName": "height", "type": "string", "description": "Height in pixels", "required": false },
+              { "id": "file_ref", "displayName": "file_ref", "type": "string", "description": "Source image file-bridge id", "required": false },
+              { "id": "image_url", "displayName": "image_url", "type": "string", "description": "Source image URL", "required": false },
+              { "id": "seed", "displayName": "seed", "type": "string", "description": "Seed for reproducibility", "required": false }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-wait-for-image",
+        "name": "wait_for_image",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [300, 300],
+        "parameters": {
+          "name": "wait_for_image",
+          "description": "Wait up to ~25 seconds for a BFL FLUX generation that did not finish in the initial generate_image call. Returns the finished image when ready, or a 'still generating, call again' message if not yet ready. Keep calling with the same polling_url until you get the file. Most generations finish on the first attempt; FLUX 2 Max may need 1-2 wait_for_image calls. Parameters: polling_url (required, the URL returned by generate_image when status was pending).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "wait_for_image",
+              "polling_url": "={{ $fromAI('polling_url', 'The BFL polling URL returned by a previous generate_image call', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true },
+              { "id": "polling_url", "displayName": "polling_url", "type": "string", "description": "BFL polling URL", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-credits",
+        "name": "get_credits",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [600, 300],
+        "parameters": {
+          "name": "get_credits",
+          "description": "Return the remaining BFL credit balance for the configured API key. 1 credit = $0.01 USD. Typical costs: klein-4b ~1.4 credits/image, pro ~6-8 credits/image, max ~12-15 credits/image. Takes no parameters.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_credits"
+            },
+            "matchingColumns": [],
+            "schema": [
+              { "id": "action", "displayName": "action", "type": "string", "description": "Action type", "required": true }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "generate_image": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "wait_for_image": { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] },
+      "get_credits":    { "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]] }
+    }
+  }
+}
