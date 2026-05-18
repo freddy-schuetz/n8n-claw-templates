@@ -77,7 +77,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [BFL FLUX Image Generation](https://bfl.ai/) | Generate and edit photorealistic images with Black Forest Labs FLUX 2 models (Pro, Max, Klein 4B/9B, Flex). One tool covers text-to-image AND editing — pass file_ref of a user-uploaded photo or image_url of a prior generation | BFL API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | |
+| [BFL FLUX Image Generation](https://bfl.ai/) | Generate and edit photorealistic images with Black Forest Labs FLUX 2 models (Pro, Max, Klein 4B/9B, Flex). One tool covers text-to-image AND editing — pass file_ref of a user-uploaded photo or image_url of a prior generation | BFL API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Google Media Generation](https://aistudio.google.com/) | Generate and edit images with Nano Banana Pro (Gemini 3 Pro Image), generate videos from text with Veo 3.1, and animate user-supplied images into videos (image-to-video) | Google Gemini API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Unsplash](https://unsplash.com/) | Search 3M+ free high-quality photos by keyword, get random or specific photos with required photographer attribution | Unsplash Access Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
