@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (72)
+## Available Skills (73)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -22,7 +22,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Maps](#maps) | 2 | OpenStreetMap / Overpass POI search, OpenRouteService routing |
-| [Marketing](#marketing) | 5 | DataForSEO, Google Ads, HubSpot CRM, Salesforce CRM, Zoho CRM |
+| [Marketing](#marketing) | 6 | DataForSEO, Google Ads, HubSpot CRM, Meta Ads, Salesforce CRM, Zoho CRM |
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
@@ -151,6 +151,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [DataForSEO](https://dataforseo.com/) | Comprehensive SEO data (18 tools): Google SERPs (live regular/advanced), keyword research (search volume, ideas, difficulty, overview), competitor analysis, backlinks (requires sub), on-page audits, Lighthouse, domain tech stack, Google My Business. Cost shown per call | DataForSEO Login (Email), API Password | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Google Ads](https://ads.google.com/) | Query campaigns, ad groups, and performance data via GAQL (Beta) | Google OAuth2, Developer Token, Customer ID | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
+| [Meta Ads](https://pipeboard.co/) | Manage Facebook and Instagram Ads via Pipeboard's hosted MCP server (93 tools): ad accounts, campaigns, ad sets, ads, creatives, audiences, product catalogs, lead-gen forms, pixels, Instagram/Facebook organic content, performance insights. create/update/delete tools act on live accounts and spend real budget | Pipeboard API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Salesforce CRM](https://www.salesforce.com/) | Full CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks (CRUD + search) plus SOQL query, SOSL search, describe-object. REST v60.0 via Client Credentials Flow | Instance URL, Consumer Key, Consumer Secret | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Zoho CRM](https://www.zoho.com/crm/) | Full CRM (37 tools): Leads incl. convert_lead, Contacts, Accounts, Deals, Tasks (full CRUD), Cases plus Notes CRUD, Users listing, COQL query, describe_module. Dynamic field discovery returns ALL fields incl. custom per Zoho org. Self-Client OAuth (refresh token). Regional endpoints (.com/.eu/.in/.com.au/.jp/.com.cn) | Region, Client ID, Client Secret, Refresh Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 

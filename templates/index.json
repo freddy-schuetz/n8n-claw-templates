@@ -1040,6 +1040,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "meta-ads",
+      "name": "Meta Ads",
+      "type": "bridge",
+      "category": "marketing",
+      "description": "Manage Facebook and Instagram Ads (Meta Ads) via Pipeboard's hosted MCP server (93 tools): ad accounts, campaigns, ad sets, ads, creatives, audiences, product catalogs, lead-gen forms, Instagram/Facebook organic content and performance insights.",
+      "credentials_required": [
+        {
+          "key": "auth_token",
+          "label": "Pipeboard API Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
