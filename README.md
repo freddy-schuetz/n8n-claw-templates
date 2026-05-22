@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (73)
+## Available Skills (74)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -22,7 +22,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [Knowledge](#knowledge) | 5 | DeepWiki, food facts, Open Library, OpenWebUI RAG, Wikipedia |
 | [Language](#language) | 2 | Translation, dictionary |
 | [Maps](#maps) | 2 | OpenStreetMap / Overpass POI search, OpenRouteService routing |
-| [Marketing](#marketing) | 6 | DataForSEO, Google Ads, HubSpot CRM, Meta Ads, Salesforce CRM, Zoho CRM |
+| [Marketing](#marketing) | 7 | DataForSEO, Google Ads, HubSpot CRM, Meta Ads, Salesforce CRM, TikTok Ads, Zoho CRM |
 | [Meetings](#meetings) | 1 | Vexa (Google Meet, Teams, Zoom) |
 | [Network](#network) | 2 | IP geolocation, website checks |
 | [News](#news) | 2 | Hacker News, NewsAPI |
@@ -153,6 +153,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [HubSpot CRM](https://www.hubspot.com/) | Full CRM (28 tools): contacts, companies, deals, tickets (CRUD), engagements (notes, tasks), associations (v4), pipelines, owners. Private App token auth | HubSpot Private App Access Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Meta Ads](https://pipeboard.co/) | Manage Facebook and Instagram Ads via Pipeboard's hosted MCP server (93 tools): ad accounts, campaigns, ad sets, ads, creatives, audiences, product catalogs, lead-gen forms, pixels, Instagram/Facebook organic content, performance insights. create/update/delete tools act on live accounts and spend real budget | Pipeboard API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Salesforce CRM](https://www.salesforce.com/) | Full CRM (35 tools): Contacts, Accounts, Leads, Opportunities, Cases, Tasks (CRUD + search) plus SOQL query, SOSL search, describe-object. REST v60.0 via Client Credentials Flow | Instance URL, Consumer Key, Consumer Secret | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [TikTok Ads](https://pipeboard.co/) | Manage TikTok Ads via Pipeboard's hosted MCP server (60 tools): advertiser accounts, campaigns, ad groups, ads, Smart+ AI campaigns, TikTok Shop GMV Max, creatives, pixels, product catalogs, custom audiences, targeting, performance reporting. create/update/delete tools act on live accounts and spend real budget | Pipeboard API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 | [Zoho CRM](https://www.zoho.com/crm/) | Full CRM (37 tools): Leads incl. convert_lead, Contacts, Accounts, Deals, Tasks (full CRUD), Cases plus Notes CRUD, Users listing, COQL query, describe_module. Dynamic field discovery returns ALL fields incl. custom per Zoho org. Self-Client OAuth (refresh token). Regional endpoints (.com/.eu/.in/.com.au/.jp/.com.cn) | Region, Client ID, Client Secret, Refresh Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Meetings

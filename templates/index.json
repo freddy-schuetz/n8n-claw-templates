@@ -1054,6 +1054,20 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "tiktok-ads",
+      "name": "TikTok Ads",
+      "type": "bridge",
+      "category": "marketing",
+      "description": "Manage TikTok Ads via Pipeboard's hosted MCP server (60 tools): advertiser accounts, campaigns, ad groups, ads, Smart+ AI campaigns, TikTok Shop GMV Max, creatives, pixels, product catalogs, custom audiences, targeting and performance reporting.",
+      "credentials_required": [
+        {
+          "key": "auth_token",
+          "label": "Pipeboard API Token"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }
