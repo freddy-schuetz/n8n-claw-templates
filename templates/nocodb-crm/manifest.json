@@ -1,11 +1,11 @@
 {
   "id": "nocodb-crm",
-  "name": "NocoDB CRM",
-  "version": "1.0.0",
-  "updated": "2026-03-23",
+  "name": "NocoDB",
+  "version": "1.1.0",
+  "updated": "2026-06-07",
   "type": "native",
   "category": "productivity",
-  "description": "Manage NocoDB tables and records: list bases, tables, and CRUD operations on records with filtering and sorting",
+  "description": "Full NocoDB management: bases, tables, schema/fields, and records. Create/rename/delete bases and tables, read and edit table schema (add/change/remove columns), and CRUD records with filtering and sorting",
   "credentials_required": [
     {
       "key": "nocodb_url",
@@ -26,7 +26,17 @@
     { "name": "nocodb_get_record", "description": "Get a single record by ID from a NocoDB table" },
     { "name": "nocodb_create_record", "description": "Create a new record in a NocoDB table" },
     { "name": "nocodb_update_record", "description": "Update an existing record in a NocoDB table" },
-    { "name": "nocodb_delete_record", "description": "Delete a record from a NocoDB table" }
+    { "name": "nocodb_delete_record", "description": "Delete a record from a NocoDB table" },
+    { "name": "nocodb_get_table_schema", "description": "Read a table's full schema: field names, types, primary key, and select options" },
+    { "name": "nocodb_create_table", "description": "Create a new table (with optional columns) in a base" },
+    { "name": "nocodb_update_table", "description": "Rename a table" },
+    { "name": "nocodb_delete_table", "description": "Delete a table and all its records (irreversible)" },
+    { "name": "nocodb_create_column", "description": "Add a new field/column to a table (any NocoDB field type)" },
+    { "name": "nocodb_update_column", "description": "Update a field/column (rename or change type)" },
+    { "name": "nocodb_delete_column", "description": "Delete a field/column and its data (irreversible)" },
+    { "name": "nocodb_create_base", "description": "Create a new base (database)" },
+    { "name": "nocodb_update_base", "description": "Rename a base" },
+    { "name": "nocodb_delete_base", "description": "Delete a base and all its tables and records (irreversible)" }
   ],
   "author": "freddy-schuetz",
   "license": "MIT",

@@ -182,7 +182,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 |-------|-------------|-------------|--------|:------:|
 | [Airtable](https://airtable.com/) | Work with Airtable bases and records: list bases/tables, search with formulas, CRUD rows. Free plan has 1,000 API calls/month — Team plan recommended for active use | Airtable PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Confluence Cloud](https://www.atlassian.com/software/confluence) | Confluence wiki (14 tools): CQL search, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira | Atlassian Email, API Token, Site URL | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [NocoDB CRM](https://nocodb.com/) | Manage NocoDB tables and records: list bases, tables, CRUD with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [NocoDB](https://nocodb.com/) | Full NocoDB management (17 tools): create/rename/delete bases & tables, read & edit table schema (add/change/remove fields), CRUD records with filtering and sorting | NocoDB URL, API Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 | [Notion](https://www.notion.so/) | Search, read, and create Notion pages with markdown content support | Notion Integration Token | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Reference

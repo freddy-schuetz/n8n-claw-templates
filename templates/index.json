@@ -215,10 +215,10 @@
     },
     {
       "id": "nocodb-crm",
-      "name": "NocoDB CRM",
+      "name": "NocoDB",
       "type": "native",
       "category": "productivity",
-      "description": "Manage NocoDB tables and records: list bases, tables, and CRUD operations on records with filtering and sorting",
+      "description": "Full NocoDB management: create/rename/delete bases and tables, read and edit table schema (add/change/remove fields), and CRUD records with filtering and sorting",
       "credentials_required": [
         {
           "key": "nocodb_url",
@@ -229,7 +229,7 @@
           "label": "NocoDB API Token"
         }
       ],
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     {
       "id": "todoist",
