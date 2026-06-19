@@ -1,0 +1,33 @@
+{
+  "id": "open-terminal",
+  "name": "Open Terminal",
+  "version": "1.0.0",
+  "updated": "2026-06-19",
+  "type": "native",
+  "category": "utilities",
+  "description": "Run shell commands, manage files and drive interactive processes on a remote machine via a self-hosted Open Terminal (open-webui/open-terminal) REST API. Works against a local box (via tunnel) or a VPS/Docker sandbox — same skill, only the URL differs.",
+  "credentials_required": [
+    {
+      "key": "terminal_url",
+      "label": "Open Terminal Base URL",
+      "hint": "Base URL of your Open Terminal instance, e.g. http://172.17.0.1:8000 (VPS Docker) or your public tunnel URL (local machine). No trailing slash needed."
+    },
+    {
+      "key": "terminal_api_key",
+      "label": "Open Terminal API Key",
+      "hint": "The OPEN_TERMINAL_API_KEY you set when starting Open Terminal (sent as Bearer token)."
+    }
+  ],
+  "credentials_optional": [],
+  "tools": [
+    { "name": "run_command", "description": "Execute a shell command and return stdout/stderr + exit code. Polls until the command finishes. Soft-warns on destructive commands (confirm=true to override)." },
+    { "name": "send_input", "description": "Send text to the stdin of a still-running process (interactive prompts, sudo password, 2FA codes). Use the process_id from a previous run_command." },
+    { "name": "read_file", "description": "Read a text file's contents, optionally a line range." },
+    { "name": "write_file", "description": "Write text content to a file (creates parent dirs, overwrites if it exists)." },
+    { "name": "list_files", "description": "List files and directories at a given path." },
+    { "name": "check_terminal", "description": "Check that the Open Terminal instance is reachable and report enabled features." }
+  ],
+  "author": "freddy-schuetz",
+  "license": "MIT",
+  "tested_n8n_version": "2.21.4"
+}

@@ -1068,6 +1068,24 @@
         }
       ],
       "version": "1.0.0"
+    },
+    {
+      "id": "open-terminal",
+      "name": "Open Terminal",
+      "type": "native",
+      "category": "utilities",
+      "description": "Run shell commands, manage files and drive interactive processes on a remote machine (local or VPS) via a self-hosted Open Terminal (open-webui/open-terminal) REST API",
+      "credentials_required": [
+        {
+          "key": "terminal_url",
+          "label": "Open Terminal Base URL"
+        },
+        {
+          "key": "terminal_api_key",
+          "label": "Open Terminal API Key"
+        }
+      ],
+      "version": "1.0.0"
     }
   ]
 }

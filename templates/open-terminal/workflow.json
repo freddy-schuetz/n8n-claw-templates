@@ -1,0 +1,459 @@
+{
+  "format": "n8n-claw-template",
+  "format_version": 1,
+  "sub": {
+    "name": "MCP Sub: Open Terminal",
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner"
+    },
+    "nodes": [
+      {
+        "id": "sub-trigger",
+        "name": "Execute Workflow Trigger",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "inputSource": "passthrough"
+        }
+      },
+      {
+        "id": "sub-code",
+        "name": "Open Terminal Logic",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          256,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'run_command';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = {\n  'apikey': SUPABASE_KEY,\n  'Authorization': 'Bearer ' + SUPABASE_KEY\n};\n\n// --- Load Open Terminal credentials (url + api key) ---\nlet creds = {};\ntry {\n  const rows = await helpers.httpRequest({\n    method: 'GET',\n    url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.open-terminal&select=cred_key,cred_value',\n    headers: pgHeaders\n  });\n  for (const c of (rows || [])) creds[c.cred_key] = c.cred_value;\n} catch (e) {\n  return [{ json: { error: 'Could not load credentials: ' + e.message } }];\n}\n\nlet baseUrl = creds.terminal_url;\nconst apiKey = creds.terminal_api_key;\nif (!baseUrl) {\n  return [{ json: { error: 'Open Terminal URL not configured. Set terminal_url (e.g. http://172.17.0.1:8000) via the credential form.' } }];\n}\nbaseUrl = String(baseUrl).replace(/\\/+$/, '');\n\nconst otHeaders = { 'Content-Type': 'application/json' };\nif (apiKey) otHeaders['Authorization'] = 'Bearer ' + apiKey;\n\nconst TRUNC = 6000;\nfunction clip(s) {\n  s = String(s == null ? '' : s);\n  if (s.length > TRUNC) return s.substring(0, TRUNC) + '\\n\\n... (truncated, ' + s.length + ' chars total)';\n  return s;\n}\n// Open Terminal returns output as [{type:'stdout'|'stderr'|'output', data:'...'}]\nfunction fmtOutput(o) {\n  if (o == null) return '';\n  if (typeof o === 'string') return o;\n  if (Array.isArray(o)) return o.map(e => (e == null) ? '' : (typeof e === 'string' ? e : (e.data != null ? e.data : ''))).join('');\n  return '';\n}\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\ntry {\n  if (action === 'run_command') {\n    const command = String(input.command || '').trim();\n    if (!command) {\n      return [{ json: { error: 'Parameter \"command\" is required (e.g. \"ls -la\", \"echo hello\").' } }];\n    }\n\n    // --- Soft guardrail: warn on known-destructive patterns unless confirmed ---\n    const confirm = input.confirm === true || input.confirm === 'true' || input.confirm === 'yes' || input.confirm === '1';\n    const DANGER = [\n      /\\brm\\s+(-\\S+\\s+)*-\\S*[rf]\\S*\\s+(\\/|~|\\$HOME|\\*)(\\s|$|\\/)/i,\n      /\\brm\\s+-\\S*r\\S*f|\\brm\\s+-\\S*f\\S*r/i,\n      /\\bmkfs\\b/i,\n      /\\bdd\\b[^\\n]*\\bof=\\/dev\\//i,\n      />\\s*\\/dev\\/(sd|nvme|hd|mmcblk|vd)/i,\n      /\\b(shutdown|reboot|halt|poweroff)\\b/i,\n      /\\binit\\s+0\\b/i,\n      /:\\(\\)\\s*\\{\\s*:\\s*\\|\\s*:\\s*&\\s*\\}\\s*;\\s*:/,\n      /\\bchmod\\s+-R\\s+0{3}\\s+\\//i,\n      /\\bchown\\s+-R\\b[^\\n]*\\s+\\/\\s*$/i,\n      /\\bgit\\s+(reset\\s+--hard|clean\\s+-\\S*f)/i,\n      /\\b(truncate|shred)\\b[^\\n]*\\/dev\\//i\n    ];\n    if (DANGER.some(re => re.test(command)) && !confirm) {\n      return [{ json: { result: '⚠️ This command looks potentially destructive and was NOT executed:\\n  ' + command + '\\n\\nIf you are sure, call run_command again with confirm=true.' } }];\n    }\n\n    let totalSec = parseInt(input.timeout, 10);\n    if (!totalSec || totalSec < 1) totalSec = 60;\n    if (totalSec > 180) totalSec = 180;\n    const firstWait = Math.min(totalSec, 30);\n\n    const body = { command };\n    if (input.cwd) body.cwd = String(input.cwd);\n\n    let start;\n    try {\n      start = await helpers.httpRequest({\n        method: 'POST',\n        url: baseUrl + '/execute?wait=' + firstWait,\n        headers: otHeaders,\n        body: JSON.stringify(body)\n      });\n    } catch (e) {\n      return [{ json: { error: 'Could not reach Open Terminal at ' + baseUrl + ': ' + e.message } }];\n    }\n\n    const procId = start.id;\n    const outParts = [fmtOutput(start.output)];\n    let off = start.next_offset || 0;\n    let status = start.status;\n    let exitCode = start.exit_code;\n\n    const deadline = Date.now() + totalSec * 1000;\n    while (status === 'running' && Date.now() < deadline) {\n      await sleep(1200);\n      let st;\n      try {\n        st = await helpers.httpRequest({\n          method: 'GET',\n          url: baseUrl + '/execute/' + encodeURIComponent(procId) + '/status?wait=10&offset=' + off,\n          headers: otHeaders\n        });\n      } catch (e) { break; }\n      const part = fmtOutput(st.output);\n      if (part) outParts.push(part);\n      off = (st.next_offset != null) ? st.next_offset : off;\n      status = st.status;\n      exitCode = st.exit_code;\n    }\n\n    const outText = clip(outParts.join('').trim());\n    if (status === 'running') {\n      return [{ json: { result: 'Command still running after ' + totalSec + 's (process_id: ' + procId + ').\\n\\nOutput so far:\\n' + (outText || '(none yet)') + '\\n\\nIt keeps running on the server. Use send_input with process_id=\"' + procId + '\" to interact, or run it again with a higher timeout.' } }];\n    }\n    return [{ json: { result: 'Exit code: ' + (exitCode == null ? 'unknown' : exitCode) + ' (process_id: ' + procId + ')\\n\\nOutput:\\n' + (outText || '(no output)') } }];\n\n  } else if (action === 'send_input') {\n    const procId = String(input.process_id || '').trim();\n    if (!procId) return [{ json: { error: 'Parameter \"process_id\" is required (from a run_command that is still running).' } }];\n    if (input.text == null || input.text === '') return [{ json: { error: 'Parameter \"text\" is required (text for stdin; use \\\\n for Enter, \\\\x03 for Ctrl-C).' } }];\n    try {\n      await helpers.httpRequest({\n        method: 'POST',\n        url: baseUrl + '/execute/' + encodeURIComponent(procId) + '/input',\n        headers: otHeaders,\n        body: JSON.stringify({ input: String(input.text) })\n      });\n    } catch (e) {\n      return [{ json: { error: 'send_input failed (the process may have already exited): ' + e.message } }];\n    }\n    await sleep(1500);\n    let outText = '', status = 'running', exitCode = null;\n    try {\n      const st = await helpers.httpRequest({\n        method: 'GET',\n        url: baseUrl + '/execute/' + encodeURIComponent(procId) + '/status?wait=5&offset=0',\n        headers: otHeaders\n      });\n      outText = clip(fmtOutput(st.output).trim());\n      status = st.status;\n      exitCode = st.exit_code;\n    } catch (e) { /* ignore */ }\n    return [{ json: { result: 'Input sent to ' + procId + '. Status: ' + status + (exitCode != null ? ' (exit ' + exitCode + ')' : '') + '\\n\\nOutput:\\n' + (outText || '(no new output)') } }];\n\n  } else if (action === 'read_file') {\n    const path = String(input.path || '').trim();\n    if (!path) return [{ json: { error: 'Parameter \"path\" is required.' } }];\n    let q = '/files/read?path=' + encodeURIComponent(path);\n    if (input.start_line) q += '&start_line=' + encodeURIComponent(input.start_line);\n    if (input.end_line) q += '&end_line=' + encodeURIComponent(input.end_line);\n    let resp;\n    try {\n      resp = await helpers.httpRequest({ method: 'GET', url: baseUrl + q, headers: otHeaders });\n    } catch (e) {\n      return [{ json: { error: 'read_file failed: ' + e.message + ' (binary files cannot be read as text).' } }];\n    }\n    if (resp && typeof resp === 'object' && resp.content != null) {\n      return [{ json: { result: 'File: ' + (resp.path || path) + (resp.total_lines != null ? ' (' + resp.total_lines + ' lines)' : '') + '\\n\\n' + clip(resp.content) } }];\n    }\n    return [{ json: { result: 'Read ' + path + ' but it returned non-text content (likely binary).' } }];\n\n  } else if (action === 'write_file') {\n    const path = String(input.path || '').trim();\n    if (!path) return [{ json: { error: 'Parameter \"path\" is required.' } }];\n    if (input.content == null) return [{ json: { error: 'Parameter \"content\" is required (text to write).' } }];\n    let resp;\n    try {\n      resp = await helpers.httpRequest({\n        method: 'POST',\n        url: baseUrl + '/files/write',\n        headers: otHeaders,\n        body: JSON.stringify({ path: path, content: String(input.content) })\n      });\n    } catch (e) {\n      return [{ json: { error: 'write_file failed: ' + e.message } }];\n    }\n    return [{ json: { result: 'Wrote ' + (resp && resp.size != null ? resp.size + ' bytes to ' : '') + ((resp && resp.path) || path) } }];\n\n  } else if (action === 'list_files') {\n    const dir = String(input.directory || '.').trim() || '.';\n    let resp;\n    try {\n      resp = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/files/list?directory=' + encodeURIComponent(dir), headers: otHeaders });\n    } catch (e) {\n      return [{ json: { error: 'list_files failed: ' + e.message } }];\n    }\n    const entries = (resp && resp.entries) || [];\n    const lines = entries.map(e => {\n      if (typeof e === 'string') return e;\n      const name = e.name || e.path || JSON.stringify(e);\n      const type = e.type || (e.is_dir ? 'directory' : 'file');\n      const size = (e.size != null) ? ' (' + e.size + ' B)' : '';\n      return ((type === 'directory' || type === 'dir') ? '[d] ' : '[f] ') + name + size;\n    });\n    return [{ json: { result: 'Directory: ' + ((resp && resp.dir) || dir) + '\\n' + clip(lines.join('\\n') || '(empty)') } }];\n\n  } else if (action === 'check_terminal') {\n    let health;\n    try {\n      health = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/health', headers: otHeaders });\n    } catch (e) {\n      return [{ json: { error: 'Open Terminal not reachable at ' + baseUrl + ': ' + e.message } }];\n    }\n    let config = null;\n    try {\n      config = await helpers.httpRequest({ method: 'GET', url: baseUrl + '/api/config', headers: otHeaders });\n    } catch (e) { /* config is optional */ }\n    return [{ json: { result: 'Open Terminal at ' + baseUrl + ' is reachable. Health: ' + JSON.stringify(health) + (config ? '\\nFeatures: ' + JSON.stringify(config.features || config) : '') } }];\n\n  } else {\n    return [{ json: { error: 'Unknown action: \"' + action + '\". Available: run_command, send_input, read_file, write_file, list_files, check_terminal.' } }];\n  }\n} catch (e) {\n  return [{ json: { error: 'open-terminal error: ' + (e.message || String(e)) } }];\n}\n"
+        }
+      }
+    ],
+    "connections": {
+      "Execute Workflow Trigger": {
+        "main": [
+          [
+            {
+              "node": "Open Terminal Logic",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  },
+  "server": {
+    "name": "MCP: Open Terminal",
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "nodes": [
+      {
+        "id": "mcp-trigger",
+        "name": "MCP Server Trigger",
+        "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "open-terminal"
+        }
+      },
+      {
+        "id": "tool-run-command",
+        "name": "run_command",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          200
+        ],
+        "parameters": {
+          "name": "run_command",
+          "description": "Execute a shell command on the Open Terminal host and return stdout/stderr and the exit code. Polls until the command finishes (up to ~timeout seconds). Parameters: command (required, e.g. 'ls -la' or 'cd /tmp && ./build.sh'), cwd (optional working directory), timeout (optional max seconds to wait, default 60, max 180), confirm (set 'true' to run a command that was flagged as potentially destructive).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "run_command",
+              "command": "={{ $fromAI('command', 'The shell command to execute, e.g. ls -la', 'string') }}",
+              "cwd": "={{ $fromAI('cwd', 'Working directory, or empty string for the default', 'string') }}",
+              "timeout": "={{ $fromAI('timeout', 'Max seconds to wait for completion (default 60), or empty string', 'string') }}",
+              "confirm": "={{ $fromAI('confirm', 'Set to true only to confirm a previously flagged destructive command, otherwise empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "command",
+                "displayName": "command",
+                "type": "string",
+                "description": "Shell command to execute",
+                "required": true
+              },
+              {
+                "id": "cwd",
+                "displayName": "cwd",
+                "type": "string",
+                "description": "Working directory or empty string",
+                "required": false
+              },
+              {
+                "id": "timeout",
+                "displayName": "timeout",
+                "type": "string",
+                "description": "Max seconds or empty string",
+                "required": false
+              },
+              {
+                "id": "confirm",
+                "displayName": "confirm",
+                "type": "string",
+                "description": "true to confirm destructive command, else empty",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-send-input",
+        "name": "send_input",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          360
+        ],
+        "parameters": {
+          "name": "send_input",
+          "description": "Send text to the stdin of a still-running process (started by run_command). Use for interactive prompts, sudo passwords, or 2FA / confirmation codes. Parameters: process_id (required, from a run_command that is still running), text (required, the text to send; use \\n for Enter, \\x03 for Ctrl-C).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "send_input",
+              "process_id": "={{ $fromAI('process_id', 'The process_id returned by a still-running run_command', 'string') }}",
+              "text": "={{ $fromAI('text', 'Text to send to stdin, include \\n for Enter', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "process_id",
+                "displayName": "process_id",
+                "type": "string",
+                "description": "Process id of the running command",
+                "required": true
+              },
+              {
+                "id": "text",
+                "displayName": "text",
+                "type": "string",
+                "description": "Text to send to stdin",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-read-file",
+        "name": "read_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          520
+        ],
+        "parameters": {
+          "name": "read_file",
+          "description": "Read a text file from the Open Terminal host. Parameters: path (required, absolute or relative), start_line (optional, 1-indexed), end_line (optional, 1-indexed).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "read_file",
+              "path": "={{ $fromAI('path', 'Path to the file to read', 'string') }}",
+              "start_line": "={{ $fromAI('start_line', 'First line (1-indexed) or empty string', 'string') }}",
+              "end_line": "={{ $fromAI('end_line', 'Last line (1-indexed) or empty string', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "path",
+                "displayName": "path",
+                "type": "string",
+                "description": "Path to read",
+                "required": true
+              },
+              {
+                "id": "start_line",
+                "displayName": "start_line",
+                "type": "string",
+                "description": "Start line or empty string",
+                "required": false
+              },
+              {
+                "id": "end_line",
+                "displayName": "end_line",
+                "type": "string",
+                "description": "End line or empty string",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-write-file",
+        "name": "write_file",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          680
+        ],
+        "parameters": {
+          "name": "write_file",
+          "description": "Write text content to a file on the Open Terminal host (creates parent directories, overwrites if it exists). Parameters: path (required), content (required, the full text to write).",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "write_file",
+              "path": "={{ $fromAI('path', 'Path to write to', 'string') }}",
+              "content": "={{ $fromAI('content', 'Full text content to write to the file', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "path",
+                "displayName": "path",
+                "type": "string",
+                "description": "Path to write",
+                "required": true
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Content to write",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-list-files",
+        "name": "list_files",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          840
+        ],
+        "parameters": {
+          "name": "list_files",
+          "description": "List files and directories at a path on the Open Terminal host. Parameter: directory (optional, defaults to current directory '.').",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "list_files",
+              "directory": "={{ $fromAI('directory', 'Directory to list, or empty string for current directory', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "directory",
+                "displayName": "directory",
+                "type": "string",
+                "description": "Directory or empty string",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-check-terminal",
+        "name": "check_terminal",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          500,
+          1000
+        ],
+        "parameters": {
+          "name": "check_terminal",
+          "description": "Check that the Open Terminal instance is reachable and report which features (terminal, notebooks, system prompt) are enabled. No parameters.",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "check_terminal"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      }
+    ],
+    "connections": {
+      "run_command": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "send_input": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "read_file": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "write_file": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "list_files": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "check_terminal": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

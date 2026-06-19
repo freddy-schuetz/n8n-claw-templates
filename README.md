@@ -4,7 +4,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 ---
 
-## Available Skills (74)
+## Available Skills (75)
 
 | Category | Skills | Focus |
 |----------|:------:|-------|
@@ -14,7 +14,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | [CMS](#cms) | 1 | WordPress |
 | [Communication](#communication) | 4 | Email, Gmail, ntfy, OpenClaw |
 | [Creativity](#creativity) | 3 | BFL FLUX, Google Nano Banana / Veo, Unsplash photos |
-| [Developer Tools](#developer-tools) | 1 | GitHub |
+| [Developer Tools](#developer-tools) | 2 | GitHub, Open Terminal (shell access) |
 | [E-commerce](#e-commerce) | 1 | Shopify |
 | [Entertainment](#entertainment) | 4 | Recipes, movies, trivia, YouTube |
 | [Finance](#finance) | 6 | Crypto, currencies, banking, Finnhub stocks, Lexware, Stripe |
@@ -86,6 +86,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [GitHub](https://github.com/) | Full GitHub integration: repos, issues, PRs, code search, file content, releases, notifications | GitHub PAT | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Open Terminal](https://github.com/open-webui/open-terminal) | Run shell commands, manage files and drive interactive processes (stdin/2FA) on a remote machine — local box (via tunnel) or VPS/Docker sandbox. Self-hosted Open Terminal REST API | Base URL, API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) |  |
 
 ### E-commerce
 
