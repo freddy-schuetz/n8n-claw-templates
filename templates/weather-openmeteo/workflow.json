@@ -13,25 +13,39 @@
         "name": "Execute Workflow Trigger",
         "type": "n8n-nodes-base.executeWorkflowTrigger",
         "typeVersion": 1.1,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "inputSource": "passthrough"
         }
       },
       {
         "id": "sub-code",
-        "name": "Get Weather",
+        "name": "Weather Tools",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
-        "position": [256, 0],
+        "position": [
+          256,
+          0
+        ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nconst city = input.city || 'Berlin';\n\nconst geo = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=1&language=en'\n});\n\nif (!geo.results || geo.results.length === 0) {\n  return [{ json: { error: 'City not found: ' + city } }];\n}\n\nconst lat = geo.results[0].latitude;\nconst lon = geo.results[0].longitude;\nconst name = geo.results[0].name;\n\nconst w = await helpers.httpRequest({\n  method: 'GET',\n  url: 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current_weather=true&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max&timezone=auto&forecast_days=3'\n});\n\nconst cw = w.current_weather;\nconst d = w.daily;\nlet r = name + ': ' + cw.temperature + 'C, Wind ' + cw.windspeed + ' km/h\\n';\nconst labels = ['today', 'tomorrow', 'day after tomorrow'];\nfor (let i = 0; i < 3; i++) {\n  r += labels[i] + ': ' + d.temperature_2m_min[i] + '-' + d.temperature_2m_max[i] + 'C, ' + d.precipitation_probability_max[i] + '% rain, Wind ' + d.windspeed_10m_max[i] + ' km/h\\n';\n}\n\nreturn [{ json: { result: r } }];"
+          "jsCode": "const input = $input.first().json;\nconst action = input.action || 'get_weather';\n\nconst WMO = { 0: 'clear sky', 1: 'mainly clear', 2: 'partly cloudy', 3: 'overcast', 45: 'fog', 48: 'depositing rime fog', 51: 'light drizzle', 53: 'moderate drizzle', 55: 'dense drizzle', 56: 'light freezing drizzle', 57: 'dense freezing drizzle', 61: 'slight rain', 63: 'moderate rain', 65: 'heavy rain', 66: 'light freezing rain', 67: 'heavy freezing rain', 71: 'slight snowfall', 73: 'moderate snowfall', 75: 'heavy snowfall', 77: 'snow grains', 80: 'slight rain showers', 81: 'moderate rain showers', 82: 'violent rain showers', 85: 'slight snow showers', 86: 'heavy snow showers', 95: 'thunderstorm', 96: 'thunderstorm with slight hail', 99: 'thunderstorm with heavy hail' };\n\nconst MA_FEEDS = { AT: 'austria', BE: 'belgium', BA: 'bosnia-herzegovina', BG: 'bulgaria', HR: 'croatia', CY: 'cyprus', CZ: 'czechia', DK: 'denmark', EE: 'estonia', FI: 'finland', FR: 'france', GR: 'greece', HU: 'hungary', IS: 'iceland', IE: 'ireland', IL: 'israel', IT: 'italy', LV: 'latvia', LT: 'lithuania', LU: 'luxembourg', MT: 'malta', MD: 'moldova', ME: 'montenegro', NL: 'netherlands', MK: 'republic-of-north-macedonia', NO: 'norway', PL: 'poland', PT: 'portugal', RO: 'romania', RS: 'serbia', SK: 'slovakia', SI: 'slovenia', ES: 'spain', SE: 'sweden', UA: 'ukraine', GB: 'united-kingdom' };\n\nconst SEV_ORDER = { extreme: 0, severe: 1, moderate: 2, minor: 3 };\n\nfunction wmoText(code) {\n  if (code === null || code === undefined) return 'n/a';\n  return WMO[code] || ('weather code ' + code);\n}\n\nfunction num(v, unit) {\n  return (v === null || v === undefined) ? 'n/a' : (v + (unit || ''));\n}\n\nfunction tfmt(s) {\n  return String(s || '').replace('T', ' ').substring(0, 16);\n}\n\nfunction norm(s) {\n  return String(s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n}\n\nfunction notExpired(expires) {\n  if (!expires) return true;\n  const t = Date.parse(expires);\n  return isNaN(t) ? true : t > Date.now();\n}\n\nfunction areaCandidates(rawCity, g) {\n  const cands = [];\n  for (const s of [rawCity, g.name]) { const n = norm(s); if (n.length >= 2 && cands.indexOf(n) === -1) cands.push(n); }\n  for (const s of [g.admin2, g.admin1]) { const n = norm(s); if (n.length > 3 && cands.indexOf(n) === -1) cands.push(n); }\n  return cands;\n}\n\nfunction fail(msg) {\n  return [{ json: { error: msg } }];\n}\n\nfunction out(text) {\n  if (text.length > 5000) text = text.substring(0, 5000) + '\\n... (truncated)';\n  return [{ json: { result: text } }];\n}\n\nasync function geocode(city) {\n  let results = [];\n  try {\n    const base = 'https://geocoding-api.open-meteo.com/v1/search?name=' + encodeURIComponent(city) + '&count=5&language=';\n    const both = await Promise.all([\n      helpers.httpRequest({ method: 'GET', url: base + 'en', timeout: 15000 }),\n      helpers.httpRequest({ method: 'GET', url: base + 'de', timeout: 15000 })\n    ]);\n    for (const geo of both) { if (geo.results) results = results.concat(geo.results); }\n  } catch (e) {\n    throw new Error('Geocoding request failed: ' + e.message);\n  }\n  if (results.length === 0) {\n    throw new Error('City not found: \"' + city + '\". Check the spelling or try a larger nearby city.');\n  }\n  let r = results[0];\n  for (const cand of results) {\n    if ((cand.population || 0) > (r.population || 0)) r = cand;\n  }\n  return { lat: r.latitude, lon: r.longitude, name: r.name, country: r.country || '', cc: (r.country_code || '').toUpperCase(), admin1: r.admin1 || '', admin2: r.admin2 || '' };\n}\n\nfunction placeLabel(g) {\n  return g.name + (g.country ? ', ' + g.country : '');\n}\n\ntry {\n  if (action === 'get_weather') {\n    if (!input.city) return fail('Parameter \"city\" is required (e.g. \"Berlin\", \"New York\").');\n    const g = await geocode(input.city);\n    let days = parseInt(input.days) || 3;\n    days = Math.min(Math.max(days, 1), 16);\n    const w = await helpers.httpRequest({\n      method: 'GET', timeout: 20000,\n      url: 'https://api.open-meteo.com/v1/forecast?latitude=' + g.lat + '&longitude=' + g.lon\n        + '&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,cloud_cover,pressure_msl'\n        + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,snowfall_sum'\n        + '&timezone=auto&forecast_days=' + days\n    });\n    const c = w.current || {};\n    let r = 'Weather for ' + placeLabel(g) + '\\n';\n    r += 'Now: ' + num(c.temperature_2m, '°C') + ' (feels like ' + num(c.apparent_temperature, '°C') + '), ' + wmoText(c.weather_code)\n      + ', humidity ' + num(c.relative_humidity_2m, '%') + ', wind ' + num(c.wind_speed_10m, ' km/h') + ' (gusts ' + num(c.wind_gusts_10m, ' km/h') + ')'\n      + ', clouds ' + num(c.cloud_cover, '%') + ', pressure ' + num(c.pressure_msl, ' hPa') + '\\n\\n';\n    r += days + '-day forecast:\\n';\n    const d = w.daily;\n    for (let i = 0; i < d.time.length; i++) {\n      r += d.time[i] + ': ' + wmoText(d.weather_code[i]) + ', ' + num(d.temperature_2m_min[i]) + ' to ' + num(d.temperature_2m_max[i], '°C')\n        + ', precip ' + num(d.precipitation_sum[i], ' mm');\n      if (d.precipitation_probability_max[i] !== null && d.precipitation_probability_max[i] !== undefined) r += ' (' + d.precipitation_probability_max[i] + '%)';\n      r += ', wind ' + num(d.wind_speed_10m_max[i], ' km/h') + ' (gusts ' + num(d.wind_gusts_10m_max[i]) + ')';\n      r += ', UV ' + num(d.uv_index_max[i]) + ', sun ' + String(d.sunrise[i] || '').substring(11) + '-' + String(d.sunset[i] || '').substring(11);\n      if (d.snowfall_sum[i] > 0) r += ', snow ' + d.snowfall_sum[i] + ' cm';\n      r += '\\n';\n    }\n    return out(r);\n  }\n\n  if (action === 'get_hourly_forecast') {\n    if (!input.city) return fail('Parameter \"city\" is required (e.g. \"Berlin\").');\n    const g = await geocode(input.city);\n    let url = 'https://api.open-meteo.com/v1/forecast?latitude=' + g.lat + '&longitude=' + g.lon\n      + '&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m,uv_index,relative_humidity_2m,cloud_cover&timezone=auto';\n    let scope;\n    if (input.date) {\n      if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(input.date)) return fail('Parameter \"date\" must be YYYY-MM-DD (e.g. \"2026-07-05\") and within the next 16 days.');\n      url += '&start_date=' + input.date + '&end_date=' + input.date;\n      scope = 'on ' + input.date;\n    } else {\n      let hours = parseInt(input.hours) || 24;\n      hours = Math.min(Math.max(hours, 1), 48);\n      url += '&forecast_hours=' + hours;\n      scope = 'next ' + hours + ' hours';\n    }\n    let w;\n    try {\n      w = await helpers.httpRequest({ method: 'GET', url: url, timeout: 20000 });\n    } catch (e) {\n      return fail('Hourly forecast failed: ' + e.message + '. Note: \"date\" must be within the next 16 days (use get_weather_history for past dates).');\n    }\n    const h = w.hourly;\n    let r = 'Hourly forecast for ' + placeLabel(g) + ' (' + scope + '):\\n';\n    let curDay = '';\n    for (let i = 0; i < h.time.length; i++) {\n      const day = h.time[i].substring(0, 10);\n      const hm = h.time[i].substring(11);\n      if (day !== curDay) { r += day + ':\\n'; curDay = day; }\n      let prob = (h.precipitation_probability[i] === null || h.precipitation_probability[i] === undefined) ? 'n/a' : h.precipitation_probability[i] + '%';\n      r += '  ' + hm + ' ' + num(h.temperature_2m[i], '°C') + ' (feels ' + num(h.apparent_temperature[i]) + '), ' + wmoText(h.weather_code[i])\n        + ', rain ' + prob + '/' + num(h.precipitation[i], 'mm') + ', wind ' + num(h.wind_speed_10m[i], 'km/h')\n        + ', UV ' + num(h.uv_index[i]) + ', hum ' + num(h.relative_humidity_2m[i], '%') + ', cloud ' + num(h.cloud_cover[i], '%') + '\\n';\n    }\n    return out(r);\n  }\n\n  if (action === 'get_air_quality') {\n    if (!input.city) return fail('Parameter \"city\" is required (e.g. \"Berlin\").');\n    const g = await geocode(input.city);\n    const w = await helpers.httpRequest({\n      method: 'GET', timeout: 20000,\n      url: 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + g.lat + '&longitude=' + g.lon\n        + '&current=european_aqi,us_aqi,pm10,pm2_5,ozone,nitrogen_dioxide,sulphur_dioxide,uv_index,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen&timezone=auto'\n    });\n    const c = w.current || {};\n    let r = 'Air quality for ' + placeLabel(g) + ':\\n';\n    if (c.european_aqi !== null && c.european_aqi !== undefined) {\n      const v = c.european_aqi;\n      const lvl = v <= 20 ? 'good' : v <= 40 ? 'fair' : v <= 60 ? 'moderate' : v <= 80 ? 'poor' : v <= 100 ? 'very poor' : 'extremely poor';\n      r += 'European AQI: ' + v + ' (' + lvl + ')\\n';\n    }\n    if (c.us_aqi !== null && c.us_aqi !== undefined) r += 'US AQI: ' + c.us_aqi + '\\n';\n    r += 'PM2.5: ' + num(c.pm2_5, ' µg/m³') + ', PM10: ' + num(c.pm10, ' µg/m³') + ', Ozone: ' + num(c.ozone, ' µg/m³')\n      + ', NO2: ' + num(c.nitrogen_dioxide, ' µg/m³') + ', SO2: ' + num(c.sulphur_dioxide, ' µg/m³') + '\\n';\n    r += 'UV index: ' + num(c.uv_index) + '\\n';\n    const pollen = [['Alder', c.alder_pollen], ['Birch', c.birch_pollen], ['Grass', c.grass_pollen], ['Mugwort', c.mugwort_pollen], ['Olive', c.olive_pollen], ['Ragweed', c.ragweed_pollen]];\n    const avail = pollen.filter(function (p) { return p[1] !== null && p[1] !== undefined; });\n    if (avail.length > 0) {\n      r += 'Pollen (grains/m³): ' + avail.map(function (p) { return p[0] + ' ' + p[1]; }).join(', ') + '\\n';\n    } else {\n      r += 'Pollen: no data (pollen forecasts are only available in Europe)\\n';\n    }\n    return out(r);\n  }\n\n  if (action === 'get_weather_history') {\n    if (!input.city) return fail('Parameter \"city\" is required (e.g. \"Berlin\").');\n    if (!input.start_date || !/^\\d{4}-\\d{2}-\\d{2}$/.test(input.start_date) || !input.end_date || !/^\\d{4}-\\d{2}-\\d{2}$/.test(input.end_date)) {\n      return fail('Parameters \"start_date\" and \"end_date\" are required in YYYY-MM-DD format (e.g. \"2025-06-01\"). Data is available from 1940 onwards.');\n    }\n    const startMs = Date.parse(input.start_date);\n    const endMs = Date.parse(input.end_date);\n    if (endMs < startMs) return fail('\"end_date\" must not be before \"start_date\".');\n    const rangeDays = Math.round((endMs - startMs) / 86400000) + 1;\n    if (rangeDays > 31) return fail('Date range too large (' + rangeDays + ' days). Maximum is 31 days per call - split the request into smaller ranges.');\n    if (endMs >= Date.now()) return fail('\"end_date\" must be in the past. For current or future weather use get_weather or get_hourly_forecast.');\n    const g = await geocode(input.city);\n    const w = await helpers.httpRequest({\n      method: 'GET', timeout: 30000,\n      url: 'https://archive-api.open-meteo.com/v1/archive?latitude=' + g.lat + '&longitude=' + g.lon\n        + '&start_date=' + input.start_date + '&end_date=' + input.end_date\n        + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max&timezone=auto'\n    });\n    const d = w.daily;\n    if (!d || !d.time || d.time.length === 0) return fail('No historical data returned for this range.');\n    let r = 'Historical weather for ' + placeLabel(g) + ' (' + input.start_date + ' to ' + input.end_date + '):\\n';\n    let allNull = true;\n    for (let i = 0; i < d.time.length; i++) {\n      if (d.temperature_2m_max[i] !== null && d.temperature_2m_max[i] !== undefined) allNull = false;\n      r += d.time[i] + ': ' + wmoText(d.weather_code[i]) + ', ' + num(d.temperature_2m_min[i]) + ' to ' + num(d.temperature_2m_max[i], '°C')\n        + ', precip ' + num(d.precipitation_sum[i], ' mm') + ', wind ' + num(d.wind_speed_10m_max[i], ' km/h') + '\\n';\n    }\n    if (allNull) return fail('No data for this range yet. The weather archive lags about 5 days behind - for the last few days use get_weather instead.');\n    return out(r);\n  }\n\n  if (action === 'get_marine_weather') {\n    if (!input.city) return fail('Parameter \"city\" is required (a coastal location, e.g. \"Kiel\", \"Nice\").');\n    const g = await geocode(input.city);\n    let days = parseInt(input.days) || 3;\n    days = Math.min(Math.max(days, 1), 7);\n    let w;\n    try {\n      w = await helpers.httpRequest({\n        method: 'GET', timeout: 20000,\n        url: 'https://marine-api.open-meteo.com/v1/marine?latitude=' + g.lat + '&longitude=' + g.lon\n          + '&current=wave_height,wave_direction,wave_period,sea_surface_temperature'\n          + '&daily=wave_height_max,wave_direction_dominant,wave_period_max&timezone=auto&forecast_days=' + days\n      });\n    } catch (e) {\n      return fail('No marine data available for \"' + g.name + '\". This tool needs a coastal or offshore location (e.g. \"Kiel\", \"Palma de Mallorca\").');\n    }\n    const c = w.current || {};\n    if ((c.wave_height === null || c.wave_height === undefined) && (c.sea_surface_temperature === null || c.sea_surface_temperature === undefined)) {\n      return fail('No marine data available for \"' + g.name + '\" - it seems to be too far inland. Try a coastal location (e.g. \"Kiel\", \"Palma de Mallorca\").');\n    }\n    let r = 'Marine conditions near ' + placeLabel(g) + '\\n';\n    r += 'Now: waves ' + num(c.wave_height, ' m') + ' from ' + num(c.wave_direction, '°') + ', period ' + num(c.wave_period, ' s')\n      + ', sea surface temp ' + num(c.sea_surface_temperature, '°C') + '\\n\\n';\n    const d = w.daily;\n    if (d && d.time) {\n      r += days + '-day wave forecast:\\n';\n      for (let i = 0; i < d.time.length; i++) {\n        r += d.time[i] + ': max waves ' + num(d.wave_height_max[i], ' m') + ' from ' + num(d.wave_direction_dominant[i], '°') + ', max period ' + num(d.wave_period_max[i], ' s') + '\\n';\n      }\n    }\n    return out(r);\n  }\n\n  if (action === 'get_weather_alerts') {\n    if (!input.city) return fail('Parameter \"city\" is required (e.g. \"Berlin\", \"Vienna\").');\n    const g = await geocode(input.city);\n\n    if (g.cc === 'DE') {\n      const b = await helpers.httpRequest({ method: 'GET', timeout: 20000, url: 'https://api.brightsky.dev/alerts?lat=' + g.lat + '&lon=' + g.lon });\n      const loc = b.location || {};\n      const where = g.name + (loc.district ? ' (' + loc.district + ', ' + (loc.state || '') + ')' : '');\n      const active = (b.alerts || []).filter(function (a) { return notExpired(a.expires); });\n      if (active.length === 0) {\n        return out('No active weather alerts for ' + where + '. Source: DWD. Note: advance notices for events several days ahead may not be listed yet.');\n      }\n      let r = 'Active weather alerts for ' + where + ' (source: DWD, times in UTC):\\n\\n';\n      const list = active.slice(0, 5);\n      for (const a of list) {\n        r += '[' + (a.severity || 'unknown').toUpperCase() + '] ' + (a.event_en || a.event_de || a.headline_en || 'Alert') + '\\n';\n        r += '  ' + tfmt(a.onset) + ' to ' + tfmt(a.expires) + '\\n';\n        let desc = a.description_en || a.description_de || '';\n        if (desc.length > 300) desc = desc.substring(0, 300) + '...';\n        if (desc) r += '  ' + desc.replace(/\\n+/g, ' ') + '\\n';\n        r += '\\n';\n      }\n      if (active.length > 5) r += '(' + (active.length - 5) + ' more alerts not shown)\\n';\n      return out(r);\n    }\n\n    if (g.cc === 'CH') {\n      const xml = await helpers.httpRequest({ method: 'GET', timeout: 30000, url: 'https://feeds.meteoalarm.org/feeds/meteoalarm-legacy-atom-switzerland' });\n      const xs = String(xml);\n      const entries = xs.split('<entry>').slice(1);\n      const cands = areaCandidates(input.city, g);\n      const items = [];\n      for (const en of entries) {\n        const gx = function (tag) {\n          const m = en.match(new RegExp('<' + tag + '[^>]*>([\\\\s\\\\S]*?)</' + tag + '>'));\n          return m ? m[1].trim() : '';\n        };\n        const it = { area: gx('cap:areaDesc'), event: gx('cap:event') || gx('title'), severity: gx('cap:severity'), onset: gx('cap:onset') || gx('cap:effective'), expires: gx('cap:expires') };\n        if (notExpired(it.expires)) items.push(it);\n      }\n      const hits = items.filter(function (it) {\n        const al = norm(it.area);\n        return cands.some(function (c) { return al.includes(c); });\n      }).sort(function (x, y) {\n        const sx = SEV_ORDER[x.severity.toLowerCase()]; const sy = SEV_ORDER[y.severity.toLowerCase()];\n        return (sx === undefined ? 9 : sx) - (sy === undefined ? 9 : sy);\n      });\n      if (hits.length === 0) {\n        return out('No active weather alerts matching \"' + g.name + '\". Switzerland currently has ' + items.length + ' active alert(s) in other regions. Source: MeteoAlarm/MeteoSwiss.');\n      }\n      let r = 'Active weather alerts for ' + placeLabel(g) + ' (source: MeteoAlarm/MeteoSwiss):\\n\\n';\n      for (const it of hits.slice(0, 5)) {\n        r += '[' + (it.severity || 'unknown').toUpperCase() + '] ' + it.event + ' - ' + it.area + '\\n';\n        r += '  ' + tfmt(it.onset) + ' to ' + tfmt(it.expires) + '\\n\\n';\n      }\n      if (hits.length > 5) r += '(' + (hits.length - 5) + ' more alerts not shown)\\n';\n      return out(r);\n    }\n\n    const feed = MA_FEEDS[g.cc];\n    if (!feed) {\n      return out('Weather alerts are only available for Europe (MeteoAlarm) and Germany (DWD). No alert source for ' + (g.country || g.cc) + '. Tip: get_weather shows wind gusts, precipitation and UV, which often indicate severe conditions.');\n    }\n    const data = await helpers.httpRequest({ method: 'GET', timeout: 30000, url: 'https://feeds.meteoalarm.org/api/v1/warnings/feeds-' + feed });\n    const warnings = data.warnings || [];\n    if (warnings.length === 0) {\n      return out('No active weather alerts for ' + (g.country || g.cc) + '. Source: MeteoAlarm.');\n    }\n    const cands = areaCandidates(input.city, g);\n    const items = [];\n    for (const wr of warnings) {\n      const alert = wr.alert;\n      if (!alert || !alert.info || alert.info.length === 0) continue;\n      let info = null;\n      for (const inf of alert.info) {\n        if (String(inf.language || '').toLowerCase().indexOf('en') === 0) { info = inf; break; }\n      }\n      if (!info) info = alert.info[0];\n      if (!notExpired(info.expires)) continue;\n      const areas = [];\n      for (const ar of (info.area || [])) { if (ar.areaDesc) areas.push(ar.areaDesc); }\n      const matched = areas.filter(function (ad) {\n        const adl = norm(ad);\n        return cands.some(function (c) { return adl.includes(c); });\n      });\n      items.push({\n        matched: matched, areas: areas,\n        event: info.event || info.headline || 'Alert',\n        severity: String(info.severity || ''),\n        onset: info.onset || info.effective || '', expires: info.expires || '',\n        desc: String(info.description || '')\n      });\n    }\n    const bySeverity = function (x, y) {\n      const sx = SEV_ORDER[x.severity.toLowerCase()]; const sy = SEV_ORDER[y.severity.toLowerCase()];\n      return (sx === undefined ? 9 : sx) - (sy === undefined ? 9 : sy);\n    };\n    const hits = items.filter(function (it) { return it.matched.length > 0; }).sort(bySeverity);\n    if (hits.length === 0) {\n      if (items.length === 0) return out('No active weather alerts for ' + (g.country || g.cc) + '. Source: MeteoAlarm.');\n      const counts = {};\n      for (const it of items) { const s = it.severity || 'Unknown'; counts[s] = (counts[s] || 0) + 1; }\n      const parts = [];\n      for (const k in counts) parts.push(counts[k] + ' ' + k);\n      let r = 'No active weather alerts matching \"' + g.name + '\". ' + (g.country || g.cc) + ' currently has ' + items.length + ' active alert(s) in other regions (' + parts.join(', ') + '). Source: MeteoAlarm.\\nMost severe elsewhere:\\n';\n      const top = items.slice().sort(bySeverity).slice(0, 3);\n      for (const it of top) r += '- [' + it.severity.toUpperCase() + '] ' + it.event + ' - ' + (it.areas[0] || '') + (it.areas.length > 1 ? ' (+' + (it.areas.length - 1) + ' areas)' : '') + '\\n';\n      return out(r);\n    }\n    let r = 'Active weather alerts for ' + placeLabel(g) + ' (source: MeteoAlarm):\\n\\n';\n    for (const it of hits.slice(0, 5)) {\n      r += '[' + (it.severity || 'unknown').toUpperCase() + '] ' + it.event + ' - ' + it.matched.slice(0, 3).join('; ') + '\\n';\n      r += '  ' + tfmt(it.onset) + ' to ' + tfmt(it.expires) + '\\n';\n      let desc = it.desc;\n      if (desc.length > 250) desc = desc.substring(0, 250) + '...';\n      if (desc) r += '  ' + desc.replace(/\\n+/g, ' ') + '\\n';\n      r += '\\n';\n    }\n    if (hits.length > 5) r += '(' + (hits.length - 5) + ' more alerts not shown)\\n';\n    return out(r);\n  }\n\n  return fail('Unknown action: \"' + action + '\". Available: get_weather, get_hourly_forecast, get_air_quality, get_weather_history, get_marine_weather, get_weather_alerts.');\n} catch (e) {\n  return fail(e.message);\n}"
         }
       }
     ],
     "connections": {
       "Execute Workflow Trigger": {
-        "main": [[{ "node": "Get Weather", "type": "main", "index": 0 }]]
+        "main": [
+          [
+            {
+              "node": "Weather Tools",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   },
@@ -46,20 +60,26 @@
         "name": "MCP Server Trigger",
         "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
         "typeVersion": 2,
-        "position": [0, 0],
+        "position": [
+          0,
+          0
+        ],
         "parameters": {
           "path": "weather-openmeteo"
         }
       },
       {
-        "id": "tool-wf",
+        "id": "tool-get-weather",
         "name": "get_weather",
         "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
         "typeVersion": 2.2,
-        "position": [0, 300],
+        "position": [
+          -600,
+          300
+        ],
         "parameters": {
           "name": "get_weather",
-          "description": "Current weather and 3-day forecast for a city. Parameter: city (city name)",
+          "description": "Current weather and daily forecast for a city: temperature, feels-like, conditions, precipitation amount and probability, wind and gusts, UV index, sunrise/sunset, snowfall. Parameters: city (required), days (optional, 1-16, default 3)",
           "workflowId": {
             "__rl": true,
             "value": "REPLACE_SUB_WORKFLOW_ID",
@@ -68,15 +88,296 @@
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
-              "city": "={{ $fromAI('city', 'City name for weather query', 'string') }}"
+              "action": "get_weather",
+              "city": "={{ $fromAI('city', 'City name for the weather query', 'string') }}",
+              "days": "={{ $fromAI('days', 'Number of forecast days (1-16), default 3', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
               {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
                 "id": "city",
                 "displayName": "city",
                 "type": "string",
-                "description": "City name for weather query",
+                "description": "City name for the weather query",
+                "required": true
+              },
+              {
+                "id": "days",
+                "displayName": "days",
+                "type": "string",
+                "description": "Number of forecast days (1-16), default 3",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-hourly",
+        "name": "get_hourly_forecast",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          -360,
+          300
+        ],
+        "parameters": {
+          "name": "get_hourly_forecast",
+          "description": "Hour-by-hour weather forecast for a city: temperature, feels-like, rain probability and amount, conditions, wind, UV, humidity, cloud cover. Parameters: city (required), hours (optional, next 1-48 hours, default 24), date (optional, YYYY-MM-DD within the next 16 days, returns that full day instead)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_hourly_forecast",
+              "city": "={{ $fromAI('city', 'City name for the forecast', 'string') }}",
+              "hours": "={{ $fromAI('hours', 'Number of hours ahead (1-48), default 24', 'string') }}",
+              "date": "={{ $fromAI('date', 'Specific date YYYY-MM-DD within the next 16 days (overrides hours)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name for the forecast",
+                "required": true
+              },
+              {
+                "id": "hours",
+                "displayName": "hours",
+                "type": "string",
+                "description": "Number of hours ahead (1-48), default 24",
+                "required": false
+              },
+              {
+                "id": "date",
+                "displayName": "date",
+                "type": "string",
+                "description": "Specific date YYYY-MM-DD within the next 16 days (overrides hours)",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-air-quality",
+        "name": "get_air_quality",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          -120,
+          300
+        ],
+        "parameters": {
+          "name": "get_air_quality",
+          "description": "Current model-based air quality and pollen for a city: European and US AQI, PM2.5, PM10, ozone, NO2, SO2, UV index, and pollen levels (alder, birch, grass, mugwort, olive, ragweed; pollen data Europe only). Parameter: city (required)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_air_quality",
+              "city": "={{ $fromAI('city', 'City name for the air quality query', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name for the air quality query",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-history",
+        "name": "get_weather_history",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          120,
+          300
+        ],
+        "parameters": {
+          "name": "get_weather_history",
+          "description": "Historical daily weather for a city from the archive (data since 1940): conditions, min/max temperature, precipitation, wind. Parameters: city, start_date, end_date (YYYY-MM-DD, past dates only, max 31 days per call; the archive lags about 5 days behind)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_weather_history",
+              "city": "={{ $fromAI('city', 'City name for the historical query', 'string') }}",
+              "start_date": "={{ $fromAI('start_date', 'Start date YYYY-MM-DD (from 1940 onwards)', 'string') }}",
+              "end_date": "={{ $fromAI('end_date', 'End date YYYY-MM-DD (max 31 days after start_date)', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name for the historical query",
+                "required": true
+              },
+              {
+                "id": "start_date",
+                "displayName": "start_date",
+                "type": "string",
+                "description": "Start date YYYY-MM-DD (from 1940 onwards)",
+                "required": true
+              },
+              {
+                "id": "end_date",
+                "displayName": "end_date",
+                "type": "string",
+                "description": "End date YYYY-MM-DD (max 31 days after start_date)",
+                "required": true
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-marine",
+        "name": "get_marine_weather",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          360,
+          300
+        ],
+        "parameters": {
+          "name": "get_marine_weather",
+          "description": "Sea/marine conditions for a coastal location: current wave height, wave direction, wave period, sea surface temperature, plus a daily max-wave forecast. Parameters: city (required, must be coastal), days (optional, 1-7, default 3)",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_marine_weather",
+              "city": "={{ $fromAI('city', 'Coastal city or location name', 'string') }}",
+              "days": "={{ $fromAI('days', 'Number of forecast days (1-7), default 3', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "Coastal city or location name",
+                "required": true
+              },
+              {
+                "id": "days",
+                "displayName": "days",
+                "type": "string",
+                "description": "Number of forecast days (1-7), default 3",
+                "required": false
+              }
+            ],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          }
+        }
+      },
+      {
+        "id": "tool-get-alerts",
+        "name": "get_weather_alerts",
+        "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+        "typeVersion": 2.2,
+        "position": [
+          600,
+          300
+        ],
+        "parameters": {
+          "name": "get_weather_alerts",
+          "description": "Official weather warnings for a European city from national weather services (MeteoAlarm; Germany via DWD/Bright Sky). Returns active alerts matching the city/region, or a country-level summary. Parameter: city (required). Europe only",
+          "workflowId": {
+            "__rl": true,
+            "value": "REPLACE_SUB_WORKFLOW_ID",
+            "mode": "id"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {
+              "action": "get_weather_alerts",
+              "city": "={{ $fromAI('city', 'City name to check for weather warnings', 'string') }}"
+            },
+            "matchingColumns": [],
+            "schema": [
+              {
+                "id": "action",
+                "displayName": "action",
+                "type": "string",
+                "description": "Action type",
+                "required": true
+              },
+              {
+                "id": "city",
+                "displayName": "city",
+                "type": "string",
+                "description": "City name to check for weather warnings",
                 "required": true
               }
             ],
@@ -88,7 +389,70 @@
     ],
     "connections": {
       "get_weather": {
-        "ai_tool": [[{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]]
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_hourly_forecast": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_air_quality": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_weather_history": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_marine_weather": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_weather_alerts": {
+        "ai_tool": [
+          [
+            {
+              "node": "MCP Server Trigger",
+              "type": "ai_tool",
+              "index": 0
+            }
+          ]
+        ]
       }
     }
   }

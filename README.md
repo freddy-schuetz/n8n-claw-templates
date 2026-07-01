@@ -240,7 +240,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
 | [OpenAQ Air Quality](https://openaq.org/) | Current air quality (PM2.5, PM10, NO2, O3, SO2, CO) from government monitoring stations worldwide; supports city names or coordinates | OpenAQ API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
-| [Weather](https://open-meteo.com/) | Current weather and 3-day forecast for any city | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Weather](https://open-meteo.com/) | Full weather suite: current conditions, 16-day & hourly forecasts, air quality & pollen, UV, weather history, marine conditions, official weather alerts | - | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ---
 

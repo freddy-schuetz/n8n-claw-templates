@@ -358,7 +358,8 @@ Key difference: OAuth2 entries add `"credential_type": "oauth2"` and credentials
 ## Reference Files
 
 - `templates/TEMPLATE_EXAMPLE.md` — Annotated example with all manifest and workflow fields explained
-- `templates/weather-openmeteo/` — Simple template, no credentials, single tool
+- `templates/trivia/` — Simple template, no credentials, single tool
+- `templates/weather-openmeteo/` — Multi-tool template without credentials (action routing, multiple external APIs)
 - `templates/news-newsapi/` — Simple credential-based template (API key pattern)
 - `templates/seafile/` — Multi-tool template with File Bridge (complex example)
 - `templates/gmail/` — OAuth2 template with Google token refresh (reference for Google services)

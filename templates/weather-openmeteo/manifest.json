@@ -1,11 +1,11 @@
 {
   "id": "weather-openmeteo",
   "name": "Weather (Open-Meteo)",
-  "version": "1.0.0",
-  "updated": "2026-03-08",
+  "version": "1.1.0",
+  "updated": "2026-07-01",
   "type": "native",
   "category": "weather",
-  "description": "Current weather and 3-day forecast for any city (Open-Meteo, free)",
+  "description": "Full weather suite for any city: current conditions, forecasts up to 16 days, hourly forecasts, air quality & pollen, UV, historical weather since 1940, marine conditions and official weather alerts (Open-Meteo + MeteoAlarm/DWD, free)",
   "credentials_required": [],
   "credentials_optional": [
     {
@@ -17,7 +17,27 @@
   "tools": [
     {
       "name": "get_weather",
-      "description": "Current weather and 3-day forecast for a city"
+      "description": "Current weather and daily forecast (1-16 days): temps, feels-like, precipitation, wind & gusts, UV, sunrise/sunset"
+    },
+    {
+      "name": "get_hourly_forecast",
+      "description": "Hour-by-hour forecast (next 48h or a specific date): temp, rain probability, wind, UV, humidity, clouds"
+    },
+    {
+      "name": "get_air_quality",
+      "description": "Air quality (European/US AQI, PM2.5, PM10, ozone, NO2, SO2), UV index and pollen levels (pollen Europe only)"
+    },
+    {
+      "name": "get_weather_history",
+      "description": "Historical daily weather for any date range since 1940 (max 31 days per call)"
+    },
+    {
+      "name": "get_marine_weather",
+      "description": "Sea conditions for coastal locations: wave height/direction/period, sea surface temperature"
+    },
+    {
+      "name": "get_weather_alerts",
+      "description": "Official weather warnings from national weather services (Europe via MeteoAlarm, Germany via DWD)"
     }
   ],
   "author": "freddy-schuetz",
