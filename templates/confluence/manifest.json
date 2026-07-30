@@ -1,11 +1,11 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "updated": "2026-07-30",
   "type": "native",
   "category": "productivity",
-  "description": "Confluence Cloud wiki: search pages, CRUD pages, comments, labels, spaces. Shares Atlassian credentials with Jira skill.",
+  "description": "Confluence Cloud wiki (14 tools): CQL search, CRUD for pages and blogposts, readable Live Docs, comments, labels, spaces. Safe updates via expected_version. Shares Atlassian credentials with Jira.",
   "credentials_required": [
     {
       "key": "atlassian_email",
@@ -33,43 +33,43 @@
     },
     {
       "name": "list_pages_in_space",
-      "description": "List pages in a space by space id (reliable fallback when CQL search is not indexed yet)"
+      "description": "List pages and blogposts in a space. Parameters: space_id (required, numeric id from list_spaces), limit (optional), content_type (optional: page or blogpost to narrow)."
     },
     {
       "name": "search_pages",
-      "description": "Full-text search across pages using CQL (e.g. 'text ~ \"onboarding\"', 'space = MARKETING AND text ~ \"launch\"')"
+      "description": "Search Confluence with CQL or plain text. Pages and blogposts are both searched by default; narrow with content_type. Plain text is auto-wrapped, real CQL (containing = or ~) is passed through unchanged. Parameters: query (required), limit (optional), content_type (optional)."
     },
     {
       "name": "get_page",
-      "description": "Get page by id — full body (storage format), version, space"
+      "description": "Fetch a page or blogpost by id, with body, version and space. Blogposts are detected automatically. Live Docs are returned as readable text. The Version number shown can be passed to update_page as expected_version for a safe edit. Parameters: page_id (required), content_type (optional: page or blogpost)."
     },
     {
       "name": "get_page_by_title",
-      "description": "Find a page by exact title (optionally scoped to a space-id). Note: exact ASCII titles work reliably; titles with em-dashes or diacritics may not match."
+      "description": "Find a page or blogpost by exact title. Searches pages first, then blogposts. Parameters: title (required), space_id (optional), content_type (optional)."
     },
     {
       "name": "list_children",
-      "description": "List direct child pages of a parent page"
+      "description": "List child pages of a page. Blogposts have no children and are reported as such. Parameters: page_id (required), limit (optional)."
     },
     {
       "name": "create_page",
-      "description": "Create a new page with space-id, title, body (storage format HTML), optional parent-id"
+      "description": "Create a new page or blogpost. Body MUST be storage-format HTML, e.g. '<p>Hello</p><h2>Section</h2>'. Set content_type to blogpost to create a blog entry. Parameters: space_id (required), title (required), body (required), parent_id (optional, pages only), content_type (optional)."
     },
     {
       "name": "update_page",
-      "description": "Update page title/body (auto version-bumps)"
+      "description": "Update title and/or body of a page or blogpost. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Live Docs cannot be written by this tool and are refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional)."
     },
     {
       "name": "delete_page",
-      "description": "Delete a page by id"
+      "description": "Delete a page or blogpost by id (moves it to the trash). Blogposts are detected automatically. Parameters: page_id (required), content_type (optional)."
     },
     {
       "name": "add_comment_to_page",
-      "description": "Add a footer comment to a page"
+      "description": "Add a comment to a page or blogpost. Works on Live Docs too. Parameters: page_id (required), text (required)."
     },
     {
       "name": "list_comments_on_page",
-      "description": "List footer comments on a page"
+      "description": "List comments on a page or blogpost. Parameters: page_id (required)."
     },
     {
       "name": "add_label_to_page",
@@ -77,11 +77,11 @@
     },
     {
       "name": "list_labels_on_page",
-      "description": "List all labels on a page"
+      "description": "List labels on a page or blogpost. Parameters: page_id (required)."
     },
     {
       "name": "search_by_label",
-      "description": "Find pages by label (e.g. 'meeting-notes', 'onboarding')"
+      "description": "Find content carrying a label. Returns pages and blogposts. Parameters: label (required), limit (optional), content_type (optional)."
     }
   ],
   "author": "freddy-schuetz",
