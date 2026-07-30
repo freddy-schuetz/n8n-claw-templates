@@ -815,7 +815,7 @@
           "shared_id": "atlassian-api-token"
         }
       ],
-      "version": "1.1.1"
+      "version": "1.1.2"
     },
     {
       "id": "confluence",

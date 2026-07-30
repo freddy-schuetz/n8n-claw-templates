@@ -248,7 +248,7 @@
               "priority": "={{ $fromAI('priority', 'Priority (Highest, High, Medium, Low, Lowest)', 'string') }}",
               "labels": "={{ $fromAI('labels', 'Comma-separated labels', 'string') }}",
               "parent": "={{ $fromAI('parent', 'Parent issue key for subtasks', 'string') }}",
-              "custom_fields": "={{ $fromAI('custom_fields', 'Optional: JSON object with project-specific fields, e.g. {\"customfield_10047\": {\"value\": \"Marketing\"}}', 'string') }}"
+              "custom_fields": "={{ $fromAI('custom_fields', 'Optional: JSON object as string with project-specific fields. Key = field id like customfield_10047, value = object with key value and the chosen allowed value. No markdown, raw JSON string.', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -319,7 +319,7 @@
                 "id": "custom_fields",
                 "displayName": "custom_fields",
                 "type": "string",
-                "description": "JSON object with additional/custom Jira fields",
+                "description": "JSON object string with additional/custom Jira fields",
                 "required": false
               }
             ],
