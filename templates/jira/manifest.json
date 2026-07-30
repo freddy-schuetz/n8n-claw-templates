@@ -1,8 +1,8 @@
 {
   "id": "jira",
   "name": "Jira Cloud",
-  "version": "1.0.1",
-  "updated": "2026-04-17",
+  "version": "1.1.0",
+  "updated": "2026-07-30",
   "type": "native",
   "category": "productivity",
   "description": "Jira Cloud issue tracking: JQL search, CRUD issues, comments, status transitions. Shares Atlassian credentials with Confluence skill.",

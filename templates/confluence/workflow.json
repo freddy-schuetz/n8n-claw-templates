@@ -31,7 +31,7 @@
           0
         ],
         "parameters": {
-          "jsCode": "const input = $input.first().json;\nfunction buildQs(obj) { return Object.entries(obj).filter(([k,v]) => v !== undefined && v !== null).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v))).join('&'); }\n\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.confluence&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.atlassian_email || !creds.atlassian_api_token || !creds.atlassian_site) {\n  return [{ json: { error: 'Confluence credentials not configured. Need atlassian_email, atlassian_api_token, atlassian_site. If Jira is installed, these are shared automatically.' } }];\n}\n\nconst site = creds.atlassian_site.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');\nconst V2 = 'https://' + site + '/wiki/api/v2';\nconst V1 = 'https://' + site + '/wiki/rest/api';\nconst basic = Buffer.from(creds.atlassian_email + ':' + creds.atlassian_api_token).toString('base64');\nconst authHeaders = { 'Authorization': 'Basic ' + basic, 'Accept': 'application/json' };\nconst jsonHeaders = { ...authHeaders, 'Content-Type': 'application/json' };\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction pageUrl(id) {\n  return 'https://' + site + '/wiki/spaces/_/pages/' + id;\n}\n\nfunction stripHtml(html) {\n  if (!html) return '';\n  return String(html)\n    .replace(/<br\\s*\\/?>(\\n)?/gi, '\\n')\n    .replace(/<\\/(p|h[1-6]|li|div)>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\n// === list_spaces ===\nif (action === 'list_spaces') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces?limit=100', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No spaces found.' } }];\n    let out = 'Spaces (' + items.length + '):\\n';\n    for (const s of items) {\n      out += '  [' + s.id + '] ' + (s.key || '?') + ' — ' + (s.name || '') + ' (' + (s.type || 'space') + ')\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_spaces failed: ' + err.message } }];\n  }\n\n// === list_pages_in_space ===\n} else if (action === 'list_pages_in_space') {\n  const spaceId = input.space_id;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces/' + encodeURIComponent(spaceId) + '/pages?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages in space ' + spaceId + '.' } }];\n    let out = 'Pages in space ' + spaceId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_pages_in_space failed: ' + err.message } }];\n  }\n\n// === search_pages ===\n} else if (action === 'search_pages') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Use CQL (e.g. \\'text ~ \"onboarding\"\\', \\'space = MARKETING AND type = page\\') or plain text (auto-wrapped as text~query).' } }];\n  const limit = Math.min(parseInt(input.limit) || 10, 50);\n  let cql = query;\n  if (!/[=~]|\\bAND\\b|\\bOR\\b/i.test(cql)) cql = 'type = page AND text ~ \"' + cql.replace(/\"/g, '\\\\\"') + '\"';\n  try {\n    const qs = buildQs({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages matched CQL: ' + cql + '. Note: Confluence search index may lag on newly created pages — try list_pages_in_space as fallback.' } }];\n    let out = 'Pages matched (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_pages failed: ' + err.message } }];\n  }\n\n// === get_page ===\n} else if (action === 'get_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    let out = '**' + (r.title || '') + '** [id: ' + r.id + ']\\n';\n    if (r.spaceId) out += 'Space id: ' + r.spaceId + '\\n';\n    if (r.parentId) out += 'Parent id: ' + r.parentId + '\\n';\n    if (r.version) out += 'Version: ' + r.version.number + '\\n';\n    if (r.authorId) out += 'Author id: ' + r.authorId + '\\n';\n    if (r.createdAt) out += 'Created: ' + r.createdAt.substring(0, 10) + '\\n';\n    const body = r.body && r.body.storage ? r.body.storage.value : '';\n    if (body) out += '\\nBody:\\n' + stripHtml(body) + '\\n';\n    out += '\\n' + pageUrl(r.id);\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page failed: ' + err.message } }];\n  }\n\n// === get_page_by_title ===\n} else if (action === 'get_page_by_title') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required (exact title, ASCII works best).' } }];\n  const spaceId = input.space_id;\n  try {\n    let url = V2 + '/pages?title=' + encodeURIComponent(title);\n    if (spaceId) url += '&space-id=' + encodeURIComponent(spaceId);\n    const r = await helpers.httpRequest({ method: 'GET', url, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No page with title \"' + title + '\"' + (spaceId ? ' in space ' + spaceId : '') + '. Titles with em-dashes or diacritics may not match — try search_pages instead.' } }];\n    let out = 'Pages matching title \"' + title + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (space: ' + (p.spaceId || '?') + ', v' + (p.version ? p.version.number : '?') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page_by_title failed: ' + err.message } }];\n  }\n\n// === list_children ===\n} else if (action === 'list_children') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/children?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'Page ' + pageId + ' has no child pages.' } }];\n    let out = 'Children of ' + pageId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_children failed: ' + err.message } }];\n  }\n\n// === create_page ===\n} else if (action === 'create_page') {\n  const spaceId = input.space_id;\n  const title = input.title;\n  const body = input.body;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  if (!body) return [{ json: { error: 'Parameter \"body\" is required (HTML in storage format, e.g. \"<p>Hello</p>\").' } }];\n  const payload = {\n    spaceId: String(spaceId),\n    status: 'current',\n    title: String(title),\n    body: { representation: 'storage', value: String(body) }\n  };\n  if (input.parent_id) payload.parentId = String(input.parent_id);\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/pages', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page created [id: ' + r.id + ']: ' + r.title + '\\n' + pageUrl(r.id) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence create_page failed: ' + msg } }];\n  }\n\n// === update_page ===\n} else if (action === 'update_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!input.title && !input.body) return [{ json: { error: 'Provide at least one of: title, body.' } }];\n  try {\n    const current = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    const nextVersion = (current.version && current.version.number ? current.version.number : 1) + 1;\n    const payload = {\n      id: String(pageId),\n      status: 'current',\n      title: input.title || current.title,\n      body: { representation: 'storage', value: input.body || (current.body && current.body.storage ? current.body.storage.value : '') },\n      version: { number: nextVersion }\n    };\n    const r = await helpers.httpRequest({ method: 'PUT', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page ' + pageId + ' updated to v' + nextVersion + ': ' + r.title + '\\n' + pageUrl(pageId) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence update_page failed: ' + msg } }];\n  }\n\n// === delete_page ===\n} else if (action === 'delete_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: authHeaders });\n    return [{ json: { result: 'Page ' + pageId + ' deleted.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence delete_page failed: ' + err.message } }];\n  }\n\n// === add_comment_to_page ===\n} else if (action === 'add_comment_to_page') {\n  const pageId = input.page_id;\n  const text = input.text;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required.' } }];\n  const value = /<[a-z][^>]*>/i.test(text) ? text : '<p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';\n  const payload = {\n    pageId: String(pageId),\n    body: { representation: 'storage', value }\n  };\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/footer-comments', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Comment added to page ' + pageId + ' (comment id: ' + r.id + ').' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_comment_to_page failed: ' + msg } }];\n  }\n\n// === list_comments_on_page ===\n} else if (action === 'list_comments_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/footer-comments?body-format=storage&limit=50', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No comments on page ' + pageId + '.' } }];\n    let out = 'Comments on page ' + pageId + ' (' + items.length + '):\\n\\n';\n    for (const c of items) {\n      const body = c.body && c.body.storage ? stripHtml(c.body.storage.value) : '';\n      out += '  [' + c.id + '] ' + body + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_comments_on_page failed: ' + err.message } }];\n  }\n\n// === add_label_to_page ===\n} else if (action === 'add_label_to_page') {\n  const pageId = input.page_id;\n  const label = input.label;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required (e.g. \"meeting-notes\", \"onboarding\").' } }];\n  const body = [{ prefix: 'global', name: String(label) }];\n  try {\n    await helpers.httpRequest({ method: 'POST', url: V1 + '/content/' + encodeURIComponent(pageId) + '/label', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Label \"' + label + '\" added to page ' + pageId + '.' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_label_to_page failed: ' + msg } }];\n  }\n\n// === list_labels_on_page ===\n} else if (action === 'list_labels_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/labels', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No labels on page ' + pageId + '.' } }];\n    let out = 'Labels on page ' + pageId + ' (' + items.length + '):\\n';\n    for (const l of items) out += '  ' + (l.name || '') + ' (prefix: ' + (l.prefix || 'global') + ')\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_labels_on_page failed: ' + err.message } }];\n  }\n\n// === search_by_label ===\n} else if (action === 'search_by_label') {\n  const label = input.label;\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  const cql = 'label = \"' + String(label).replace(/\"/g, '\\\\\"') + '\"';\n  try {\n    const qs = buildQs({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No content matched label \"' + label + '\". Note: search index may lag on newly labeled pages.' } }];\n    let out = 'Content with label \"' + label + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_by_label failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_spaces, list_pages_in_space, search_pages, get_page, get_page_by_title, list_children, create_page, update_page, delete_page, add_comment_to_page, list_comments_on_page, add_label_to_page, list_labels_on_page, search_by_label.' } }];\n}\n"
+          "jsCode": "const input = $input.first().json;\nfunction buildQs(obj) { return Object.entries(obj).filter(([k,v]) => v !== undefined && v !== null).map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v))).join('&'); }\n\nconst action = input.action || '';\n\nconst SUPABASE_URL = '{{SUPABASE_URL}}';\nconst SUPABASE_KEY = '{{SUPABASE_SERVICE_KEY}}';\nconst pgHeaders = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };\n\nconst allCreds = await helpers.httpRequest({\n  method: 'GET',\n  url: SUPABASE_URL + '/rest/v1/template_credentials?template_id=eq.confluence&select=cred_key,cred_value',\n  headers: pgHeaders\n});\nconst creds = {};\nfor (const c of (allCreds || [])) creds[c.cred_key] = c.cred_value;\nif (!creds.atlassian_email || !creds.atlassian_api_token || !creds.atlassian_site) {\n  return [{ json: { error: 'Confluence credentials not configured. Need atlassian_email, atlassian_api_token, atlassian_site. If Jira is installed, these are shared automatically.' } }];\n}\n\nconst site = creds.atlassian_site.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');\nconst V2 = 'https://' + site + '/wiki/api/v2';\nconst V1 = 'https://' + site + '/wiki/rest/api';\nconst basic = Buffer.from(creds.atlassian_email + ':' + creds.atlassian_api_token).toString('base64');\nconst authHeaders = { 'Authorization': 'Basic ' + basic, 'Accept': 'application/json' };\n\n// Parameter-Aliasse tolerant behandeln (gaengige LLM-Varianten)\nif (input.content !== undefined && input.body === undefined) input.body = input.content;\nif (input.max_results !== undefined && input.limit === undefined) input.limit = input.max_results;\nif (input.space_key && !input.space_id) {\n  try {\n    const _sp = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces?keys=' + encodeURIComponent(String(input.space_key)) + '&limit=1', headers: authHeaders });\n    if (_sp.results && _sp.results.length) input.space_id = _sp.results[0].id;\n  } catch (_e) {}\n}\nconst jsonHeaders = { ...authHeaders, 'Content-Type': 'application/json' };\n\nfunction truncate(text, max) {\n  max = max || 5000;\n  if (text.length > max) return text.substring(0, max) + '\\n\\n... (truncated, ' + text.length + ' chars total)';\n  return text;\n}\n\nfunction pageUrl(id) {\n  return 'https://' + site + '/wiki/spaces/_/pages/' + id;\n}\n\nfunction stripHtml(html) {\n  if (!html) return '';\n  return String(html)\n    .replace(/<br\\s*\\/?>(\\n)?/gi, '\\n')\n    .replace(/<\\/(p|h[1-6]|li|div)>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\n// === list_spaces ===\nif (action === 'list_spaces') {\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces?limit=100', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No spaces found.' } }];\n    let out = 'Spaces (' + items.length + '):\\n';\n    for (const s of items) {\n      out += '  [' + s.id + '] ' + (s.key || '?') + ' — ' + (s.name || '') + ' (' + (s.type || 'space') + ')\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_spaces failed: ' + err.message } }];\n  }\n\n// === list_pages_in_space ===\n} else if (action === 'list_pages_in_space') {\n  const spaceId = input.space_id;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/spaces/' + encodeURIComponent(spaceId) + '/pages?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages in space ' + spaceId + '.' } }];\n    let out = 'Pages in space ' + spaceId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_pages_in_space failed: ' + err.message } }];\n  }\n\n// === search_pages ===\n} else if (action === 'search_pages') {\n  const query = input.query;\n  if (!query) return [{ json: { error: 'Parameter \"query\" is required. Use CQL (e.g. \\'text ~ \"onboarding\"\\', \\'space = MARKETING AND type = page\\') or plain text (auto-wrapped as text~query).' } }];\n  const limit = Math.min(parseInt(input.limit) || 10, 50);\n  let cql = query;\n  if (!/[=~]|\\bAND\\b|\\bOR\\b/i.test(cql)) {\n    const esc = s => s.replace(/\"/g, '\\\\\"');\n    const words = cql.trim().split(/\\s+/).filter(wd => wd.length > 2);\n    if (words.length > 1) {\n      // Mehrere Suchwoerter: Phrase ODER Einzelwoerter (statt nie-matchender Ein-Phrasen-Suche)\n      cql = 'type = page AND (text ~ \"' + esc(cql) + '\" OR ' + words.map(wd => 'text ~ \"' + esc(wd) + '\"').join(' OR ') + ')';\n    } else {\n      cql = 'type = page AND text ~ \"' + esc(cql) + '\"';\n    }\n  }\n  try {\n    const qs = buildQs({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No pages matched CQL: ' + cql + '. Note: Confluence search index may lag on newly created pages — try list_pages_in_space as fallback.' } }];\n    let out = 'Pages matched (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_pages failed: ' + err.message } }];\n  }\n\n// === get_page ===\n} else if (action === 'get_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    let out = '**' + (r.title || '') + '** [id: ' + r.id + ']\\n';\n    if (r.spaceId) out += 'Space id: ' + r.spaceId + '\\n';\n    if (r.parentId) out += 'Parent id: ' + r.parentId + '\\n';\n    if (r.version) out += 'Version: ' + r.version.number + '\\n';\n    if (r.authorId) out += 'Author id: ' + r.authorId + '\\n';\n    if (r.createdAt) out += 'Created: ' + r.createdAt.substring(0, 10) + '\\n';\n    const body = r.body && r.body.storage ? r.body.storage.value : '';\n    if (body) out += '\\nBody:\\n' + stripHtml(body) + '\\n';\n    out += '\\n' + pageUrl(r.id);\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page failed: ' + err.message } }];\n  }\n\n// === get_page_by_title ===\n} else if (action === 'get_page_by_title') {\n  const title = input.title;\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required (exact title, ASCII works best).' } }];\n  const spaceId = input.space_id;\n  try {\n    let url = V2 + '/pages?title=' + encodeURIComponent(title);\n    if (spaceId) url += '&space-id=' + encodeURIComponent(spaceId);\n    const r = await helpers.httpRequest({ method: 'GET', url, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No page with title \"' + title + '\"' + (spaceId ? ' in space ' + spaceId : '') + '. Titles with em-dashes or diacritics may not match — try search_pages instead.' } }];\n    let out = 'Pages matching title \"' + title + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (space: ' + (p.spaceId || '?') + ', v' + (p.version ? p.version.number : '?') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence get_page_by_title failed: ' + err.message } }];\n  }\n\n// === list_children ===\n} else if (action === 'list_children') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/children?limit=' + limit, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'Page ' + pageId + ' has no child pages.' } }];\n    let out = 'Children of ' + pageId + ' (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + '\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_children failed: ' + err.message } }];\n  }\n\n// === create_page ===\n} else if (action === 'create_page') {\n  const spaceId = input.space_id;\n  const title = input.title;\n  const body = input.body;\n  if (!spaceId) return [{ json: { error: 'Parameter \"space_id\" is required (numeric id from list_spaces).' } }];\n  if (!title) return [{ json: { error: 'Parameter \"title\" is required.' } }];\n  if (!body) return [{ json: { error: 'Parameter \"body\" is required (HTML in storage format, e.g. \"<p>Hello</p>\").' } }];\n  const payload = {\n    spaceId: String(spaceId),\n    status: 'current',\n    title: String(title),\n    body: { representation: 'storage', value: String(body) }\n  };\n  if (input.parent_id) payload.parentId = String(input.parent_id);\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/pages', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page created [id: ' + r.id + ']: ' + r.title + '\\n' + pageUrl(r.id) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence create_page failed: ' + msg } }];\n  }\n\n// === update_page ===\n} else if (action === 'update_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!input.title && !input.body) return [{ json: { error: 'Provide at least one of: title, body.' } }];\n  try {\n    const current = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '?body-format=storage', headers: authHeaders });\n    const nextVersion = (current.version && current.version.number ? current.version.number : 1) + 1;\n    const payload = {\n      id: String(pageId),\n      status: 'current',\n      title: input.title || current.title,\n      body: { representation: 'storage', value: input.body || (current.body && current.body.storage ? current.body.storage.value : '') },\n      version: { number: nextVersion }\n    };\n    const r = await helpers.httpRequest({ method: 'PUT', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Page ' + pageId + ' updated to v' + nextVersion + ': ' + r.title + '\\n' + pageUrl(pageId) } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence update_page failed: ' + msg } }];\n  }\n\n// === delete_page ===\n} else if (action === 'delete_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    await helpers.httpRequest({ method: 'DELETE', url: V2 + '/pages/' + encodeURIComponent(pageId), headers: authHeaders });\n    return [{ json: { result: 'Page ' + pageId + ' deleted.' } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence delete_page failed: ' + err.message } }];\n  }\n\n// === add_comment_to_page ===\n} else if (action === 'add_comment_to_page') {\n  const pageId = input.page_id;\n  const text = input.text;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!text) return [{ json: { error: 'Parameter \"text\" is required.' } }];\n  const value = /<[a-z][^>]*>/i.test(text) ? text : '<p>' + String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</p>';\n  const payload = {\n    pageId: String(pageId),\n    body: { representation: 'storage', value }\n  };\n  try {\n    const r = await helpers.httpRequest({ method: 'POST', url: V2 + '/footer-comments', headers: jsonHeaders, body: JSON.stringify(payload) });\n    return [{ json: { result: 'Comment added to page ' + pageId + ' (comment id: ' + r.id + ').' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_comment_to_page failed: ' + msg } }];\n  }\n\n// === list_comments_on_page ===\n} else if (action === 'list_comments_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/footer-comments?body-format=storage&limit=50', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No comments on page ' + pageId + '.' } }];\n    let out = 'Comments on page ' + pageId + ' (' + items.length + '):\\n\\n';\n    for (const c of items) {\n      const body = c.body && c.body.storage ? stripHtml(c.body.storage.value) : '';\n      out += '  [' + c.id + '] ' + body + '\\n';\n    }\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_comments_on_page failed: ' + err.message } }];\n  }\n\n// === add_label_to_page ===\n} else if (action === 'add_label_to_page') {\n  const pageId = input.page_id;\n  const label = input.label;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required (e.g. \"meeting-notes\", \"onboarding\").' } }];\n  const body = [{ prefix: 'global', name: String(label) }];\n  try {\n    await helpers.httpRequest({ method: 'POST', url: V1 + '/content/' + encodeURIComponent(pageId) + '/label', headers: jsonHeaders, body: JSON.stringify(body) });\n    return [{ json: { result: 'Label \"' + label + '\" added to page ' + pageId + '.' } }];\n  } catch (err) {\n    const msg = err.response && err.response.body ? JSON.stringify(err.response.body) : err.message;\n    return [{ json: { error: 'Confluence add_label_to_page failed: ' + msg } }];\n  }\n\n// === list_labels_on_page ===\n} else if (action === 'list_labels_on_page') {\n  const pageId = input.page_id;\n  if (!pageId) return [{ json: { error: 'Parameter \"page_id\" is required.' } }];\n  try {\n    const r = await helpers.httpRequest({ method: 'GET', url: V2 + '/pages/' + encodeURIComponent(pageId) + '/labels', headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No labels on page ' + pageId + '.' } }];\n    let out = 'Labels on page ' + pageId + ' (' + items.length + '):\\n';\n    for (const l of items) out += '  ' + (l.name || '') + ' (prefix: ' + (l.prefix || 'global') + ')\\n';\n    return [{ json: { result: out } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence list_labels_on_page failed: ' + err.message } }];\n  }\n\n// === search_by_label ===\n} else if (action === 'search_by_label') {\n  const label = input.label;\n  if (!label) return [{ json: { error: 'Parameter \"label\" is required.' } }];\n  const limit = Math.min(parseInt(input.limit) || 25, 100);\n  const cql = 'label = \"' + String(label).replace(/\"/g, '\\\\\"') + '\"';\n  try {\n    const qs = buildQs({ cql, limit: String(limit) });\n    const r = await helpers.httpRequest({ method: 'GET', url: V1 + '/content/search?' + qs, headers: authHeaders });\n    const items = r.results || [];\n    if (items.length === 0) return [{ json: { result: 'No content matched label \"' + label + '\". Note: search index may lag on newly labeled pages.' } }];\n    let out = 'Content with label \"' + label + '\" (' + items.length + '):\\n';\n    for (const p of items) out += '  [' + p.id + '] ' + (p.title || '') + ' (' + (p.type || 'page') + ')\\n';\n    return [{ json: { result: truncate(out) } }];\n  } catch (err) {\n    return [{ json: { error: 'Confluence search_by_label failed: ' + err.message } }];\n  }\n\n} else {\n  return [{ json: { error: 'Unknown action: \"' + action + '\". Available: list_spaces, list_pages_in_space, search_pages, get_page, get_page_by_title, list_children, create_page, update_page, delete_page, add_comment_to_page, list_comments_on_page, add_label_to_page, list_labels_on_page, search_by_label.' } }];\n}\n"
         }
       }
     ],
@@ -100,8 +100,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -127,7 +127,8 @@
             "value": {
               "action": "list_pages_in_space",
               "space_id": "={{ $fromAI('space_id', 'Space numeric id', 'string') }}",
-              "limit": "={{ $fromAI('limit', 'Max pages (default 25)', 'string') }}"
+              "limit": "={{ $fromAI('limit', 'Max pages (default 25)', 'string') }}",
+              "space_key": "={{ $fromAI('space_key', 'Alias: Space-Key statt space_id (wird aufgeloest)', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -151,10 +152,17 @@
                 "type": "string",
                 "description": "Limit",
                 "required": false
+              },
+              {
+                "id": "space_key",
+                "displayName": "space_key",
+                "type": "string",
+                "description": "Alias: Space-Key statt space_id (wird aufgeloest)",
+                "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -169,7 +177,7 @@
         ],
         "parameters": {
           "name": "search_pages",
-          "description": "Full-text search using CQL. Examples: 'text ~ \"onboarding\"', 'space = MARKETING AND type = page', 'creator = currentUser()'. Plain text is auto-wrapped as text~query. Parameters: query (required), limit (optional default 10).",
+          "description": "Full-text search using CQL. Examples: 'text ~ \"onboarding\"', 'space = MARKETING AND type = page', 'creator = currentUser()'. Plain text is auto-wrapped as text~query. Parameters: query (required), limit (optional default 10). Multi-word plain text is OR-combined automatically. Note: the search index lags for very new pages; use list_pages_in_space as fallback.",
           "workflowId": {
             "__rl": true,
             "value": "REPLACE_SUB_WORKFLOW_ID",
@@ -206,8 +214,8 @@
                 "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -251,8 +259,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -304,8 +312,8 @@
                 "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -357,8 +365,8 @@
                 "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -386,7 +394,9 @@
               "space_id": "={{ $fromAI('space_id', 'Space numeric id', 'string') }}",
               "title": "={{ $fromAI('title', 'Page title', 'string') }}",
               "body": "={{ $fromAI('body', 'HTML body in storage format', 'string') }}",
-              "parent_id": "={{ $fromAI('parent_id', 'Optional parent page id', 'string') }}"
+              "parent_id": "={{ $fromAI('parent_id', 'Optional parent page id', 'string') }}",
+              "content": "={{ $fromAI('content', 'Alias fuer body (HTML storage format)', 'string') }}",
+              "space_key": "={{ $fromAI('space_key', 'Alias: Space-Key statt space_id (wird aufgeloest)', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -424,10 +434,24 @@
                 "type": "string",
                 "description": "Parent page id",
                 "required": false
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Alias fuer body (HTML storage format)",
+                "required": false
+              },
+              {
+                "id": "space_key",
+                "displayName": "space_key",
+                "type": "string",
+                "description": "Alias: Space-Key statt space_id (wird aufgeloest)",
+                "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -454,7 +478,8 @@
               "action": "update_page",
               "page_id": "={{ $fromAI('page_id', 'Page id', 'string') }}",
               "title": "={{ $fromAI('title', 'New title (optional)', 'string') }}",
-              "body": "={{ $fromAI('body', 'New HTML body (optional)', 'string') }}"
+              "body": "={{ $fromAI('body', 'New HTML body (optional)', 'string') }}",
+              "content": "={{ $fromAI('content', 'Alias fuer body (HTML storage format)', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -485,10 +510,17 @@
                 "type": "string",
                 "description": "Body",
                 "required": false
+              },
+              {
+                "id": "content",
+                "displayName": "content",
+                "type": "string",
+                "description": "Alias fuer body (HTML storage format)",
+                "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -532,8 +564,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -585,8 +617,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -630,8 +662,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -683,8 +715,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -728,8 +760,8 @@
                 "required": true
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       },
@@ -781,8 +813,8 @@
                 "required": false
               }
             ],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "attemptToConvertTypes": true,
+            "convertFieldsToString": true
           }
         }
       }
