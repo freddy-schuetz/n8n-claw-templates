@@ -1,7 +1,7 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "updated": "2026-07-31",
   "type": "native",
   "category": "productivity",
@@ -37,7 +37,7 @@
     },
     {
       "name": "search_pages",
-      "description": "Search Confluence with CQL or plain text. Pages and blogposts are both searched by default; narrow with content_type. Plain text is auto-wrapped, real CQL (containing = or ~) is passed through unchanged. Parameters: query (required), limit (optional), content_type (optional)."
+      "description": "Search Confluence with CQL or plain text. Pages and blogposts are both searched by default; narrow with content_type. Plain text is auto-wrapped, real CQL (containing = or ~) is passed through unchanged. Parameters: query (required), limit (optional), content_type (optional). IMPORTANT for questions about recent content: pass order=newest, otherwise relevance ranking can hide the newest pages behind older ones."
     },
     {
       "name": "get_page",
@@ -85,7 +85,7 @@
     },
     {
       "name": "search_by_label",
-      "description": "Find content carrying a label. Returns pages and blogposts. Parameters: label (required), limit (optional), content_type (optional)."
+      "description": "Find content carrying a label. Returns pages and blogposts. Parameters: label (required), limit (optional), content_type (optional). Pass order=newest to see the most recent content first."
     }
   ],
   "author": "freddy-schuetz",
