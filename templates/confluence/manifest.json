@@ -1,7 +1,7 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "updated": "2026-07-31",
   "type": "native",
   "category": "productivity",
@@ -41,7 +41,7 @@
     },
     {
       "name": "get_page",
-      "description": "Fetch a page or blogpost by id, with body, version and space. Blogposts are detected automatically. Live Docs are returned as readable text. The Version number shown can be passed to update_page as expected_version for a safe edit. Parameters: page_id (required), content_type (optional: page or blogpost)."
+      "description": "Fetch a page or blogpost by id, with body, version and space. Blogposts are detected automatically. Live Docs are returned as readable text. The Version number shown can be passed to update_page as expected_version for a safe edit. Parameters: page_id (required), content_type (optional: page or blogpost). Set format=storage to get the raw markup instead of readable text, which is what you need before editing a page."
     },
     {
       "name": "get_page_by_title",
@@ -57,7 +57,7 @@
     },
     {
       "name": "update_page",
-      "description": "Update title and/or body of a page or blogpost by REPLACING the content. To add an entry to a list or a row to a table, use append_to_page instead: it does not rewrite the page and cannot lose existing content. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Content that exists only in ADF format (no storage representation) is refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional)."
+      "description": "Update title and/or body of a page or blogpost by REPLACING the content. To add an entry to a list or a row to a table, use append_to_page instead: it does not rewrite the page and cannot lose existing content. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Content that exists only in ADF format (no storage representation) is refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional). A new body that is much shorter than the current one is refused, because that usually means formatting or other entries were lost; pass allow_shrink=true if it is intended."
     },
     {
       "name": "append_to_page",
