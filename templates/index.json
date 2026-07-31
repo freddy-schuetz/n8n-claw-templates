@@ -840,7 +840,7 @@
           "shared_id": "atlassian-api-token"
         }
       ],
-      "version": "1.5.0"
+      "version": "1.6.0"
     },
     {
       "id": "stripe",

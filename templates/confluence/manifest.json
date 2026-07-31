@@ -1,7 +1,7 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "updated": "2026-07-31",
   "type": "native",
   "category": "productivity",
@@ -57,7 +57,7 @@
     },
     {
       "name": "update_page",
-      "description": "Update title and/or body of a page or blogpost by REPLACING the content. To add an entry to a list or a row to a table, use append_to_page instead: it does not rewrite the page and cannot lose existing content. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Content that exists only in ADF format (no storage representation) is refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional). A new body that is much shorter than the current one is refused, because that usually means formatting or other entries were lost; pass allow_shrink=true if it is intended."
+      "description": "Update title and/or body of a page or blogpost by REPLACING the content. To add an entry to a list or a row to a table, use append_to_page instead: it does not rewrite the page and cannot lose existing content. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Content that exists only in ADF format (no storage representation) is refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional). A new body that is much shorter than the current one is refused, because that usually means formatting or other entries were lost; pass allow_shrink=true if it is intended. An update that would drop existing structure such as column widths or macros is refused; pass allow_format_loss=true if that is intended."
     },
     {
       "name": "append_to_page",
