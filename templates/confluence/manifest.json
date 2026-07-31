@@ -1,7 +1,7 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "updated": "2026-07-30",
   "type": "native",
   "category": "productivity",
@@ -57,7 +57,7 @@
     },
     {
       "name": "update_page",
-      "description": "Update title and/or body of a page or blogpost. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Live Docs cannot be written by this tool and are refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional)."
+      "description": "Update title and/or body of a page or blogpost. Body must be storage-format HTML. The version is bumped automatically. Best practice: call get_page first and pass its Version as expected_version - the update is then refused instead of silently overwriting someone else's edit. Content that exists only in ADF format (no storage representation) is refused rather than wiped. Sending only a title keeps the existing body. Parameters: page_id (required), title (optional), body (optional), expected_version (optional), change_note (optional), content_type (optional)."
     },
     {
       "name": "delete_page",
