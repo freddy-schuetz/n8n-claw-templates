@@ -1,7 +1,7 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "updated": "2026-08-13",
   "type": "native",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
@@ -28,11 +28,11 @@
   "tools": [
     {
       "name": "deploy_meeting_bot",
-      "description": "Deploy a transcription bot to a Google Meet, Teams, or Zoom meeting. Teams needs the full invitation link including the passcode"
+      "description": "Deploy a transcription bot to a Google Meet, Teams, or Zoom meeting and return the Vexa run ID for that session. Teams needs the full invitation link including the passcode"
     },
     {
       "name": "get_transcript",
-      "description": "Get the transcript of a meeting, grouped into speaker blocks with timestamps, optionally limited to a time window"
+      "description": "Get the transcript of a meeting, grouped into speaker blocks with timestamps. Refuses rather than return a different session when a vexa_run_id is given and does not match"
     },
     {
       "name": "share_transcript",
@@ -43,10 +43,6 @@
       "description": "List all currently running meeting bots"
     },
     {
-      "name": "list_meetings",
-      "description": "List past meetings with platform, ID, date and segment count, so a meeting can be found without knowing its link"
-    },
-    {
       "name": "stop_bot",
       "description": "Stop and remove a bot from a meeting"
     }
@@ -54,7 +50,8 @@
   "notes": [
     "BREAKING in 2.0.0: Vexa split its API into two scopes with separate keys. An installation that only has vexa_api_key will fail on every transcript call with HTTP 403 'Insufficient scope for this endpoint'. Add vexa_tx_key to fix it.",
     "get_transcript returns up to 60000 characters, which is more than the 5000 character guideline for templates. A one hour meeting is roughly 70000 characters of speech, and a truncated transcript is useless for writing minutes. Beyond that limit the tool tells the model to fetch the rest with from_time and to_time.",
-    "Passages the transcription service cannot attribute are marked '(unknown speaker)' and are never folded into the previous speaker, so the model cannot invent an attribution."
+    "Passages the transcription service cannot attribute are marked '(unknown speaker)' and are never folded into the previous speaker, so the model cannot invent an attribution.",
+    "Vexa addresses transcripts by the meeting room ID, and a recurring meeting reuses that ID for every session. GET /transcripts/{platform}/{id} then returns only the MOST RECENT run, silently, even when that run failed with zero segments while an older run holds the real recording. Verified against the live API on 2026-08-13: no query parameter and no alternative endpoint reaches an older run. deploy_meeting_bot therefore returns a run ID and get_transcript refuses when the run it received is not the one asked for. Older sessions of a recurring meeting are not retrievable at all."
   ],
   "author": "freddy-schuetz",
   "license": "MIT",
