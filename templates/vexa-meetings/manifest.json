@@ -1,7 +1,7 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "updated": "2026-08-13",
   "type": "native",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
@@ -23,6 +23,11 @@
       "key": "vexa_url",
       "label": "Vexa Base URL (self-hosted)",
       "hint": "Only for self-hosted Vexa instances, e.g. http://localhost:8056. Leave empty to use the Vexa cloud."
+    },
+    {
+      "key": "vexa_bot_name",
+      "label": "Bot display name",
+      "hint": "Name the bot shows in every meeting, e.g. your assistant’s name. Set it once and it no longer depends on the model passing bot_name. Leave empty for \"Meeting Notetaker\"."
     }
   ],
   "tools": [
