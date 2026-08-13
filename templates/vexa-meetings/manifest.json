@@ -43,6 +43,10 @@
       "description": "List all currently running meeting bots"
     },
     {
+      "name": "list_meetings",
+      "description": "List past meetings with platform, ID, date and segment count, so a meeting can be found without knowing its link"
+    },
+    {
       "name": "stop_bot",
       "description": "Stop and remove a bot from a meeting"
     }

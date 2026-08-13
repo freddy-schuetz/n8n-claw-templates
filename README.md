@@ -161,7 +161,7 @@ Skill catalog for [n8n-claw](https://github.com/freddy-schuetz/n8n-claw) MCP ser
 
 | Skill | Description | Credentials | Author | Tested |
 |-------|-------------|-------------|--------|:------:|
-| [Vexa Meetings](https://vexa.ai/) | Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them | Vexa Bot API Key + Vexa Transcription API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
+| [Vexa Meetings](https://vexa.ai/) | Deploy transcription bots to Google Meet, Teams, and Zoom meetings, list past meetings, get transcripts, and share them | Vexa Bot API Key + Vexa Transcription API Key | [@freddy-schuetz](https://github.com/freddy-schuetz) | ✓ |
 
 ### Network
 
