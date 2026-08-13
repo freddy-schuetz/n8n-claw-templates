@@ -306,14 +306,18 @@
       "name": "Vexa Meetings",
       "type": "native",
       "category": "meetings",
-      "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings (Vexa.ai API)",
+      "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
       "credentials_required": [
         {
           "key": "vexa_api_key",
-          "label": "Vexa API Key"
+          "label": "Vexa Bot API Key"
+        },
+        {
+          "key": "vexa_tx_key",
+          "label": "Vexa Transcription API Key"
         }
       ],
-      "version": "1.0.0"
+      "version": "2.0.0"
     },
     {
       "id": "notion",

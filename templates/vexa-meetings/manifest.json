@@ -1,31 +1,42 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "1.0.0",
-  "updated": "2026-03-12",
+  "version": "2.0.0",
+  "updated": "2026-08-13",
   "type": "native",
-  "category": "meetings",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
+  "category": "meetings",
   "credentials_required": [
     {
       "key": "vexa_api_key",
-      "label": "Vexa API Key",
-      "hint": "Get your API key from vexa.ai/dashboard/api-keys — starts at $12/month"
+      "label": "Vexa Bot API Key",
+      "hint": "The bot key, starts with vxa_bot_. Drives deploy_meeting_bot, list_bots and stop_bot. Get it at vexa.ai/dashboard under API keys."
+    },
+    {
+      "key": "vexa_tx_key",
+      "label": "Vexa Transcription API Key",
+      "hint": "The transcription key, starts with vxa_tx_. Drives get_transcript and share_transcript. Vexa rejects the bot key on these endpoints with HTTP 403, so both keys are required."
     }
   ],
-  "credentials_optional": [],
+  "credentials_optional": [
+    {
+      "key": "vexa_url",
+      "label": "Vexa Base URL (self-hosted)",
+      "hint": "Only for self-hosted Vexa instances, e.g. http://localhost:8056. Leave empty to use the Vexa cloud."
+    }
+  ],
   "tools": [
     {
       "name": "deploy_meeting_bot",
-      "description": "Deploy a transcription bot to a Google Meet, Teams, or Zoom meeting"
+      "description": "Deploy a transcription bot to a Google Meet, Teams, or Zoom meeting. Teams needs the full invitation link including the passcode"
     },
     {
       "name": "get_transcript",
-      "description": "Get the transcript of a meeting"
+      "description": "Get the transcript of a meeting, grouped into speaker blocks with timestamps, optionally limited to a time window"
     },
     {
       "name": "share_transcript",
-      "description": "Create a shareable link for a meeting transcript"
+      "description": "Create a public, time limited link for a meeting transcript"
     },
     {
       "name": "list_bots",
@@ -36,7 +47,12 @@
       "description": "Stop and remove a bot from a meeting"
     }
   ],
+  "notes": [
+    "BREAKING in 2.0.0: Vexa split its API into two scopes with separate keys. An installation that only has vexa_api_key will fail on every transcript call with HTTP 403 'Insufficient scope for this endpoint'. Add vexa_tx_key to fix it.",
+    "get_transcript returns up to 60000 characters, which is more than the 5000 character guideline for templates. A one hour meeting is roughly 70000 characters of speech, and a truncated transcript is useless for writing minutes. Beyond that limit the tool tells the model to fetch the rest with from_time and to_time.",
+    "Passages the transcription service cannot attribute are marked '(unknown speaker)' and are never folded into the previous speaker, so the model cannot invent an attribution."
+  ],
   "author": "freddy-schuetz",
   "license": "MIT",
-  "tested_n8n_version": "2.10.4"
+  "tested_n8n_version": "2.21.4"
 }
