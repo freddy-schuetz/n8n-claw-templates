@@ -1,7 +1,7 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "updated": "2026-08-18",
   "type": "native",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
@@ -38,6 +38,11 @@
       "key": "vexa_timezone",
       "label": "Time zone for timestamps",
       "hint": "IANA zone such as Europe/Vienna. Vexa timestamps are UTC; without this the minutes show a meeting that ran at 08:37 as 06:37. Empty means UTC, which is then labelled as such."
+    },
+    {
+      "key": "vexa_leave_alone_ms",
+      "label": "Silence before the bot leaves (ms)",
+      "hint": "How long the bot stays after the last audio, in milliseconds. Default 600000, ten minutes, which is also Vexa own default and was measured leaving 10.1 minutes after the last word. Shorten with care: this is a SILENCE timer, not a headcount, so a quiet stretch during a demo can throw the bot out mid-meeting."
     }
   ],
   "tools": [
@@ -66,8 +71,10 @@
     "BREAKING in 2.0.0: Vexa split its API into two scopes with separate keys. An installation that only has vexa_api_key will fail on every transcript call with HTTP 403 'Insufficient scope for this endpoint'. Add vexa_tx_key to fix it.",
     "get_transcript returns up to 60000 characters, which is more than the 5000 character guideline for templates. A one hour meeting is roughly 70000 characters of speech, and a truncated transcript is useless for writing minutes. Beyond that limit the tool tells the model to fetch the rest with from_time and to_time.",
     "Passages the transcription service cannot attribute are marked '(unknown speaker)' and are never folded into the previous speaker, so the model cannot invent an attribution.",
-    "Vexa addresses transcripts by the meeting room ID, and a recurring meeting reuses that ID for every session. GET /transcripts/{platform}/{id} then returns only the MOST RECENT run, silently, even when that run failed with zero segments while an older run holds the real recording. Verified against the live API on 2026-08-13: no query parameter and no alternative endpoint reaches an older run. deploy_meeting_bot therefore returns a run ID and get_transcript refuses when the run it received is not the one asked for. Older sessions of a recurring meeting are not retrievable at all.",
-    "Field tested at a customer on 17. and 18.08.2026, five findings, all fixed in 2.3.0: an empty language from the model made Whisper detect per segment and 21% of a German meeting came back in English, Russian, Portuguese, French, Polish, Danish and Spanish, so instance settings now win over the model. Several people sharing one device in a call are reported by Vexa as a single speaker, and the old 12 second grouping gap merged 394 segments into ONE paragraph of 24000 characters, so the gap is 2 seconds and a note explains why names cannot be assigned. Timestamps were served raw in UTC and the minutes were two hours off. list_bots does not show a bot that is still joining, which produced two bots in one meeting, so deploy now checks /meetings first. And a 404 from stop_bot was being read as \"the bot already left\" while it was still in the room."
+    "Field tested at a customer on 17. and 18.08.2026, five findings, all fixed in 2.3.0: an empty language from the model made Whisper detect per segment and 21% of a German meeting came back in English, Russian, Portuguese, French, Polish, Danish and Spanish, so instance settings now win over the model. Several people sharing one device in a call are reported by Vexa as a single speaker, and the old 12 second grouping gap merged 394 segments into ONE paragraph of 24000 characters, so the gap is 2 seconds and a note explains why names cannot be assigned. Timestamps were served raw in UTC and the minutes were two hours off. list_bots does not show a bot that is still joining, which produced two bots in one meeting, so deploy now checks /meetings first. And a 404 from stop_bot was being read as \"the bot already left\" while it was still in the room.",
+    "CORRECTION to a claim made in 2.0.0: earlier sessions of a recurring meeting ARE retrievable. GET /transcripts/{platform}/{id} does serve only the most recent run for a room, silently, but GET /transcripts/by-id/{run_id} serves any run exactly. Verified on 2026-08-18: for a room with two runs the room route returned 25275 while by-id/25274 returned the older one with its 8 segments. 2.0.0 wrongly concluded that no endpoint reaches an older run and refused instead. deploy_meeting_bot returns the run ID and get_transcript now fetches that exact run.",
+    "The bot leaves by itself and always did: Vexa treats \"alone\" as SILENCE, not as a headcount, with a built-in ten minute window. Measured on three real meetings, the bot ended 10.1 minutes after the last word every time. 2.4.0 passes automatic_leave explicitly so the value cannot drift, and adds two guards: no_one_joined_timeout of ten minutes for a meeting that never happens, and max_bot_time of four hours against a forgotten bot. A meeting running longer than four hours would be cut off. Shortening the silence window is the dangerous direction: measured across two customer meetings the longest mid-meeting pause was 32 seconds, but a demo or a shared document can be quiet for much longer.",
+    "The meeting chat is NOT available. GET /bots/{platform}/{id}/chat exists and answers 200 with the bot key, but returned an empty message list in every test, including live while the bot was in a Teams meeting and messages had just been typed. Do not build on it without retesting."
   ],
   "author": "freddy-schuetz",
   "license": "MIT",
