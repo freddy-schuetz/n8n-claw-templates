@@ -150,6 +150,14 @@ async function fall(name, fn) {
     assert.equal(puts(r.log)[0].fields.assignee.accountId, '557058:bbbb');
   });
 
+  await fall('ohne fields kommen Custom-Felder mit Wert automatisch mit', async () => {
+    const r = await lauf({ action: 'get_issue', caller: 'web:florian', key: 'OM-1' },
+      { fields: { customfield_10098: [{ value: 'Meta' }] } });
+    assert.ok(!r.json.error, r.json.error);
+    assert.ok(gets(r.log).some(u => u.includes('*navigable')), 'Standardabruf fragt *navigable mit ab');
+    assert.match(r.json.result, /Maßnahme: Meta/);
+  });
+
   console.log('');
   console.log((n - fehler) + ' von ' + n + ' Faellen bestanden');
   process.exit(fehler ? 1 : 0);
