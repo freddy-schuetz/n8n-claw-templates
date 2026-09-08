@@ -801,7 +801,7 @@
       "name": "Jira Cloud",
       "type": "native",
       "category": "productivity",
-      "description": "Jira Cloud issue tracking (12 tools): JQL search, CRUD issues, comments, transitions, issue links, user search. Shares Atlassian credentials with Confluence.",
+      "description": "Jira Cloud issue tracking (13 tools): JQL search, CRUD issues, comments, transitions, issue links, user search, custom fields by name, due dates, bulk updates. Shares Atlassian credentials with Confluence.",
       "credentials_required": [
         {
           "key": "atlassian_email",
@@ -819,7 +819,7 @@
           "shared_id": "atlassian-api-token"
         }
       ],
-      "version": "1.2.0"
+      "version": "1.3.0"
     },
     {
       "id": "confluence",
