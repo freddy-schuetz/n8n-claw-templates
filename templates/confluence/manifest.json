@@ -1,11 +1,11 @@
 {
   "id": "confluence",
   "name": "Confluence Cloud",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "updated": "2026-09-10",
   "type": "native",
   "category": "productivity",
-  "description": "Confluence Cloud wiki (15 tools): CQL search, CRUD for pages and blogposts, readable Live Docs, comments, labels, spaces. Safe updates via expected_version. Shares Atlassian credentials with Jira.",
+  "description": "Confluence Cloud wiki (16 tools): CQL search, CRUD for pages and blogposts, readable Live Docs, comments, labels, spaces. Safe updates via expected_version. Shares Atlassian credentials with Jira.",
   "credentials_required": [
     {
       "key": "atlassian_email",
@@ -86,6 +86,10 @@
     {
       "name": "search_by_label",
       "description": "Find content carrying a label. Returns pages and blogposts. Parameters: label (required), limit (optional), content_type (optional). Pass order=newest to see the most recent content first."
+    },
+    {
+      "name": "replace_in_page",
+      "description": "Replace one exact snippet of a page without rewriting it (move a row, change a sentence, remove a block); version and structure guards"
     }
   ],
   "author": "freddy-schuetz",

@@ -40,8 +40,11 @@ function makeHelpers(opts) {
       if (dec.includes('query=Florian')) return [FLORIAN];
       if (dec.includes('query=Michael')) return [MICHAEL_A, MICHAEL_B];
       if (dec.includes('query=Schumi')) return [FLORIAN];
+      if (dec.includes('query=Mike Ammer')) return [MICHAEL_A];
       return [];
     }
+    if (method === 'POST' && /\/issue\/OM-\d+\/comment$/.test(url)) return { id: '900' };
+    if (url.startsWith(API + '/search/jql?')) return { issues: [], total: 0 };
     if (url === API + '/issue/createmeta/OM/issuetypes') { if (opts.typenFehler) throw new Error('createmeta weg'); return { issueTypes: TYPEN }; }
     if (/\/issue\/createmeta\/OM\/issuetypes\/\d+$/.test(url)) return { fields: [{ fieldId: 'summary', name: 'Zusammenfassung', required: true, schema: { type: 'string' } }] };
     if (method === 'POST' && url === API + '/issue') {
@@ -152,6 +155,32 @@ test('list_issue_types zeigt Ebenen und die Regel', async () => {
   inc(json.result, 'Arbeitspaket (Ebene 1, kann Aufgaben enthalten)');
   inc(json.result, 'Unteraufgabe (Ebene -1, braucht parent)');
   inc(json.result, 'Regel: Typ genau so uebernehmen');
+});
+test('ohne issuetype: der einzige Typ der Ebene 0 (Aufgabe), nicht "Task"', async () => {
+  const { json, log } = await run({ action: 'create_issue', caller: 'web:florian', project: 'OM', summary: 'Ohne Typ' });
+  assert(json.result, JSON.stringify(json));
+  assert(postBody(log).fields.issuetype.name === 'Aufgabe', 'Aufgabe erwartet: ' + JSON.stringify(postBody(log).fields.issuetype));
+});
+test('update_issue nennt den Bearbeiter in der Erfolgsmeldung', async () => {
+  const { json } = await run({ action: 'update_issue', caller: 'web:florian', caller_name: 'Florian Schumacher', key: 'OM-1', assignee: 'me' });
+  inc(json.result, 'Bearbeiter: Florian Schumacher');
+});
+test('Erwaehnung @me in einem Kommentar wird zur fragenden Person, nicht zum unscharfen Treffer', async () => {
+  const { json, log } = await run({ action: 'add_comment', caller: 'web:florian', caller_name: 'Florian Schumacher', key: 'OM-1', text: 'Bitte @me zuordnen' });
+  const post = log.find(r => (r.method || '').toUpperCase() === 'POST' && /\/issue\/OM-1\/comment$/.test(r.url));
+  assert(post, 'Kommentar-POST erwartet: ' + JSON.stringify(json));
+  assert(post.body.includes(FLORIAN.accountId), 'Florian als Mention erwartet: ' + post.body.slice(0, 300));
+  assert(!post.body.includes(MARTINA.accountId), 'Martina darf nicht erwaehnt werden');
+});
+test('Erwaehnung @Schumi (unscharfer Einzeltreffer) wird nicht still uebernommen', async () => {
+  const { json } = await run({ action: 'add_comment', caller: 'web:florian', key: 'OM-1', text: 'Danke @Schumi' });
+  inc(json.error || '', 'trifft nicht genau');
+});
+test('currentUser() mit Profilnamen, der Jira nur unscharf kennt (Mike -> Michael), geht weiter (vertrauter Pfad)', async () => {
+  const { json, log } = await run({ action: 'search_issues', caller: 'web:mike', caller_name: 'Mike Ammer', jql: 'assignee = currentUser()', limit: '5' });
+  const such = log.find(r => r.url.includes('/search/jql'));
+  assert(such, 'Suche erwartet: ' + JSON.stringify(json));
+  assert(decodeURIComponent(such.url).includes(MICHAEL_A.accountId), 'Michael Ammer erwartet: ' + decodeURIComponent(such.url).slice(0, 200));
 });
 test('Server: caller_name im Schema von create_issue und update_issue, Beschreibungen angepasst', async () => {
   for (const n of ['create_issue', 'update_issue']) {
