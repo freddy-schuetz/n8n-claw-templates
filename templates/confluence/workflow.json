@@ -315,7 +315,7 @@
         ],
         "parameters": {
           "name": "get_page_by_title",
-          "description": "Find a page or blogpost by exact title. Searches pages first, then blogposts. Parameters: title (required), space_id (optional), content_type (optional).",
+          "description": "Find a page or blogpost by exact title. Searches pages first, then blogposts. Parameters: title (required), space_id or space_key (optional), content_type (optional).",
           "workflowId": {
             "__rl": true,
             "value": "REPLACE_SUB_WORKFLOW_ID",
@@ -327,7 +327,8 @@
               "action": "get_page_by_title",
               "title": "={{ $fromAI('title', 'Exact page title', 'string') }}",
               "space_id": "={{ $fromAI('space_id', 'Optional space id filter', 'string') }}",
-              "content_type": "={{ $fromAI('content_type', 'Optional: page or blogpost. Leave empty to auto-detect.', 'string') }}"
+              "content_type": "={{ $fromAI('content_type', 'Optional: page or blogpost. Leave empty to auto-detect.', 'string') }}",
+              "space_key": "={{ $fromAI('space_key', 'Alias: Space-Key statt space_id (wird aufgeloest)', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -357,6 +358,13 @@
                 "displayName": "content_type",
                 "type": "string",
                 "description": "page or blogpost, empty for auto-detect",
+                "required": false
+              },
+              {
+                "id": "space_key",
+                "displayName": "space_key",
+                "type": "string",
+                "description": "Alias: Space-Key statt space_id (wird aufgeloest)",
                 "required": false
               }
             ],
