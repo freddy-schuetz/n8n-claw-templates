@@ -147,7 +147,13 @@ async function fall(name, fn) {
   await fall('Name ohne Leerzeichen gilt nicht als accountId', async () => {
     const r = await lauf({ action: 'update_issue', caller: 'web:florian', key: 'OM-1', assignee: 'Maximilian-Alexander' });
     assert.ok(r.log.some(x => x.url.includes('/user/search')), 'Nutzersuche gelaufen');
-    assert.equal(puts(r.log)[0].fields.assignee.accountId, '557058:bbbb');
+    // Seit 1.4.0 (10.09.2026) wird ein unscharfer Einzeltreffer nicht mehr still
+    // uebernommen ("me" wurde Martina Rechner-Meilinger): der Kandidat wird genannt,
+    // die Zuweisung braucht den vollen Namen.
+    assert.equal(puts(r.log).length, 0, 'kein PUT ohne exakten Treffer');
+    assert.match(r.json.error, /Meinst du Maximilian-Alexander Huber/);
+    const r2 = await lauf({ action: 'update_issue', caller: 'web:florian', key: 'OM-1', assignee: 'Maximilian-Alexander Huber' });
+    assert.equal(puts(r2.log)[0].fields.assignee.accountId, '557058:bbbb');
   });
 
   await fall('ohne fields kommen Custom-Felder mit Wert automatisch mit', async () => {
