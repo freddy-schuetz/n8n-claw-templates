@@ -1,7 +1,7 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "updated": "2026-08-18",
   "type": "native",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",
@@ -65,6 +65,10 @@
     {
       "name": "stop_bot",
       "description": "Stop and remove a bot from a meeting"
+    },
+    {
+      "name": "check_meeting_url",
+      "description": "Check a meeting link without deploying a bot"
     }
   ],
   "notes": [

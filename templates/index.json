@@ -317,7 +317,7 @@
           "label": "Vexa Transcription API Key"
         }
       ],
-      "version": "2.4.0"
+      "version": "2.5.0"
     },
     {
       "id": "notion",
@@ -819,7 +819,7 @@
           "shared_id": "atlassian-api-token"
         }
       ],
-      "version": "1.3.0"
+      "version": "1.4.1"
     },
     {
       "id": "confluence",
@@ -844,7 +844,7 @@
           "shared_id": "atlassian-api-token"
         }
       ],
-      "version": "1.7.0"
+      "version": "1.9.0"
     },
     {
       "id": "stripe",
