@@ -2,7 +2,7 @@
   "id": "confluence",
   "name": "Confluence Cloud",
   "version": "1.9.0",
-  "updated": "2026-09-10",
+  "updated": "2026-09-18",
   "type": "native",
   "category": "productivity",
   "description": "Confluence Cloud wiki (16 tools): CQL search, CRUD for pages and blogposts, readable Live Docs, comments, labels, spaces. Safe updates via expected_version. Shares Atlassian credentials with Jira.",
