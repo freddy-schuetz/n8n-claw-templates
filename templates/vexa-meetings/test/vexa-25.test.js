@@ -105,20 +105,27 @@ const URL_OHNE = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_ZTNj%40
 
 (async () => {
   console.log('--- Leeres Guthaben wird als das benannt, was es ist ---');
-  let r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT }, { meetings: [meeting(28688)] });
-  pruefe('deploy startet gar nicht erst', /prepaid credit on the Vexa account is used up/.test(r.json.error), r.json);
+  // Der Befund ERKLAERT den Fehler, er verhindert den Versuch nicht: sonst waere
+  // ein frisch aufgeladenes Konto so lange gesperrt, bis jemand einen Bot startet.
+  let r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT },
+    { meetings: [meeting(28688)], deployFehler: 403 });
+  pruefe('403 bei leerem Konto wird als Guthaben erklaert', /prepaid credit on the Vexa account is used up/.test(r.json.error), r.json);
   pruefe('deploy sagt ausdruecklich: kein Schluesselproblem', /NOT a wrong API key/.test(r.json.error), r.json.error);
   pruefe('deploy nennt den Betreiber als den, der handeln muss', /operator of this assistant can top the account up/.test(r.json.error), r.json.error);
-  pruefe('kein POST an /bots', !r.log.some(x => x.method === 'POST' && /\/bots$/.test(x.url)), r.log.map(x => x.method + ' ' + x.url));
   pruefe('Vexa-Wortlaut steht drin', /out of prepaid credit/.test(r.json.error), r.json.error);
+
+  r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT }, { meetings: [meeting(28688)] });
+  pruefe('frisch aufgeladen: der Versuch laeuft trotz altem Befund',
+    /Bot deployed successfully/.test(r.json.result || ''), r.json);
+  pruefe('und der Bot wird wirklich geschickt', r.log.some(x => x.method === 'POST' && /\/bots$/.test(x.url)), r.log.map(x => x.method + ' ' + x.url));
 
   r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT },
     { meetings: [meeting(28688, { autoritaet: OK })], deployFehler: 403 });
   pruefe('403 ohne Guthabenbefund bleibt der Schluesselhinweis', /insufficient scope/.test(r.json.error) && /vxa_bot_/.test(r.json.error), r.json.error);
 
   r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT },
-    { meetings: [meeting(28688, { autoritaet: Object.assign({}, LEER, { decided_at: '2026-08-01T10:00:00Z' }) })] });
-  pruefe('alter Guthabenbefund (6 Wochen) blockiert nicht mehr', !r.json.error || !/prepaid credit/.test(r.json.error), r.json);
+    { meetings: [meeting(28688, { autoritaet: Object.assign({}, LEER, { decided_at: '2026-08-01T10:00:00Z' }) })], deployFehler: 403 });
+  pruefe('alter Guthabenbefund (6 Wochen) wird nicht mehr als Grund genannt', !/prepaid credit/.test(r.json.error), r.json);
 
   r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT }, { meetings: [] });
   pruefe('ohne Befund laeuft der Deploy normal', /Bot deployed successfully/.test(r.json.result || ''), r.json);
@@ -179,6 +186,43 @@ const URL_OHNE = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_ZTNj%40
     Object.assign({}, OPTS, { transkripte: { '28688': TRANS['28688'] } }));
   pruefe('nicht abrufbarer Lauf wird benannt, nicht verschwiegen', /COULD NOT BE FETCHED/.test(r.json.result), (r.json.result || '').slice(0, 400));
 
+  console.log('--- Zusammengefuegt wird nach Abstand, nicht nach Kalendertag ---');
+  // Ein Teams-Raum einer wiederkehrenden Besprechung traegt immer dieselbe
+  // Meeting-Id. Zwei Termine am selben Tag duerfen deshalb NICHT zu einem
+  // Protokoll verschmelzen.
+  const NACHMITTAG = meeting(28700, { start: '2026-09-17T12:00:00.000Z', ende: '2026-09-17T12:45:00.000Z' });
+  const TRANS2 = Object.assign({}, TRANS, {
+    '28700': { id: 28700, platform: 'teams', native_meeting_id: '327920174785225', status: 'completed',
+               start_time: '2026-09-17T12:00:00.000Z', end_time: '2026-09-17T12:45:00.000Z',
+               segments: segmente(2, '2026-09-17T12:00:00.000Z', 'Carmen Kurcz') }
+  });
+  r = await run({ action: 'get_transcript', meeting_url: URL_MIT },
+    { meetings: LAEUFE.concat([NACHMITTAG]), neuster: TRANS['28688'], transkripte: TRANS2 });
+  pruefe('die vier Abschnitte am Vormittag gehoeren zusammen', /4 separate recording runs/.test(r.json.result), (r.json.result || '').slice(0, 200));
+  pruefe('der Nachmittagstermin bleibt draussen', !/28700/.test(r.json.result) && !/Carmen Kurcz/.test(r.json.result), (r.json.result || '').slice(0, 300));
+  pruefe('die Abstandsregel steht in der Antwort', /further apart than 45 minutes/.test(r.json.result), null);
+
+  r = await run({ action: 'get_transcript', meeting_url: URL_MIT },
+    { meetings: [NACHMITTAG].concat(LAEUFE), neuster: TRANS2['28700'], transkripte: TRANS2 });
+  pruefe('fragt man den Nachmittagstermin ab, kommt nur er', !/separate recording runs/.test(r.json.result) && /Carmen Kurcz/.test(r.json.result), (r.json.result || '').slice(0, 200));
+
+  // Der gerade abgefragte Lauf fehlt in der Liste oder hat noch kein start_time.
+  r = await run({ action: 'get_transcript', meeting_url: URL_MIT },
+    { meetings: LAEUFE.slice(0, 3), neuster: TRANS['28688'], transkripte: TRANS });
+  pruefe('der abgefragte Lauf ist auch ohne Listeneintrag dabei', (r.json.result.match(/Satz /g) || []).length === 12, (r.json.result.match(/Satz /g) || []).length);
+
+  // Laeuft die Besprechung ueber Mitternacht, zaehlt weiter der Abstand.
+  const NACHT = [
+    meeting(28801, { start: '2026-09-17T21:50:00.000Z', ende: '2026-09-17T22:05:00.000Z' }),
+    meeting(28802, { start: '2026-09-17T22:10:00.000Z', ende: '2026-09-17T22:30:00.000Z' })
+  ];
+  const TRANS_N = {
+    '28801': { id: 28801, platform: 'teams', native_meeting_id: '327920174785225', status: 'completed', start_time: '2026-09-17T21:50:00.000Z', end_time: '2026-09-17T22:05:00.000Z', segments: segmente(2, '2026-09-17T21:50:00.000Z', 'Hannah Traussnigg') },
+    '28802': { id: 28802, platform: 'teams', native_meeting_id: '327920174785225', status: 'completed', start_time: '2026-09-17T22:10:00.000Z', end_time: '2026-09-17T22:30:00.000Z', segments: segmente(2, '2026-09-17T22:10:00.000Z', 'Rainer Edlinger') }
+  };
+  r = await run({ action: 'get_transcript', meeting_url: URL_MIT }, { meetings: NACHT, neuster: TRANS_N['28802'], transkripte: TRANS_N });
+  pruefe('ueber Mitternacht (Wiener Zeit) bleiben die Abschnitte zusammen', /2 separate recording runs/.test(r.json.result), (r.json.result || '').slice(0, 200));
+
   console.log('--- Endegrund im Transkript ---');
   r = await run({ action: 'get_transcript', meeting_url: URL_MIT, all_runs: 'false' },
     { meetings: [meeting(28688, { start: '2026-09-17T08:18:55.000Z' })], neuster: TRANS['28688'], transkripte: TRANS });
@@ -190,7 +234,8 @@ const URL_OHNE = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_ZTNj%40
   console.log('--- check_meeting_url ---');
   r = await run({ action: 'check_meeting_url', meeting_url: URL_MIT }, {});
   pruefe('vollstaendiger Teams-Link ist brauchbar', /^USABLE/.test(r.json.result) && /with passcode/.test(r.json.result), r.json);
-  pruefe('check schickt nichts an Vexa', !r.log.some(x => x.url.indexOf(API) === 0), r.log.map(x => x.url));
+  pruefe('check schickt keinen Bot los (nur die Kontoabfrage)',
+    !r.log.some(x => x.method === 'POST' && /\/bots$/.test(x.url)), r.log.map(x => x.method + ' ' + x.url));
   r = await run({ action: 'check_meeting_url', meeting_url: URL_OHNE }, {});
   pruefe('Teams-Link ohne Passcode wird vorher erkannt', /^NOT USABLE/.test(r.json.result) && /passcode/.test(r.json.result), r.json);
   r = await run({ action: 'check_meeting_url', meeting_url: 'Hier klicken, um an der Besprechung teilzunehmen' }, {});
