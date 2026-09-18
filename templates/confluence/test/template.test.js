@@ -53,7 +53,7 @@ test('Besprechungsprotokoll: alle Abschnitte stehen in der Seite', async () => {
   assert(json.result, JSON.stringify(json));
   const b = postBody(log);
   const v = b.body.value;
-  for (const teil of ['Datum', 'Uhrzeit', 'Teilnehmende', 'Neuigkeiten und Status', 'Themen', 'Entscheidungen', 'Aufgaben', 'Offene Fragen']) {
+  for (const teil of ['Datum', 'Uhrzeit', 'Teilnehmende', 'Neuigkeiten und Status', 'Themen', 'Entscheidungen', 'Aufgaben', 'Offene Fragen', 'nsche und Ideen']) {
     assert(v.indexOf(teil) >= 0, 'Abschnitt fehlt: ' + teil);
   }
   assert(v.indexOf('08.09.2026') >= 0, 'Datum fehlt');
