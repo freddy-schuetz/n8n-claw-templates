@@ -1,7 +1,7 @@
 {
   "id": "vexa-meetings",
   "name": "Vexa Meetings",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "updated": "2026-09-18",
   "type": "native",
   "description": "Deploy transcription bots to Google Meet, Teams, and Zoom meetings, get transcripts, and share them (Vexa.ai API)",

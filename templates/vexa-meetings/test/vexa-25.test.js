@@ -131,6 +131,23 @@ const URL_OHNE = 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_ZTNj%40
   pruefe('ohne Befund laeuft der Deploy normal', /Bot deployed successfully/.test(r.json.result || ''), r.json);
   pruefe('Lauf-Id wird genannt', /Vexa run ID 28999/.test(r.json.result || ''), r.json.result);
 
+  // Am 18.09.2026 nach dem Aufladen live gemessen: ein frisches allow=true muss
+  // ein aelteres "kein Guthaben" schlagen, sonst meldet der Assistent ein
+  // Kontoproblem, das es nicht mehr gibt.
+  const FRISCH_OK = meeting(28846, { raum: '900000000000001', status: 'failed',
+    start: '2026-09-18T17:59:00.000Z', ende: '2026-09-18T17:59:30.000Z',
+    autoritaet: Object.assign({}, OK, { decided_at: '2026-09-18T17:59:09.000Z' }) });
+  r = await run({ action: 'list_bots' }, { meetings: [meeting(28688), FRISCH_OK] });
+  pruefe('frisches allow=true schlaegt den alten Leerstand', !/prepaid credit/.test(r.json.result), (r.json.result || '').slice(0, 200));
+  r = await run({ action: 'deploy_meeting_bot', meeting_url: URL_MIT }, { meetings: [meeting(28688), FRISCH_OK] });
+  pruefe('und der Deploy laeuft ohne Guthabenhinweis', /Bot deployed successfully/.test(r.json.result || ''), r.json);
+  r = await run({ action: 'check_meeting_url', meeting_url: URL_MIT }, { meetings: [meeting(28688), FRISCH_OK] });
+  pruefe('check_meeting_url warnt nicht mehr', !/CAUTION/.test(r.json.result), r.json.result);
+  // Umgekehrt: ein frisches negatives Urteil gilt weiterhin.
+  r = await run({ action: 'list_bots' },
+    { meetings: [Object.assign({}, FRISCH_OK, { data: Object.assign({}, FRISCH_OK.data, { service_authority: Object.assign({}, LEER, { decided_at: '2026-09-18T18:10:00.000Z' }) }) }), meeting(28688, { autoritaet: OK })] });
+  pruefe('frisches negatives Urteil gilt weiter', /prepaid credit/.test(r.json.result), (r.json.result || '').slice(0, 160));
+
   console.log('--- Warum ist er ausgestiegen ---');
   r = await run({ action: 'list_bots' }, { meetings: [meeting(28688)] });
   pruefe('list_bots nennt das Guthaben statt "keine Bots"', /prepaid credit/.test(r.json.result), r.json.result);
