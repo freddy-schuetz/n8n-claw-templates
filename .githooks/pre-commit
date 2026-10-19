@@ -1,0 +1,11 @@
+#!/bin/sh
+# Blocks commits with $fromAI keys that n8n rejects at runtime (see scripts/check-fromai-keys.js).
+# Checks the staged state, not the working tree.
+# Enable once per clone: git config core.hooksPath .githooks
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+git checkout-index -a --prefix="$tmp/" || exit 1
+node "$tmp/scripts/check-fromai-keys.js" || {
+  echo "Commit blocked: reserved or invalid \$fromAI keys, see above."
+  exit 1
+}

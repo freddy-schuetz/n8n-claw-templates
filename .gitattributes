@@ -1,0 +1,3 @@
+# Git hooks run under sh; CRLF breaks them.
+.githooks/* text eol=lf
+scripts/*.js text eol=lf

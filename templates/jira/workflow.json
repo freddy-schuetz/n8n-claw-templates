@@ -89,7 +89,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_projects",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}"
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}"
             },
             "matchingColumns": [],
             "schema": [
@@ -134,7 +134,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "search_issues",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "caller_name": "={{ $fromAI('caller_name', 'Display name of the asking person, set by the agent', 'string') }}",
               "jql": "={{ $fromAI('jql', 'JQL query. Custom fields may be written by their Jira name in double quotes, e.g. \\\"Maßnahme\\\" = Meta. currentUser() only works together with caller_name', 'string') }}",
               "limit": "={{ $fromAI('limit', 'Max issues (default 20)', 'string') }}",
@@ -219,7 +219,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "get_issue",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key (e.g. KAN-1)', 'string') }}",
               "fields": "={{ $fromAI('fields', 'Comma-separated field names as shown in Jira, e.g. Maßnahme, or *all (optional)', 'string') }}"
             },
@@ -280,7 +280,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "create_issue",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "caller_name": "={{ $fromAI('caller_name', 'Display name of the asking person, set by the agent', 'string') }}",
               "project": "={{ $fromAI('project', 'Project key (e.g. KAN)', 'string') }}",
               "summary": "={{ $fromAI('summary', 'Issue summary / title', 'string') }}",
@@ -413,7 +413,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "update_issue",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "caller_name": "={{ $fromAI('caller_name', 'Display name of the asking person, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key (e.g. KAN-1)', 'string') }}",
               "keys": "={{ $fromAI('keys', 'Comma-separated issue keys for a bulk update (optional, alternative to key)', 'string') }}",
@@ -538,7 +538,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "add_comment",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key', 'string') }}",
               "text": "={{ $fromAI('text', 'Comment body', 'string') }}"
             },
@@ -599,7 +599,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_comments",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key', 'string') }}"
             },
             "matchingColumns": [],
@@ -652,7 +652,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "transition_issue",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key', 'string') }}",
               "transition": "={{ $fromAI('transition', 'Target status name or transition id', 'string') }}"
             },
@@ -713,7 +713,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_transitions",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "key": "={{ $fromAI('key', 'Issue key', 'string') }}"
             },
             "matchingColumns": [],
@@ -766,7 +766,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_issue_types",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "project": "={{ $fromAI('project', 'Project key', 'string') }}"
             },
             "matchingColumns": [],
@@ -819,7 +819,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "link_issues",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "from": "={{ $fromAI('from', 'Source issue key', 'string') }}",
               "to": "={{ $fromAI('to', 'Target issue key', 'string') }}",
               "type": "={{ $fromAI('type', 'Link type (Blocks, Duplicate, Relates, Cloners)', 'string') }}"
@@ -888,7 +888,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_users",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "query": "={{ $fromAI('query', 'Name or email fragment', 'string') }}",
               "limit": "={{ $fromAI('limit', 'Max results (default 10)', 'string') }}"
             },
@@ -949,7 +949,7 @@
             "mappingMode": "defineBelow",
             "value": {
               "action": "list_fields",
-              "caller": "={{ $fromAI('caller', 'Internal key of the asking user, set by the agent', 'string') }}",
+              "caller": "={{ $fromAI('callerid', 'Internal key of the asking user, set by the agent', 'string') }}",
               "filter": "={{ $fromAI('filter', 'Part of the field name to filter by (optional)', 'string') }}"
             },
             "matchingColumns": [],

@@ -310,6 +310,7 @@ Key difference: OAuth2 entries add `"credential_type": "oauth2"` and credentials
 - [ ] `index.json` entry added (only your entry — don't touch others)
 - [ ] `README.md` skills table updated (correct category, skill count, total count)
 - [ ] Tool names use `snake_case` and match across manifest, node names, and connections
+- [ ] No reserved `$fromAI` key (`caller`, `callee`, `arguments`, `constructor`, `prototype`, ...): `node scripts/check-fromai-keys.js`
 - [ ] Workflow names follow `MCP: Name` / `MCP Sub: Name` convention
 - [ ] Error messages are descriptive with parameter examples
 - [ ] Large responses truncated to ~5000 chars
@@ -321,8 +322,9 @@ Key difference: OAuth2 entries add `"credential_type": "oauth2"` and credentials
 
 1. Validate JSON: `python -c "import json; json.load(open('templates/my-template/manifest.json')); json.load(open('templates/my-template/workflow.json')); print('OK')"`
 2. Check tool name consistency: tool names in `manifest.json` `tools[]`, toolWorkflow node `name` fields, action routing in Code node, and `connections` keys must all match
-3. **Local test:** Import sub-workflow into n8n (API or UI), note the ID. Replace `REPLACE_SUB_WORKFLOW_ID` in server JSON with real ID, import server workflow. Test via agent chat or MCP client
-4. **Fork test:** Push to a fork, temporarily point the Library Manager's `CDN_BASE` to your fork's raw URL, then install via `install_template`
+3. Check `$fromAI` keys: `node scripts/check-fromai-keys.js`. Since n8n 2.35.4 a reserved key (e.g. `caller`) fails every call silently with "Invalid parameter key" while the execution reports success. Enable the pre-commit hook once per clone: `git config core.hooksPath .githooks`
+4. **Local test:** Import sub-workflow into n8n (API or UI), note the ID. Replace `REPLACE_SUB_WORKFLOW_ID` in server JSON with real ID, import server workflow. Test via agent chat or MCP client
+5. **Fork test:** Push to a fork, temporarily point the Library Manager's `CDN_BASE` to your fork's raw URL, then install via `install_template`
 
 ---
 
